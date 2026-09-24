@@ -235,6 +235,7 @@ async function sendChat(text) {
     const res = await api('/api/chat', {user_id: userId, message: text});
     typing.remove();
     if (res.crisis) document.getElementById('crisis-banner').style.display = 'block';
+    else document.getElementById('crisis-banner').style.display = 'none';
     const reply = res.reply || "I'm here.";
     addMsg(reply, 'ai');
     if (voiceOn) speak(reply);
@@ -263,8 +264,8 @@ document.getElementById('begin').addEventListener('click', async () => {
     userId = res.user_id;
     localStorage.setItem('solace_uid', userId);
     showChat();
-    addMsg(conern ? concern : "Hi, I'd like to talk.", 'user');
-    await sendChat(conern ? concern : "Hi, I'd like to start my first session.");
+    addMsg(concern ? concern : "Hi, I'd like to talk.", 'user');
+    await sendChat(concern ? concern : "Hi, I'd like to start my first session.");
   } catch (e) {
     btn.disabled = false;
     btn.textContent = 'Begin my first session';

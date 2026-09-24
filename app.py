@@ -30,12 +30,35 @@ CLI_PATH = os.path.expanduser("~/workspace/skills/anthropic/bin/claude-chat")
 CHAT_MODEL = "claude-sonnet-4-6"
 SUMMARY_MODEL = "claude-haiku-4-5"
 
-CRISIS_KEYWORDS = [
-    "kill myself", "suicide", "suicidal", "self-harm", "self harm",
-    "hurt myself", "harm myself", "cut myself", "cutting myself",
-    "end my life", "want to die", "wanna die", "don't want to live",
-    "dont want to live", "no reason to live", "better off dead",
+CRISIS_PATTERNS = [
+    r"kill myself",
+    r"suicid\w*",
+    r"self[\s-]?harm",
+    r"hurt myself",
+    r"harm myself",
+    r"cut(?:ting)? myself",
+    r"end my life",
+    r"wanna die",
+    r"want to die",
+    r"don'?t want to live",
+    r"no reason to live",
+    r"better off dead",
 ]
+CRISIS_RE = [re.compile(r"\b" + p + r"\b") for p in CRISIS_PATTERNS]
+
+# Negation words that, appearing just before a crisis phrase, turn it into a
+# retraction (e.g. "I don't wanna die", "I no longer want to die").
+NEGATION_RE = re.compile(
+    r"\b(don'?t|do not|doesn'?t|does not|didn'?t|did not|won'?t|wouldn'?t|"
+    r"never|no longer|not|isn'?t|aren'?t|can'?t|couldn'?t|shouldn'?t)\b"
+)
+
+# Explicit walk-backs. These alone de-escalate; they never trigger crisis.
+RETRACTION_RE = re.compile(
+    r"\b(didn'?t mean it|did not mean it|just kidding|just joking|"
+    r"i was joking|i'?m fine now|i am fine now|i'?m ok(ay)?|i am okay|"
+    r"i feel better|false alarm|i take it back)\b"
+)
 
 SYSTEM_PROMPT = """You are Solace, a warm and skilled AI companion for emotional support. You carry the knowledge depth of a fully trained clinical psychologist — CBT, ACT, DBT, trauma-informed care, attachment theory, grief work, motivational interviewing — but you are NOT a licensed psychologist, NOT a therapist, and this is NOT therapy.
 
@@ -83,7 +106,10 @@ If the person expresses thoughts of suicide, self-harm, or harming others:
 1. Begin your reply with exactly [CRISIS] on its own first line (it is removed before they see it).
 2. Respond with steady warmth: take it seriously, don't panic, don't moralize or shame.
 3. Urge them to reach out right now: in the US call or text 988; anywhere else, contact local emergency services or a trusted person immediately.
-4. Keep it brief and human. Stay with them emotionally."""
+4. Keep it brief and human. Stay with them emotionally.
+
+DE-ESCALATION:
+If the person clearly walks back what they said ("I don't wanna die", "I didn't mean it", "I'm fine now", "I was just venting") or the conversation has plainly moved on, do NOT repeat the crisis protocol and do NOT start your reply with [CRISIS]. One brief, warm check-in is enough ("I'm really glad to hear that — how are you feeling right now?"), then continue the conversation normally. Never treat an ordinary follow-up message as a crisis just because an earlier message was one."""
 
 
 # ---------------------------------------------------------------- DB ----
@@ -169,8 +195,29 @@ def call_anthropic(model, system, messages, max_tokens=1024):
 
 
 def detect_crisis_keywords(text):
+    """Negation-aware crisis detection on the current message only.
+
+    A crisis phrase counts only when it is NOT negated just before it
+    ("I don't wanna die" is a retraction, not a crisis). Explicit
+    retraction phrases de-escalate. An un-negated crisis phrase always
+    wins over a retraction phrase in the same message (safety first).
+    """
     t = text.lower()
-    return any(k in t for k in CRISIS_KEYWORDS)
+    for rx in CRISIS_RE:
+        for m in rx.finditer(t):
+            # Look at the ~4 words before the match for a negation
+            # ("no longer", "don't", ...). Check the joined phrase so that
+            # multi-word negations like "no longer" match too.
+            before = t[: m.start()]
+            words = re.findall(r"[a-z']+", before)
+            if not NEGATION_RE.search(" ".join(words[-4:])):
+                return True
+    return False
+
+
+def detect_retraction(text):
+    """True when the user clearly walks back a crisis statement."""
+    return bool(RETRACTION_RE.search(text.lower()))
 
 
 def build_system(profile, summary):
@@ -313,6 +360,9 @@ def chat(body: ChatIn, background: BackgroundTasks):
         conn.close()
 
     crisis = detect_crisis_keywords(msg)
+    # Explicit retraction with no active crisis signal: de-escalate even if
+    # the model reflexively emits the crisis marker from conversation history.
+    retracted = detect_retraction(msg) and not crisis
     system = build_system(profile, summary)
     messages = [{"role": r["role"], "content": r["content"]} for r in reversed(hist)]
 
@@ -325,8 +375,9 @@ def chat(body: ChatIn, background: BackgroundTasks):
         }
 
     if reply.startswith("[CRISIS]"):
-        crisis = True
         reply = reply[len("[CRISIS]"):].strip()
+        if not retracted:
+            crisis = True
 
     with db_lock:
         conn = _conn()
