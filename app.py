@@ -363,9 +363,7 @@ def history(user_id: str):
 
 @app.get("/api/health")
 def health():
-    # Boolean only — never expose the key itself.
-    key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
-    return {"ok": True, "brain_key_present": bool(key), "brain_key_length": len(key)}
+    return {"ok": True}
 
 
 # ------------------------------------------------------ Frontend ----
