@@ -43,21 +43,35 @@ CRISIS_PATTERNS = [
     r"don'?t want to live",
     r"no reason to live",
     r"better off dead",
+    # Hebrew crisis phrasings (deterministic detection for Hebrew input)
+    r"רוצה למות",
+    r"להתאבד",
+    r"אין טעם לחיים",
+    r"לא רוצה לחיות",
+    r"עדיף למות",
+    r"רוצה לפגוע בעצמי",
+    r"פוגע בעצמי",
 ]
 CRISIS_RE = [re.compile(r"\b" + p + r"\b") for p in CRISIS_PATTERNS]
 
 # Negation words that, appearing just before a crisis phrase, turn it into a
-# retraction (e.g. "I don't wanna die", "I no longer want to die").
+# retraction (e.g. "I don't wanna die", "אני לא רוצה למות").
 NEGATION_RE = re.compile(
     r"\b(don'?t|do not|doesn'?t|does not|didn'?t|did not|won'?t|wouldn'?t|"
-    r"never|no longer|not|isn'?t|aren'?t|can'?t|couldn'?t|shouldn'?t)\b"
+    r"never|no longer|not|isn'?t|aren'?t|can'?t|couldn'?t|shouldn'?t|"
+    r"לא|אף פעם)\b"
 )
 
 # Explicit walk-backs. These alone de-escalate; they never trigger crisis.
+# Includes negated crisis statements ("I don't wanna die") so a clear
+# disavowal de-escalates even as the first message of a session.
 RETRACTION_RE = re.compile(
     r"\b(didn'?t mean it|did not mean it|just kidding|just joking|"
     r"i was joking|i'?m fine now|i am fine now|i'?m ok(ay)?|i am okay|"
-    r"i feel better|false alarm|i take it back)\b"
+    r"i feel better|false alarm|i take it back|"
+    r"don'?t wanna die|do not wanna die|don'?t want to die|"
+    r"do not want to die|don'?t want to kill myself|"
+    r"do not want to kill myself|לא רוצה למות)\b"
 )
 
 SYSTEM_PROMPT = """You are Solace, a warm and skilled AI companion for emotional support. You carry the knowledge depth of a fully trained clinical psychologist — CBT, ACT, DBT, trauma-informed care, attachment theory, grief work, motivational interviewing — but you are NOT a licensed psychologist, NOT a therapist, and this is NOT therapy.
@@ -105,7 +119,7 @@ CRISIS PROTOCOL:
 If the person expresses thoughts of suicide, self-harm, or harming others:
 1. Begin your reply with exactly [CRISIS] on its own first line (it is removed before they see it).
 2. Respond with steady warmth: take it seriously, don't panic, don't moralize or shame.
-3. Urge them to reach out right now: in the US call or text 988; anywhere else, contact local emergency services or a trusted person immediately.
+3. Urge them to reach out right now: in the US call or text 988; anywhere else, contact local emergency services or a trusted person immediately. If (and only if) the person is writing in Hebrew, mention Israel's ERAN emotional-support hotline (1201) prominently; for non-Hebrew messages do not mention ERAN.
 4. Keep it brief and human. Stay with them emotionally.
 
 DE-ESCALATION:
@@ -205,12 +219,16 @@ def detect_crisis_keywords(text):
     t = text.lower()
     for rx in CRISIS_RE:
         for m in rx.finditer(t):
-            # Look at the ~4 words before the match for a negation
-            # ("no longer", "don't", ...). Check the joined phrase so that
-            # multi-word negations like "no longer" match too.
+            # Look at the ~2 words immediately before the match for a
+            # negation ("don't", "no longer", "לא", ...). The window is
+            # deliberately tight so that a negation elsewhere in the
+            # message can't mask a genuine crisis phrase elsewhere
+            # ("I didn't mean it, I wanna die" must still trigger).
+            # Check the joined phrase so multi-word negations like
+            # "no longer" match too.
             before = t[: m.start()]
-            words = re.findall(r"[a-z']+", before)
-            if not NEGATION_RE.search(" ".join(words[-4:])):
+            words = re.findall(r"[a-z'\u0590-\u05FF]+", before)
+            if not NEGATION_RE.search(" ".join(words[-2:])):
                 return True
     return False
 
@@ -218,6 +236,37 @@ def detect_crisis_keywords(text):
 def detect_retraction(text):
     """True when the user clearly walks back a crisis statement."""
     return bool(RETRACTION_RE.search(text.lower()))
+
+
+HEBREW_RE = re.compile(r"[\u0590-\u05FF]")
+
+
+def has_hebrew(text):
+    """True when the message contains Hebrew characters."""
+    return bool(HEBREW_RE.search(text))
+
+
+def crisis_resource_line(msg, reply):
+    """Deterministic crisis-resource footer, locale-aware.
+
+    Hebrew input -> Israel's ERAN emotional-support hotline 1201 is
+    prominent. English -> make sure 988 is present (the model usually
+    includes it via the crisis protocol; this is the deterministic
+    backstop so the right number is always there).
+    """
+    if has_hebrew(msg):
+        if "1201" in reply:
+            return ""
+        return (
+            "\n\nבישראל: קו הסיוע הנפשי של ער״ן — 1201 (זמין 24/7). "
+            "בארה״ב: חייג או סמס 988."
+        )
+    if "988" not in reply:
+        return (
+            "\n\nIf you need help right now: in the US, call or text "
+            "988 — free, confidential, 24/7."
+        )
+    return ""
 
 
 def build_system(profile, summary):
@@ -363,21 +412,29 @@ def chat(body: ChatIn, background: BackgroundTasks):
     # Explicit retraction with no active crisis signal: de-escalate even if
     # the model reflexively emits the crisis marker from conversation history.
     retracted = detect_retraction(msg) and not crisis
+    hotline = "1201" if has_hebrew(msg) else "988"
     system = build_system(profile, summary)
     messages = [{"role": r["role"], "content": r["content"]} for r in reversed(hist)]
 
     try:
         reply = call_anthropic(CHAT_MODEL, system, messages)
     except Exception:
+        err = "I'm having trouble connecting right now. Please try again in a moment — I'm still here."
+        if crisis:
+            err += crisis_resource_line(msg, "")
         return {
-            "reply": "I'm having trouble connecting right now. Please try again in a moment — I'm still here.",
+            "reply": err,
             "crisis": crisis,
+            "hotline": hotline,
         }
 
     if reply.startswith("[CRISIS]"):
         reply = reply[len("[CRISIS]"):].strip()
         if not retracted:
             crisis = True
+
+    if crisis:
+        reply += crisis_resource_line(msg, reply)
 
     with db_lock:
         conn = _conn()
@@ -391,7 +448,7 @@ def chat(body: ChatIn, background: BackgroundTasks):
     if user_count % 10 == 0:
         background.add_task(update_summary, user_id)
 
-    return {"reply": reply, "crisis": crisis}
+    return {"reply": reply, "crisis": crisis, "hotline": hotline}
 
 
 @app.get("/api/history")

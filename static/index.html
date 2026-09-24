@@ -101,6 +101,7 @@
 <header>
   <div class="brand">Solace<small>a calm space to talk</small></div>
   <div style="display:flex;gap:8px;align-items:center">
+    <button id="new-chat" title="Start a new conversation" style="background:none;border:1px solid var(--line);border-radius:20px;padding:6px 10px;font-size:14px;cursor:pointer">↺ New chat</button>
     <button id="voice-toggle" title="Voice on/off" style="background:none;border:1px solid var(--line);border-radius:20px;padding:6px 10px;font-size:14px;cursor:pointer">🔇 Voice off</button>
     <a class="sos" href="tel:988">988 · help</a>
   </div>
@@ -187,6 +188,29 @@ document.getElementById('voice-toggle').addEventListener('click', function() {
   if (voiceOn) speak("Voice is on. I'll read my replies out loud.");
 });
 
+// New Conversation: fresh session id, cleared view, reset intake. confirm()
+// guards against an accidental tap wiping the current chat.
+document.getElementById('new-chat').addEventListener('click', () => {
+  if (!confirm('Start a new conversation? A fresh session will begin.')) return;
+  userId = Array.from(crypto.getRandomValues(new Uint8Array(8)))
+    .map(b => b.toString(16).padStart(2, '0')).join('');
+  localStorage.setItem('solace_uid', userId);
+  document.getElementById('messages').innerHTML = '';
+  document.getElementById('crisis-banner').style.display = 'none';
+  if ('speechSynthesis' in window) speechSynthesis.cancel();
+  // reset the intake form
+  document.getElementById('name').value = '';
+  document.getElementById('concern').value = '';
+  mood = '';
+  document.querySelectorAll('#moods .chip').forEach(x => x.classList.remove('on'));
+  const beginBtn = document.getElementById('begin');
+  beginBtn.disabled = false;
+  beginBtn.textContent = 'Begin my first session';
+  document.getElementById('chat').style.display = 'none';
+  document.getElementById('welcome').style.display = 'flex';
+  window.scrollTo(0, 0);
+});
+
 document.querySelectorAll('#moods .chip').forEach(c => {
   c.addEventListener('click', () => {
     document.querySelectorAll('#moods .chip').forEach(x => x.classList.remove('on'));
@@ -228,14 +252,31 @@ async function api(path, body) {
   return r.json();
 }
 
+function crisisBannerHTML(hotline) {
+  if (hotline === '1201') {
+    return '<strong>If you feel you might act on these thoughts, please reach out right now.</strong>'
+      + 'In Israel, call ERAN\u2019s emotional support hotline: <a href="tel:1201">1201</a> (24/7). '
+      + 'In the US: <a href="tel:988">988</a>. '
+      + 'You don\u2019t have to go through this alone.';
+  }
+  return '<strong>If you feel you might act on these thoughts, please reach out right now.</strong>'
+    + 'In the US, call or text <a href="tel:988">988</a> any time \u2014 free, confidential, 24/7. '
+    + 'You don\u2019t have to go through this alone.';
+}
+
 async function sendChat(text) {
   if ('speechSynthesis' in window) speechSynthesis.cancel();
   const typing = addMsg('…', 'ai typing');
   try {
     const res = await api('/api/chat', {user_id: userId, message: text});
     typing.remove();
-    if (res.crisis) document.getElementById('crisis-banner').style.display = 'block';
-    else document.getElementById('crisis-banner').style.display = 'none';
+    const banner = document.getElementById('crisis-banner');
+    if (res.crisis) {
+      banner.innerHTML = crisisBannerHTML(res.hotline || '988');
+      banner.style.display = 'block';
+    } else {
+      banner.style.display = 'none';
+    }
     const reply = res.reply || "I'm here.";
     addMsg(reply, 'ai');
     if (voiceOn) speak(reply);
