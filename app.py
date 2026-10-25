@@ -783,7 +783,32 @@ def _drop_repeated_closer(reply, prev_reply):
     return rest if rest else reply
 
 
-def _deleted_and_not_restated(text, tomb_entries, user_msgs):
+def _same_theme_judge(deleted_text, cand_text):
+    """Gray-band arbiter for the tombstone guard: when a candidate
+    shares some content words with a deleted item but not enough for
+    the deterministic match, the cheap model decides whether it is
+    the same theme in different words. Fails OPEN (item allowed) on
+    any error — the deterministic band above it is the hard guard."""
+    try:
+        out = call_anthropic(
+            SUMMARY_MODEL,
+            "You compare memory items for a support app.",
+            [{"role": "user", "content": (
+                "A person deleted this memory item and never wants it "
+                "kept:\n\"" + deleted_text + "\"\n\n"
+                "A new memory item is proposed:\n\"" + cand_text + "\"\n\n"
+                "Is the new item about the same theme or concern as "
+                "the deleted one, even if worded differently? "
+                "Reply with exactly YES or NO."
+            )}],
+            max_tokens=4,
+        )
+        return (out or "").strip().upper().startswith("YES")
+    except Exception:
+        return False
+
+
+def _deleted_and_not_restated(text, tomb_entries, user_msgs, judge=None):
     """Tab fix: a deleted theme must NEVER come back through a memory
     rewrite — in any wording. The one exception is the person
     themselves raising it again in a message written AFTER the
@@ -792,21 +817,31 @@ def _deleted_and_not_restated(text, tomb_entries, user_msgs):
     the window as a possible restatement, matching the old behavior
     where only the exact wording was blocked).
 
-    tomb_entries: [(deleted_tokens, created_at_str)]
+    tomb_entries: [(deleted_text, deleted_tokens, created_at_str)]
     user_msgs:    [(created_at_str, message_tokens)] — user role only.
+    judge: optional (deleted_text, cand_text) -> bool gray-band
+    arbiter; production passes _same_theme_judge.
     """
     cand = _item_tokens(text)
     if not cand:
         return False
-    for deleted, tcreated in tomb_entries:
-        if not _tokens_match_deleted(cand, deleted):
+    for deleted_text, deleted, tcreated in tomb_entries:
+        token_hit = _tokens_match_deleted(cand, deleted)
+        # Gray band: shares >=2 content words with the deleted item
+        # but not enough for the deterministic match — a hard
+        # paraphrase the token layer alone can't judge.
+        gray = not token_hit and len(cand & deleted) >= 2
+        if not token_hit and not gray:
             continue
         for mcreated, mtoks in user_msgs:
             if tcreated and mcreated <= tcreated:
                 continue  # said BEFORE the deletion — not a restatement
             if len(cand & mtoks) >= 2 and _token_overlap(cand, mtoks) >= 0.5:
                 return False  # the person raised it again themselves
-        return True
+        if token_hit:
+            return True
+        if judge is not None and judge(deleted_text, text):
+            return True
     return False
 
 
@@ -935,7 +970,8 @@ def update_summary(user_id):
         # below, and named to the updater here so the prose note does
         # not quietly resurrect them either.
         tomb_entries = [
-            (_item_tokens(r["norm"]), r["created_at"] or "") for r in tomb_rows
+            (r["norm"], _item_tokens(r["norm"]), r["created_at"] or "")
+            for r in tomb_rows
         ]
         user_msgs = [
             (r["created_at"] or "", _item_tokens(r["content"]))
@@ -1040,7 +1076,8 @@ def update_summary(user_id):
                 sigs = _rehearsal_signatures(rehearsal_rows)
                 for it in items:
                     if _deleted_and_not_restated(it["text"], tomb_entries,
-                                                 user_msgs):
+                                                 user_msgs,
+                                                 judge=_same_theme_judge):
                         continue  # deleted by the person — in ANY wording
                     # A completed practice conversation is a dated
                     # note of something that happened — a theme,

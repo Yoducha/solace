@@ -19,7 +19,22 @@ failures = []
 # ---------- unit: the semantic tombstone matcher ----------
 DELETED = "work projects accumulating; feeling perpetually behind"
 REWORDED = "Manager continuously adds projects; feels perpetually behind even on weekends"
-tomb = [ (solace._item_tokens(DELETED), "2026-10-25 12:00:00") ]
+tomb = [ (DELETED, solace._item_tokens(DELETED), "2026-10-25 12:00:00") ]
+
+# Gray band: a hard paraphrase sharing only 2 content words escapes
+# the token match; the judge decides (production pair, seen live).
+PROD_DELETED = "work projects accumulating for months without catching up"
+PROD_CAND = "work overload and manager continuously adding projects"
+prod_tomb = [ (PROD_DELETED, solace._item_tokens(PROD_DELETED),
+              "2026-10-25 12:00:00") ]
+if solace._deleted_and_not_restated(PROD_CAND, prod_tomb, []):
+    failures.append("UNIT gray-band pair blocked without a judge (should defer)")
+if not solace._deleted_and_not_restated(PROD_CAND, prod_tomb, [],
+                                        judge=lambda a, b: True):
+    failures.append("UNIT gray-band pair NOT blocked when judge says same theme")
+if solace._deleted_and_not_restated(PROD_CAND, prod_tomb, [],
+                                    judge=lambda a, b: False):
+    failures.append("UNIT gray-band pair blocked when judge says different theme")
 old_msgs = [("2026-10-25 11:00:00",
              solace._item_tokens("work is piling up and I feel behind"))]
 
