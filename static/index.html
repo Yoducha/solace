@@ -3,8 +3,8 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<meta name="description" content="Solace — a private AI self-help companion for reflection and support">
-<title>Solace — a private AI self-help companion for reflection and support</title>
+<meta name="description" content="A private AI companion for reflection and self-help. Not therapy, not a substitute for professional care.">
+<title>Solace — A private AI companion for reflection and self-help</title>
 <style>
   :root {
     --bg: #faf7f1;
@@ -141,7 +141,7 @@
 
 <div id="topbar">
 <header>
-  <div class="brand">Solace<small>a private AI self-help companion</small></div>
+  <div class="brand">Solace<small>A private AI companion for reflection and self-help. Not therapy, not a substitute for professional care.</small></div>
   <div class="hdr-actions">
     <button id="new-chat" class="hdr-btn" title="Start a new conversation">↺ <span class="btn-label">New chat</span></button>
     <button id="voice-toggle" class="hdr-btn" title="Voice on/off">🔇 <span class="btn-label">Voice off</span></button>
@@ -157,7 +157,7 @@
 </div>
 
 <div class="disclaimer" id="disclaimer">
-  <span class="disc-full">Solace is an AI self-help companion — not a therapist, not a licensed professional, and not for emergencies. It doesn't diagnose.</span><span class="disc-short">Solace is an AI self-help companion, not a therapist.</span>
+  <span class="disc-full">Solace is an AI self-help companion — not a substitute for professional care, and not for emergencies.</span><span class="disc-short">Solace is an AI self-help companion, not a substitute for professional care.</span>
   <button class="x" id="disclaimer-x" title="Make this smaller" aria-label="Collapse disclaimer">×</button>
 </div>
 
@@ -188,7 +188,7 @@
       <textarea id="concern" placeholder="Whatever comes to mind — there's no wrong answer."></textarea>
     </div>
 
-    <button class="btn" id="begin">Begin</button>
+    <button class="btn" id="begin">Start a reflection</button>
     <p class="tiny">By continuing you agree to the <a href="/terms" target="_blank">Terms</a> and <a href="/privacy" target="_blank">Privacy Policy</a>, and you understand Solace is an AI self-help companion, not professional care.<br>If you're ever in crisis, call or text 988.</p>
   </section>
 
@@ -265,7 +265,7 @@ document.getElementById('new-chat').addEventListener('click', () => {
   document.querySelectorAll('#moods .chip').forEach(x => x.classList.remove('on'));
   const beginBtn = document.getElementById('begin');
   beginBtn.disabled = false;
-  beginBtn.textContent = 'Begin';
+  beginBtn.textContent = 'Start a reflection';
   document.getElementById('chat').style.display = 'none';
   document.getElementById('welcome').style.display = 'flex';
   window.scrollTo(0, 0);
@@ -431,7 +431,7 @@ document.getElementById('begin').addEventListener('click', async () => {
     await sendChat(concern ? concern : "Hi, I'd like to talk.");
   } catch (e) {
     btn.disabled = false;
-    btn.textContent = 'Begin';
+    btn.textContent = 'Start a reflection';
     alert('Could not start your session — please check your connection and try again.');
   }
 });
@@ -469,7 +469,7 @@ document.getElementById('delete-data').addEventListener('click', async () => {
     document.querySelectorAll('#moods .chip').forEach(x => x.classList.remove('on'));
     const beginBtn = document.getElementById('begin');
     beginBtn.disabled = false;
-    beginBtn.textContent = 'Begin';
+    beginBtn.textContent = 'Start a reflection';
     document.getElementById('chat').style.display = 'none';
     document.getElementById('welcome').style.display = 'flex';
     alert('Your data has been deleted.');

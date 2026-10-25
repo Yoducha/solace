@@ -139,7 +139,7 @@ INFO_QUERY_RE = re.compile(
 
 # Fixed, human crisis response (spec: Solace Fix #1). Sent verbatim, with
 # no model call, the moment risk is detected — and it REPLACES the normal
-# therapy reply.
+# reply.
 FIXED_CRISIS_RESPONSE = (
     "I'm really glad you told me. I want to make sure you're safe right now. "
     "Are you thinking about acting on this tonight? You don't have to go "
@@ -163,7 +163,7 @@ FIXED_CRISIS_RESPONSE_HE = (
 # while crisis mode is latched (re-test fix #2). A retraction no longer
 # switches safety mode off instantly: this check-in goes out, crisis
 # mode stays latched, and only the NEXT calm, non-risk exchange steps
-# therapy back down. No relief emoji, no instant "that's a relief".
+# back down to normal conversation. No relief emoji, no instant "that's a relief".
 RETRACTION_CHECKIN_RESPONSE = (
     "I'm really glad to hear that — and I hope you understand, I'd still "
     "rather check than just move on: are you safe right now? You shared "
@@ -212,17 +212,17 @@ INFO_FALLBACK_HE = (
 )
 
 # System prompt used for follow-up turns while crisis mode is latched:
-# safety only — no therapy techniques, no homework, no jargon.
+# safety only — no techniques, no homework, no jargon.
 CRISIS_SYSTEM_PROMPT = """You are Solace, in CRISIS MODE with a person who has expressed thoughts of suicide or self-harm. Rules for every reply in this mode:
 - Your only job is the person's safety right now. Stay warm, steady, human. Take everything seriously; never panic, never moralize or shame.
 - Ask directly how they are doing and whether they are safe right now / tonight. Keep gently checking safety each reply.
 - In every reply, remind them: in the US they can call or text 988 (Suicide & Crisis Lifeline, 24/7) or text HOME to 741741; if they are in immediate danger, call 911.
 - Match the person's language: reply in the language they are writing in. If they write in Hebrew, your ENTIRE reply must be in Hebrew — not English with a Hebrew line added — and the resources lead with Israel's ERAN emotional-support hotline (1201) first, then 988 / 741741 / 911.
-- Do NOT do therapy: no CBT/ACT/DBT techniques, no thought-challenging, no homework or exercises, no analysis of their patterns, no jargon (never say things like "resistance" or "emotional conditioning").
+- Do NOT use structured techniques or exercises: no CBT/ACT/DBT methods, no thought-challenging, no homework, no analysis of their patterns, no jargon (never say things like "resistance" or "emotional conditioning").
 - Short replies (2-4 sentences). One caring question at a time. Stay with them; do not rush to wrap up."""
 
 CLASSIFIER_SYSTEM = (
-    "You are a safety classifier for a mental-health support app. Decide "
+    "You are a safety classifier for a support app. Decide "
     "whether the user's message expresses suicidal thoughts, intent or a "
     "plan/means to harm themselves, or a wish to be dead — including "
     "indirect, coded, or slang phrasing. Benign, informational, or clearly "
@@ -250,10 +250,10 @@ RETRACTION_RE = re.compile(
     r"אני בסדר|הכול בסדר|הכל בסדר|רק צחקתי|סתם צחקתי|תשכח מזה|לא התכוונתי)\b"
 )
 
-SYSTEM_PROMPT = """You are Solace, a warm and skilled AI self-help companion for reflection and support. You draw deeply on evidence-based approaches — CBT, ACT, DBT, trauma-informed care, attachment theory, grief work, motivational interviewing — but you are NOT a licensed professional, NOT a therapist, and this is NOT therapy.
+SYSTEM_PROMPT = """You are Solace, a warm and skilled AI self-help companion for reflection and support. You draw deeply on evidence-based approaches — CBT, ACT, DBT, trauma-informed care, attachment theory, grief work, motivational interviewing — but you are NOT a licensed professional, and this is NOT a substitute for professional care.
 
 HARD LIMITS (never break these):
-- Never diagnose. Never say or imply "you have depression / anxiety / PTSD / etc." Use non-diagnostic language only: "a working understanding," "it sounds like," "what I'm hearing is."
+- Never tell someone what condition they have. Never say or imply "you have depression / anxiety / PTSD / etc." Use describing language only, never labels: "a working understanding," "it sounds like," "what I'm hearing is."
 - Never claim to be a licensed professional or a human being.
 - This is not emergency care. If the person is in crisis, follow the crisis protocol below.
 - Gently encourage real professional help for serious or persistent struggles.
@@ -349,7 +349,7 @@ def init_db():
         # given and one calm exchange is still owed before unlatching.
         # crisis_banner: once any crisis happened in this session, the
         # 988 banner stays visible for the rest of the session, even
-        # after therapy steps back down.
+        # after crisis mode steps back down.
         if "crisis_stepdown" not in cols:
             conn.execute(
                 "ALTER TABLE users ADD COLUMN crisis_stepdown INTEGER DEFAULT 0"
@@ -489,7 +489,7 @@ def classify_risk(text):
 
 def assess_risk(text):
     """Full pre-model risk check: keyword layer first, classifier second.
-    Runs BEFORE any therapy model call, on every user message."""
+    Runs BEFORE any normal model call, on every user message."""
     if detect_crisis_keywords(text):
         return True
     return classify_risk(text)
@@ -537,7 +537,7 @@ def crisis_resource_line(hebrew, reply):
     if "988" not in reply:
         return (
             "\n\nIf you need help right now: in the US, call or text "
-            "988 — free, confidential, 24/7."
+            "988 — free, any time, day or night."
         )
     return ""
 
@@ -583,7 +583,7 @@ def update_summary(user_id):
             "Read the recent conversation and write (or update) a concise note covering: "
             "presenting concerns, key facts about the person, what seems to be helping, "
             "any practical exercises or homework assigned and whether the person tried them, "
-            "and the current focus. Non-diagnostic language only — describe, never label. "
+            "and the current focus. Describing language only — describe, never label. "
             "Keep it under 200 words. If a previous note exists, merge the new information into it.\n\n"
             "Previous note:\n%s\n\nRecent conversation:\n%s"
             % (old["summary"] if old else "(none)", transcript)
@@ -686,7 +686,7 @@ def chat(body: ChatIn, background: BackgroundTasks):
         conn.close()
 
     # ---- Pre-model risk check (Solace Fix #1) ----
-    # Runs BEFORE any therapy model call, on every user message:
+    # Runs BEFORE any normal model call, on every user message:
     # keyword layer first, then the classifier fail-safe.
     hebrew = conversation_is_hebrew(hist, msg)
     hotline = "1201" if hebrew else "988"
@@ -749,7 +749,7 @@ def chat(body: ChatIn, background: BackgroundTasks):
             c.commit()
             c.close()
 
-    # Fresh risk signal: fixed human response, no therapy reply, latch
+    # Fresh risk signal: fixed human response, no normal reply, latch
     # on, step-down reset, banner on for the rest of the session. Fully
     # Hebrew for Hebrew conversations (re-test fix #8).
     if risk:
@@ -779,7 +779,7 @@ def chat(body: ChatIn, background: BackgroundTasks):
             # The gentle check-in already went out; this is the next
             # exchange. Risk is False here (a fresh risk signal was
             # handled above and re-latches fully), so a calm, non-risk
-            # exchange completes the step-down: therapy resumes, but
+            # exchange completes the step-down: normal conversation resumes, but
             # the banner flag stays on for the rest of the session.
             _set_state(crisis_mode=False, stepdown_v=False)
             in_crisis_mode = False
