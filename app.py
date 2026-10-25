@@ -350,6 +350,7 @@ def init_db():
             CREATE TABLE IF NOT EXISTS memory_tombstones (
                 user_id TEXT NOT NULL,
                 norm TEXT NOT NULL,
+                created_at TEXT DEFAULT '',
                 PRIMARY KEY (user_id, norm)
             );
             CREATE TABLE IF NOT EXISTS rehearsals (
@@ -399,6 +400,15 @@ def init_db():
         if "crisis_lang" not in cols:
             conn.execute(
                 "ALTER TABLE users ADD COLUMN crisis_lang TEXT DEFAULT 'en'"
+            )
+        # Tab fix: tombstones carry their deletion time, so a theme
+        # the person raises again AFTER deleting it can come back,
+        # while a memory rewrite can never resurrect it on its own.
+        tcols = [r["name"] for r in conn.execute(
+            "PRAGMA table_info(memory_tombstones)")]
+        if "created_at" not in tcols:
+            conn.execute(
+                "ALTER TABLE memory_tombstones ADD COLUMN created_at TEXT DEFAULT ''"
             )
         conn.commit()
         conn.close()
@@ -679,6 +689,91 @@ def _norm_item(text):
     return re.sub(r"\s+", " ", (text or "").lower()).strip()
 
 
+# ---- Deleted-item matching (Tab fix) --------------------------------
+# Tombstones used to match by exact normalized text only, so the
+# memory model could resurrect a deleted theme simply by rewording
+# it ("work projects accumulating; feeling perpetually behind" came
+# back as "Manager continuously adds projects; feels perpetually
+# behind even on weekends"). Matching is now by content tokens with a
+# light stemmer, so a reworded equivalent is recognized and dropped.
+
+_ITEM_TOKEN_STOPWORDS = {
+    "the", "and", "for", "with", "from", "that", "this", "they",
+    "them", "their", "then", "than", "when", "what", "been", "were",
+    "are", "was", "has", "have", "had", "not", "but", "all", "any",
+    "about", "into", "over", "per", "very", "just", "even",
+    "של", "על", "עם", "את", "הוא", "היא", "זה", "זו", "גם", "לא",
+    "כל", "אני", "הם", "יש", "אין", "כי", "או", "אם", "מה", "לי",
+}
+
+
+def _stem_token(tok):
+    if tok.isascii():
+        for suf in ("ing", "edly", "ed", "es", "s"):
+            if len(tok) > len(suf) + 2 and tok.endswith(suf):
+                return tok[: -len(suf)]
+    return tok
+
+
+def _item_tokens(text):
+    """Content-word tokens of a memory item (stemmed, stopwords out).
+    Works for Hebrew items too — the tokenizer is unicode-aware; the
+    stemmer only touches Latin words."""
+    toks = set()
+    for tok in re.findall(r"[^\W_]+", (text or "").lower(), re.UNICODE):
+        if len(tok) < 3 or tok in _ITEM_TOKEN_STOPWORDS:
+            continue
+        toks.add(_stem_token(tok))
+    return toks
+
+
+def _token_overlap(a, b):
+    if not a or not b:
+        return 0.0
+    return len(a & b) / min(len(a), len(b))
+
+
+def _tokens_match_deleted(cand, deleted):
+    """True when candidate tokens restate a deleted item's tokens:
+    a short deleted item must be fully restated; a longer one needs
+    at least 3 shared content words covering 60% of the shorter set."""
+    if not cand or not deleted:
+        return False
+    inter = cand & deleted
+    if not inter:
+        return False
+    if len(deleted) <= 2:
+        return deleted <= cand or cand <= deleted
+    return len(inter) >= 3 and _token_overlap(cand, deleted) >= 0.6
+
+
+def _deleted_and_not_restated(text, tomb_entries, user_msgs):
+    """Tab fix: a deleted theme must NEVER come back through a memory
+    rewrite — in any wording. The one exception is the person
+    themselves raising it again in a message written AFTER the
+    deletion (tomb_entries carry the deletion time for that check;
+    legacy tombstones without a timestamp accept any user message in
+    the window as a possible restatement, matching the old behavior
+    where only the exact wording was blocked).
+
+    tomb_entries: [(deleted_tokens, created_at_str)]
+    user_msgs:    [(created_at_str, message_tokens)] — user role only.
+    """
+    cand = _item_tokens(text)
+    if not cand:
+        return False
+    for deleted, tcreated in tomb_entries:
+        if not _tokens_match_deleted(cand, deleted):
+            continue
+        for mcreated, mtoks in user_msgs:
+            if tcreated and mcreated <= tcreated:
+                continue  # said BEFORE the deletion — not a restatement
+            if len(cand & mtoks) >= 2 and _token_overlap(cand, mtoks) >= 0.5:
+                return False  # the person raised it again themselves
+        return True
+    return False
+
+
 def _parse_summary_output(out):
     """Split the memory-model output into (note, items|None).
 
@@ -783,7 +878,7 @@ def update_summary(user_id):
         with db_lock:
             conn = _conn()
             rows = conn.execute(
-                "SELECT role, content FROM messages WHERE user_id=? ORDER BY id DESC LIMIT 40",
+                "SELECT role, content, created_at FROM messages WHERE user_id=? ORDER BY id DESC LIMIT 40",
                 (user_id,),
             ).fetchall()
             old = conn.execute(
@@ -795,7 +890,30 @@ def update_summary(user_id):
                 "ORDER BY id DESC LIMIT 3",
                 (user_id,),
             ).fetchall()
+            tomb_rows = conn.execute(
+                "SELECT norm, created_at FROM memory_tombstones WHERE user_id=?",
+                (user_id,),
+            ).fetchall()
             conn.close()
+        # Deleted items (Tab fix): matched semantically at write time
+        # below, and named to the updater here so the prose note does
+        # not quietly resurrect them either.
+        tomb_entries = [
+            (_item_tokens(r["norm"]), r["created_at"] or "") for r in tomb_rows
+        ]
+        user_msgs = [
+            (r["created_at"] or "", _item_tokens(r["content"]))
+            for r in rows if r["role"] == "user"
+        ]
+        deleted_note = ""
+        if tomb_rows:
+            deleted_note = (
+                "\n\nThe person has DELETED the following from their "
+                "memory and does not want them kept: "
+                + "; ".join(r["norm"] for r in tomb_rows)
+                + ". Do NOT include these — or anything equivalent in "
+                "different words — in the note or the ITEMS."
+            )
         transcript = "\n".join(
             "%s: %s" % (r["role"], r["content"]) for r in reversed(rows)
         )
@@ -861,7 +979,7 @@ def update_summary(user_id):
             "Previous note:\n%s\n\nRecent conversation:\n%s%s"
             % (_today_str(), _week_map_str(),
                old["summary"] if old else "(none)",
-               transcript, rehearsal_note)
+               transcript, rehearsal_note + deleted_note)
         )
         out = call_anthropic(
             SUMMARY_MODEL,
@@ -880,20 +998,14 @@ def update_summary(user_id):
                 (user_id, new_summary),
             )
             if items is not None:
-                tombs = {
-                    r["norm"]
-                    for r in conn.execute(
-                        "SELECT norm FROM memory_tombstones WHERE user_id=?",
-                        (user_id,),
-                    )
-                }
                 conn.execute(
                     "DELETE FROM memory_items WHERE user_id=?", (user_id,)
                 )
                 sigs = _rehearsal_signatures(rehearsal_rows)
                 for it in items:
-                    if _norm_item(it["text"]) in tombs:
-                        continue  # the person deleted this — keep it deleted
+                    if _deleted_and_not_restated(it["text"], tomb_entries,
+                                                 user_msgs):
+                        continue  # deleted by the person — in ANY wording
                     # A completed practice conversation is a dated
                     # note of something that happened — a theme,
                     # never a goal (Tab fix), whatever kind the
@@ -2154,7 +2266,8 @@ def delete_memory_item(body: MemoryItemDeleteIn):
         ).fetchone()
         if row:
             conn.execute(
-                "INSERT OR IGNORE INTO memory_tombstones (user_id, norm) VALUES (?,?)",
+                "INSERT OR IGNORE INTO memory_tombstones (user_id, norm, created_at) "
+                "VALUES (?,?,datetime('now'))",
                 (uid, _norm_item(row["text"])),
             )
             conn.execute(
