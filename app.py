@@ -586,6 +586,26 @@ def _today_str():
     return now.strftime("%A, %B %d, %Y").replace(" 0", " ")
 
 
+def _week_map_str():
+    """The next 7 days with full dates ('Sunday, October 25, 2026;
+    Monday, October 26, 2026; ...'), so relative-day references in a
+    conversation ('on Thursday') resolve to the correct date instead
+    of the memory model guessing — its first live guess landed two
+    days off."""
+    from datetime import timedelta
+
+    try:
+        from zoneinfo import ZoneInfo
+
+        base = datetime.now(ZoneInfo("America/New_York")).date()
+    except Exception:
+        base = datetime.now(timezone.utc).date()
+    return "; ".join(
+        (base + timedelta(days=i)).strftime("%A, %B %d, %Y").replace(" 0", " ")
+        for i in range(7)
+    )
+
+
 def _fmt_date(ts):
     """'2026-10-25 14:03:11' -> 'October 25, 2026' ('' if unparseable)."""
     try:
@@ -744,7 +764,8 @@ def update_summary(user_id):
             "('on Thursday', 'tomorrow'), write it WITH its full date — e.g. 'plans to "
             "talk with Dave on Thursday, October 29, 2026' — resolving relative days "
             "against today's date above, so a future plan is never later mistaken for "
-            "something that already happened. Keep full dates already recorded.\n\n"
+            "something that already happened. Keep full dates already recorded. "
+            "The coming days are: %s.\n\n"
             "After the note, add one final line that begins with ITEMS: followed by a JSON array "
             "of the memory items the person should be able to review, each an object "
             "{\"kind\": \"theme\" or \"goal\", \"text\": \"a short plain-language phrase\"}. "
@@ -753,7 +774,8 @@ def update_summary(user_id):
             "Describing language only — never condition names or labels. At most 10 items. "
             "If there is nothing solid yet, end with ITEMS: [].\n\n"
             "Previous note:\n%s\n\nRecent conversation:\n%s%s"
-            % (_today_str(), old["summary"] if old else "(none)",
+            % (_today_str(), _week_map_str(),
+               old["summary"] if old else "(none)",
                transcript, rehearsal_note)
         )
         out = call_anthropic(
