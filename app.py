@@ -706,6 +706,72 @@ def _parse_summary_output(out):
     return note, items
 
 
+# A completed rehearsal produces ONLY its dated note in memory —
+# never a goal (Tab fix). The updater still sometimes restates the
+# rehearsal's topic as a to-do goal ("Have actual conversation with
+# landlord Dave about fixing the heating"), because the real talk
+# sounds like an agreed next step. These signatures let a code guard
+# recognize goal items that originated from a rehearsal: they
+# reference the rehearsal person (name or relationship word) AND
+# share vocabulary with the rehearsal topic.
+
+_TOPIC_STOPWORDS = {
+    "about", "with", "talk", "talks", "talking", "discuss", "discussing",
+    "conversation", "have", "having", "their", "that", "this", "from",
+    "need", "want", "tell", "telling", "please", "really", "just",
+    "into", "over", "under", "will", "would", "should", "could",
+    "when", "what", "them", "then", "than", "been", "were", "your",
+    "yours", "mine", "ours", "actual", "real",
+}
+
+_BUILTIN_PERSON_CUES = {
+    "boss": {"boss"},
+    "dad": {"dad", "father"},
+    "mom": {"mom", "mother"},
+    "partner": {"partner", "husband", "wife"},
+    "friend": {"friend"},
+}
+
+
+def _rehearsal_signatures(rehearsal_rows):
+    """(person name tokens, relationship cue words, topic keywords)
+    for the user's recent debriefed rehearsals."""
+    names, cues, keywords = set(), set(), set()
+    for rr in rehearsal_rows or []:
+        for tok in re.findall(r"[a-z']+", (rr["person_name"] or "").lower()):
+            if len(tok) >= 3:
+                names.add(tok)
+        for tok in re.findall(r"[a-z']+", (rr["relationship"] or "").lower()):
+            if len(tok) >= 4:
+                cues.add(tok)
+        cues |= _BUILTIN_PERSON_CUES.get(rr["person_type"] or "", set())
+        for tok in re.findall(r"[a-z']{4,}", (rr["topic"] or "").lower()):
+            if tok not in _TOPIC_STOPWORDS:
+                keywords.add(tok)
+    return names, cues, keywords
+
+
+def _guarded_item_kind(kind, text, sigs):
+    """Final kind to store for one memory item, or None to drop it.
+    Practice-worded items become themes (as before); a goal that
+    references a rehearsal person AND shares its topic vocabulary is
+    the rehearsal's own topic restated as a to-do — dropped, because
+    the dated note already covers the rehearsal. Genuine user-stated
+    goals pass through untouched."""
+    if kind != "goal":
+        return kind
+    if re.search(r"rehears|practiced|practice (talk|conversation)",
+                 text, re.I):
+        return "theme"
+    names, cues, keywords = sigs
+    if not (names or cues) or not keywords:
+        return kind
+    toks = set(re.findall(r"[a-z']{3,}", (text or "").lower()))
+    if (toks & names or toks & cues) and toks & keywords:
+        return None
+    return kind
+
+
 def update_summary(user_id):
     """Background job: refresh the rolling memory note (cheap model) AND
     the structured memory items (themes/goals) the person can review in
@@ -757,6 +823,13 @@ def update_summary(user_id):
                 "talk with their boss on October 25, 2026\"} — NEVER "
                 "a \"goal\":\n"
                 + "\n".join(lines)
+                + "\nA practice conversation creates ONLY that one "
+                "dated theme item — never add any other item about "
+                "the practice or its topic, and in particular never "
+                "a goal like \"have the actual conversation\": the "
+                "real talk the person rehearsed is not a goal item "
+                "unless the person stated it as their own goal in "
+                "the conversation itself."
             )
         prompt = (
             "Today is %s.\n\n"
@@ -776,7 +849,9 @@ def update_summary(user_id):
             "of the memory items the person should be able to review, each an object "
             "{\"kind\": \"theme\" or \"goal\", \"text\": \"a short plain-language phrase\"}. "
             "Themes are what has been weighing on them and the topics they keep coming back to. "
-            "Goals are what they are working toward, including any small step they agreed to try. "
+            "Goals are what they are working toward, including any small step they agreed to try — "
+            "but count something as a goal ONLY if the person stated it as their own aim in the "
+            "conversation; never infer a goal from the topic of a practice conversation. "
             "Something the person has already DONE — including a practice conversation they completed — "
             "is a theme (a dated note of what happened), never a goal. "
             "Describing language only — never condition names or labels. At most 10 items. "
@@ -813,18 +888,19 @@ def update_summary(user_id):
                 conn.execute(
                     "DELETE FROM memory_items WHERE user_id=?", (user_id,)
                 )
+                sigs = _rehearsal_signatures(rehearsal_rows)
                 for it in items:
                     if _norm_item(it["text"]) in tombs:
                         continue  # the person deleted this — keep it deleted
-                    kind = it["kind"]
-                    if kind == "goal" and re.search(
-                            r"rehears|practiced|practice (talk|conversation)",
-                            it["text"], re.I):
-                        # A completed practice conversation is a
-                        # dated note of something that happened —
-                        # a theme, never a goal (Tab fix), whatever
-                        # kind the updater model assigned it.
-                        kind = "theme"
+                    # A completed practice conversation is a dated
+                    # note of something that happened — a theme,
+                    # never a goal (Tab fix), whatever kind the
+                    # updater model assigned it; and a goal that is
+                    # just the rehearsal's topic restated as a to-do
+                    # is dropped entirely (see _guarded_item_kind).
+                    kind = _guarded_item_kind(it["kind"], it["text"], sigs)
+                    if kind is None:
+                        continue
                     conn.execute(
                         "INSERT INTO memory_items (user_id, kind, text) VALUES (?,?,?)",
                         (user_id, kind, it["text"]),
@@ -1420,6 +1496,7 @@ HOW TO PLAY
 - Be realistic, not a pushover. If the user is vague, unfair, or springs something on you, push back the way this person genuinely would. If the user is clear, fair and honest, let it land — soften the way a real person would.
 - Keep reactions human-sized: firm, defensive, hurt, stubborn, quiet, skeptical — yes. Shouting tirades, threats, cruelty or abuse — never.
 - Short, natural turns — usually 1 to 3 sentences. Talk like a person in a real conversation, not a speech.
+- Speak ONLY the words you say out loud. Never narrate your actions or body language, and never put an action in (parentheses). If a brief physical reaction truly matters, mark it with single asterisks — *leans back* — so it shows as a stage direction, not as part of your sentence. Keep such marks rare (at most one per reply) and short.
 - Never break character: no advice, no feedback, no stepping out of the scene. If the user asks a meta question (about the app, whether you are real, anything outside the scene), deflect briefly in character — puzzled, or brushing it off the way this person would — and steer back to the conversation.
 - Never bring up suicide or harming anyone — yours or the user's — as part of the scene, and never threaten anyone.
 - Never use clinical or diagnostic labels about the user or yourself.
@@ -1534,6 +1611,93 @@ def _persona_opener_direction(rec):
         "Do not explain anything; just be the person, first line of "
         "the scene." % topic
     )
+
+
+# Stage directions must never read as spoken dialogue (Tab fix).
+# The persona is told to mark a rare brief action with *asterisks*,
+# which the client renders italic; but models also leak them in
+# (parentheses), where they show as plain text inside the spoken
+# line. The cleaner below converts a parenthetical/bracketed span
+# that is shaped like a stage direction into the asterisk form, and
+# the stream holdback keeps a not-yet-closed span from flashing raw.
+
+_STAGE_STARTERS = {
+    "a", "the", "beat", "pause", "silence", "long", "deep", "he", "she",
+    "leans", "leaning", "sighs", "sighing", "pauses", "looks", "looking",
+    "smiles", "smiling", "laughs", "laughing", "nods", "nodding",
+    "shrugs", "crosses", "folds", "stands", "sits", "shakes", "frowns",
+    "clears", "takes", "rubs", "taps", "glances", "raises", "lowers",
+    "turns", "waits", "breathes", "exhales", "inhales", "blinks",
+    "stares", "grins", "winces", "scoffs", "chuckles", "shifts",
+    "straightens", "softens", "stiffens", "hesitates", "swallows",
+    "tilts", "narrows", "opens", "closes", "points", "waves", "pushes",
+    "pulls", "puts", "sets", "picks", "pours", "sips", "checks",
+    "quietly", "slowly", "softly",
+}
+
+_SPAN_RE = re.compile(r"[\(\[]([^\(\)\[\]\n]{1,80})[\)\]]")
+
+
+def _stage_directionish(inner):
+    """Is this short bracketed span a stage direction ('leans back
+    slightly') rather than part of the spoken sentence?"""
+    s = inner.strip().strip("*").strip()
+    if not s or "*" in s or '"' in s or ":" in s:
+        return False
+    words = re.findall(r"[A-Za-z']+", s)
+    if not (1 <= len(words) <= 8):
+        return False
+    # Stage directions are fragments — no sentence punctuation inside,
+    # and they don't speak in first/second person.
+    if re.search(r"[.!?]", s):
+        return False
+    if re.search(r"\b(I|you|we|my|your|me|am|are)\b", s):
+        return False
+    first = words[0].lower()
+    if first in _STAGE_STARTERS:
+        return True
+    # "<verb>s ..." third-person fragment, e.g. 'drums fingers on desk'
+    return bool(re.match(r"^[a-z]+s$", first)) and len(words) >= 2
+
+
+def _clean_persona_text(text):
+    """Convert leaked (parenthetical) stage directions to the
+    *asterisk* form the client italicizes; drop a lone stray closing
+    asterisk marker. Spoken text is otherwise untouched."""
+    def repl(m):
+        if _stage_directionish(m.group(1)):
+            return "*" + m.group(1).strip() + "*"
+        return m.group(0)
+    out = _SPAN_RE.sub(repl, text)
+    if out.count("*") % 2 == 1:
+        i = out.rfind("*")
+        out = out[:i] + out[i + 1:]
+    return out
+
+
+def _persona_safe_prefix(raw):
+    """The longest prefix of a still-streaming reply that is safe to
+    clean and emit: hold back a trailing unclosed ( or [ span (it may
+    still close as a stage direction) and a trailing unclosed *
+    span."""
+    cut = len(raw)
+    depth_at = None
+    for i, ch in enumerate(raw):
+        if ch in "([": 
+            if depth_at is None:
+                depth_at = i
+        elif ch in ")]":
+            depth_at = None
+    if depth_at is not None:
+        tail = raw[depth_at:]
+        if "\n" not in tail and len(tail) <= 90:
+            cut = depth_at
+    prefix = raw[:cut]
+    if prefix.count("*") % 2 == 1:
+        tail = prefix[prefix.rfind("*"):]
+        if "\n" not in tail and len(tail) <= 50:
+            prefix = prefix[:prefix.rfind("*")]
+    return prefix
 
 
 def _load_transcript(rec):
@@ -1750,11 +1914,17 @@ def _rehearse_stream_events(uid, rid, message):
     msgs = _persona_model_messages(rec, None if opener else message)
 
     raw = ""
+    emitted = 0
     failed = False
     try:
         for chunk in _anthropic_stream_chunks(system, msgs):
             raw += chunk
-            yield _sse({"type": "delta", "text": chunk})
+            # Emit only the cleaned safe prefix, so a stage
+            # direction never flashes as plain dialogue mid-stream.
+            safe = _clean_persona_text(_persona_safe_prefix(raw))
+            if len(safe) > emitted:
+                yield _sse({"type": "delta", "text": safe[emitted:]})
+                emitted = len(safe)
     except Exception:
         failed = True
     if failed and not raw:
@@ -1765,7 +1935,9 @@ def _rehearse_stream_events(uid, rid, message):
             _save_transcript(rid, transcript)
         yield _sse({"type": "error", "error": "connection"})
         return
-    reply = raw.strip()
+    reply = _clean_persona_text(raw).strip()
+    if len(reply) > emitted:
+        yield _sse({"type": "delta", "text": reply[emitted:]})
     transcript.append({"role": "persona", "content": reply})
     _save_transcript(rid, transcript)
     yield _sse({"type": "done", "reply": reply, "crisis": False,

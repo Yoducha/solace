@@ -155,6 +155,12 @@
   .msg.user { align-self: flex-end; background: var(--sage); color: #fff; border-bottom-right-radius: 6px; }
   .msg.ai { align-self: flex-start; background: var(--card); border: 1px solid var(--line); border-bottom-left-radius: 6px; }
   .msg.typing { color: var(--muted); }
+  /* Pulsing dots next to "Writing your coaching…" so the debrief
+     wait visibly isn't stuck. */
+  .wdots i { font-style: normal; opacity: .2; animation: wdot 1.2s ease-in-out infinite; }
+  .wdots i:nth-child(2) { animation-delay: .2s; }
+  .wdots i:nth-child(3) { animation-delay: .4s; }
+  @keyframes wdot { 0%, 55%, 100% { opacity: .2; } 25% { opacity: 1; } }
   #composer {
     display: flex; gap: 8px; padding: 12px 14px calc(12px + env(safe-area-inset-bottom));
     background: var(--card); border-top: 1px solid var(--line);
@@ -1191,7 +1197,12 @@ async function rhEnd() {
   bodyEl.innerHTML = '';
   const st = document.createElement('p');
   st.className = 'lead';
-  st.textContent = rhT().writing;
+  st.textContent = rhT().writing.replace(/…\s*$/, '');
+  const dots = document.createElement('span');
+  dots.className = 'wdots';
+  dots.setAttribute('aria-hidden', 'true');
+  dots.innerHTML = '<i>.</i><i>.</i><i>.</i>';
+  st.appendChild(dots);
   bodyEl.appendChild(st);
   const againBtn = document.getElementById('rh-again');
   const doneBtn = document.getElementById('rh-done');
