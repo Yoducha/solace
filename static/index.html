@@ -28,17 +28,51 @@
     position: sticky; top: 0; z-index: 5;
     background: var(--card); border-bottom: 1px solid var(--line);
     padding: 12px 16px; display: flex; align-items: center; justify-content: space-between;
+    flex-wrap: nowrap; gap: 8px;
   }
-  header .brand { font-size: 20px; font-weight: 700; letter-spacing: 0.5px; }
+  header .brand { font-size: 20px; font-weight: 700; letter-spacing: 0.5px; white-space: nowrap; }
   header .brand small { display: block; font-size: 11px; font-weight: 400; color: var(--muted); letter-spacing: 0.3px; }
+  .hdr-actions { display: flex; gap: 8px; align-items: center; flex-shrink: 0; }
+  .hdr-btn {
+    background: none; border: 1px solid var(--line); border-radius: 20px;
+    padding: 6px 10px; font-size: 14px; cursor: pointer; white-space: nowrap; color: var(--ink);
+  }
   .sos {
     text-decoration: none; font-weight: 700; font-size: 14px; color: var(--danger-ink);
-    background: var(--danger-bg); border-radius: 999px; padding: 8px 14px;
+    background: var(--danger-bg); border-radius: 999px; padding: 8px 14px; white-space: nowrap;
   }
+  .sos-short { display: none; }
   .disclaimer {
     background: var(--sage-soft); color: #5c6650; font-size: 12px; line-height: 1.5;
-    padding: 10px 16px; border-bottom: 1px solid var(--line); text-align: center;
+    padding: 10px 34px 10px 16px; border-bottom: 1px solid var(--line); text-align: center;
+    position: relative;
   }
+  .disclaimer .x {
+    position: absolute; right: 6px; top: 50%; transform: translateY(-50%);
+    background: none; border: none; color: #5c6650; cursor: pointer; font-size: 15px; padding: 6px;
+  }
+  .disclaimer .disc-short { display: none; }
+  .disclaimer.compact { font-size: 10.5px; padding: 5px 34px 5px 10px; text-align: left; }
+  .disclaimer.compact .disc-full { display: none; }
+  .disclaimer.compact .disc-short { display: inline; }
+  .disclaimer.compact .x { display: none; }
+  /* One-line header on phones: icon-only buttons, short crisis pill */
+  @media (max-width: 640px) {
+    header { padding: 8px 10px; }
+    header .brand { font-size: 17px; }
+    header .brand small { display: none; }
+    .hdr-btn { padding: 6px 8px; font-size: 15px; }
+    .btn-label { display: none; }
+    .sos { font-size: 13px; padding: 7px 10px; }
+    .sos-full { display: none; }
+    .sos-short { display: inline; }
+    .disclaimer { font-size: 11px; padding: 6px 30px 6px 10px; }
+  }
+  .linkbtn {
+    background: none; border: none; padding: 0; font: inherit; color: var(--clay);
+    cursor: pointer; text-decoration: underline;
+  }
+  .linkbtn.danger { color: var(--danger-ink); }
   #crisis-banner {
     display: none; background: var(--danger-bg); color: var(--danger-ink);
     padding: 14px 16px; font-size: 14px; line-height: 1.55; border-bottom: 1px solid #f3d9d9;
@@ -72,8 +106,9 @@
 
   /* Chat */
   #chat { display: none; flex: 1; flex-direction: column; min-height: 0; }
-  #messages { flex: 1; overflow-y: auto; padding: 18px 14px; display: flex; flex-direction: column; gap: 10px; }
-  .msg { max-width: 85%; padding: 12px 15px; border-radius: 18px; font-size: 16px; line-height: 1.55; white-space: pre-wrap; word-wrap: break-word; }
+  #messages { flex: 1; overflow-y: auto; padding: 18px 14px 28px; display: flex; flex-direction: column; gap: 10px; }
+  .msg { max-width: 85%; padding: 12px 15px; border-radius: 18px; font-size: 16px; line-height: 1.55; white-space: pre-wrap; word-wrap: break-word; scroll-margin-bottom: 120px; }
+  .msg.ai a { color: var(--clay); font-weight: 700; }
   .msg.user { align-self: flex-end; background: var(--sage); color: #fff; border-bottom-right-radius: 6px; }
   .msg.ai { align-self: flex-start; background: var(--card); border: 1px solid var(--line); border-bottom-left-radius: 6px; }
   .msg.typing { color: var(--muted); }
@@ -100,15 +135,16 @@
 
 <header>
   <div class="brand">Solace<small>a calm space to talk</small></div>
-  <div style="display:flex;gap:8px;align-items:center">
-    <button id="new-chat" title="Start a new conversation" style="background:none;border:1px solid var(--line);border-radius:20px;padding:6px 10px;font-size:14px;cursor:pointer">↺ New chat</button>
-    <button id="voice-toggle" title="Voice on/off" style="background:none;border:1px solid var(--line);border-radius:20px;padding:6px 10px;font-size:14px;cursor:pointer">🔇 Voice off</button>
-    <a class="sos" href="tel:988">In crisis? Call/text 988</a>
+  <div class="hdr-actions">
+    <button id="new-chat" class="hdr-btn" title="Start a new conversation">↺ <span class="btn-label">New chat</span></button>
+    <button id="voice-toggle" class="hdr-btn" title="Voice on/off">🔇 <span class="btn-label">Voice off</span></button>
+    <a class="sos" href="tel:988"><span class="sos-full">In crisis? Call/text 988</span><span class="sos-short">Crisis? 988</span></a>
   </div>
 </header>
 
-<div class="disclaimer">
-  Solace is an AI companion, not a licensed psychologist. It doesn't diagnose and it's not for emergencies.
+<div class="disclaimer" id="disclaimer">
+  <span class="disc-full">Solace is an AI companion, not a licensed psychologist. It doesn't diagnose and it's not for emergencies.</span><span class="disc-short">Solace is an AI companion, not a licensed psychologist.</span>
+  <button class="x" id="disclaimer-x" title="Make this smaller" aria-label="Collapse disclaimer">×</button>
 </div>
 
 <div id="crisis-banner">
@@ -155,7 +191,7 @@
       <input type="text" id="input" placeholder="Share what's on your mind…" autocomplete="off">
       <button id="send">Send</button>
     </div>
-    <p class="tiny" style="text-align:center;margin:6px 0 10px"><a href="/privacy" target="_blank">Privacy</a> · <a href="/terms" target="_blank">Terms</a></p>
+    <p class="tiny" style="text-align:center;margin:6px 0 10px"><a href="/privacy" target="_blank">Privacy</a> · <a href="/terms" target="_blank">Terms</a> · <button type="button" id="delete-data" class="linkbtn danger">Delete my data</button></p>
   </section>
 </main>
 
@@ -172,7 +208,7 @@ function pickVoice() {
 function speak(text) {
   try {
     speechSynthesis.cancel();
-    const u = new SpeechSynthesisUtterance(text);
+    const u = new SpeechSynthesisUtterance(text.replace(/\*\*/g, '').replace(/\*/g, ''));
     const v = pickVoice();
     if (v) u.voice = v;
     u.rate = 0.95; u.pitch = 1;
@@ -183,10 +219,21 @@ if ('speechSynthesis' in window) speechSynthesis.getVoices();
 
 document.getElementById('voice-toggle').addEventListener('click', function() {
   voiceOn = !voiceOn;
-  this.textContent = voiceOn ? '🔊 Voice on' : '🔇 Voice off';
+  this.innerHTML = voiceOn ? '🔊 <span class="btn-label">Voice on</span>' : '🔇 <span class="btn-label">Voice off</span>';
   if (!voiceOn && 'speechSynthesis' in window) speechSynthesis.cancel();
   if (voiceOn) speak("Voice is on. I'll read my replies out loud.");
 });
+
+// Disclaimer strip: collapsible to one small line, remembered for the
+// session, so the chat keeps more of the phone screen.
+(function() {
+  const disc = document.getElementById('disclaimer');
+  if (sessionStorage.getItem('solace_disc') === '1') disc.classList.add('compact');
+  document.getElementById('disclaimer-x').addEventListener('click', () => {
+    disc.classList.add('compact');
+    sessionStorage.setItem('solace_disc', '1');
+  });
+})();
 
 // New Conversation: fresh session id, cleared view, reset intake. confirm()
 // guards against an accidental tap wiping the current chat.
@@ -223,11 +270,52 @@ function esc(s) {
   return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 }
 
+// Make crisis numbers tappable inside replies. Runs on already-escaped,
+// already-markdown-rendered HTML that contains no attributes, so plain
+// word-boundary replacement is safe.
+function linkify(h) {
+  return h
+    .replace(/\b741741\b/g, '<a href="sms:741741?&body=HOME">741741</a>')
+    .replace(/\b1201\b/g, '<a href="tel:1201">1201</a>')
+    .replace(/\b988\b/g, '<a href="tel:988">988</a>')
+    .replace(/\b911\b/g, '<a href="tel:911">911</a>');
+}
+
+// Render basic markdown in AI replies: escape first, then **bold**,
+// *italic*, line breaks, and tappable crisis numbers.
+function renderAI(text) {
+  let h = esc(text);
+  h = h.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+  h = h.replace(/\*([^*\n]+)\*/g, '<em>$1</em>');
+  h = h.replace(/\n/g, '<br>');
+  return linkify(h);
+}
+
+// Bring the newest message fully into view. On iPhone the PAGE scrolls
+// rather than the #messages box, so scrollIntoView on the message
+// itself is the reliable path; scroll-margin-bottom on .msg keeps it
+// clear of the composer. Repeated after layout settles.
+function scrollToLatest(el) {
+  if (!el) return;
+  const doIt = () => {
+    try { el.scrollIntoView({block: 'end'}); } catch (e) { /* older browsers */ }
+    const box = document.getElementById('messages');
+    box.scrollTop = box.scrollHeight;
+  };
+  doIt();
+  requestAnimationFrame(doIt);
+  setTimeout(doIt, 120);
+}
+
 function addMsg(text, who) {
   const d = document.createElement('div');
   d.className = 'msg ' + who;
   const span = document.createElement('span');
-  span.textContent = text;
+  if (who === 'ai') {
+    span.innerHTML = renderAI(text);
+  } else {
+    span.textContent = text;
+  }
   d.appendChild(span);
   if (who === 'ai' && 'speechSynthesis' in window) {
     const b = document.createElement('button');
@@ -239,7 +327,7 @@ function addMsg(text, who) {
   }
   const box = document.getElementById('messages');
   box.appendChild(d);
-  box.scrollTop = box.scrollHeight;
+  scrollToLatest(d);
   return d;
 }
 
@@ -273,6 +361,10 @@ async function sendChat(text) {
     const banner = document.getElementById('crisis-banner');
     if (res.crisis) {
       banner.innerHTML = crisisBannerHTML(res.hotline || '988');
+      banner.style.display = 'block';
+    } else if (res.banner) {
+      // Stepped down from crisis mode: therapy is back, but the banner
+      // stays for the rest of the session.
       banner.style.display = 'block';
     } else {
       banner.style.display = 'none';
@@ -327,6 +419,35 @@ document.getElementById('input').addEventListener('keydown', e => {
   if (e.key === 'Enter') doSend();
 });
 
+// Delete my data: wipe everything stored for this session's user_id
+// (messages, profile, memory notes, crisis state), then reset the app.
+document.getElementById('delete-data').addEventListener('click', async () => {
+  if (!userId) { alert('There is no saved data to delete yet.'); return; }
+  if (!confirm('Permanently delete ALL your Solace data — every message, your profile, and the memory notes? This cannot be undone.')) return;
+  try {
+    const res = await api('/api/delete', {user_id: userId});
+    if (!res.ok) throw new Error('delete failed');
+    localStorage.removeItem('solace_uid');
+    userId = '';
+    if ('speechSynthesis' in window) speechSynthesis.cancel();
+    document.getElementById('messages').innerHTML = '';
+    document.getElementById('crisis-banner').style.display = 'none';
+    document.getElementById('name').value = '';
+    document.getElementById('concern').value = '';
+    mood = '';
+    document.querySelectorAll('#moods .chip').forEach(x => x.classList.remove('on'));
+    const beginBtn = document.getElementById('begin');
+    beginBtn.disabled = false;
+    beginBtn.textContent = 'Begin my first session';
+    document.getElementById('chat').style.display = 'none';
+    document.getElementById('welcome').style.display = 'flex';
+    alert('Your data has been deleted.');
+    window.scrollTo(0, 0);
+  } catch (e) {
+    alert('Could not delete your data just now — please try again, or email us and we will delete it for you.');
+  }
+});
+
 // Returning user: skip intake, restore history
 (async function init() {
   if (!userId) return;
@@ -336,7 +457,7 @@ document.getElementById('input').addEventListener('keydown', e => {
     if (h.messages && h.messages.length) {
       showChat();
       h.messages.forEach(m => addMsg(m.content, m.role === 'user' ? 'user' : 'ai'));
-      if (h.crisis) {
+      if (h.crisis || h.banner) {
         const banner = document.getElementById('crisis-banner');
         banner.innerHTML = crisisBannerHTML('988');
         banner.style.display = 'block';

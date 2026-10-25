@@ -70,6 +70,15 @@ CRISIS_PATTERNS = [
     r"tired of (living|life|being alive|existing)",
     r"can'?t (do this|go on|take it|keep going) anymore",
     r"cannot (go on|do this anymore)",
+    r"sleep and (not|never) wake up",
+    r"(wish|hope) i (would )?never wake up",
+    r"not wake up (tomorrow|again)",
+    r"don'?t want to wake up",
+    r"(wish|want) (i could )?(to )?disappear",
+    r"disappear forever",
+    r"feel like (such )?a burden",
+    r"(i am|i'?m) (such )?a burden",
+    r"(started|been|keep) cutting",
     # --- plan / means ---
     r"pills saved",
     r"saved up (pills|meds|medication|tablets)",
@@ -77,6 +86,8 @@ CRISIS_PATTERNS = [
     r"have a plan (to|for) (end|kill|die)",
     r"how i'?d do it",
     r"wrote a (goodbye|suicide) (note|letter)",
+    r"wrote goodbye letters",
+    r"goodbye letters",
     r"goodbye (note|letter)",
     r"this is (my )?goodbye",
     r"overdos\w*",
@@ -110,6 +121,22 @@ INFORMATIONAL_RE = re.compile(
     r"walk|charity|studying|research|article|movie|book|song|news)\b"
 )
 
+# Clearly informational QUESTIONS about the word itself ("What does the
+# word suicide mean?", "define suicide") — third-person, definitional.
+# These get a gentle answer + soft check-in, NOT the crisis script
+# (Solace re-test fix #7). Only ever consulted when the bare suicide
+# word is the sole possible signal; any first-person intent pattern
+# and the classifier still override (fail-safe).
+INFO_QUERY_RE = re.compile(
+    r"(what does (the )?(word|term|phrase) [\w'-]+ mean"
+    r"|what does ['\"]?sui[cs]id\w*['\"]? mean"
+    r"|(meaning|definition) of (the word )?['\"]?sui[cs]id\w*"
+    r"|define ['\"]?sui[cs]id\w*"
+    r"|what is (the )?(meaning|definition) of"
+    r"|how do you (say|spell) ['\"]?sui[cs]id\w*"
+    r"|sui[cs]id\w* (means|meaning|definition)\b)"
+)
+
 # Fixed, human crisis response (spec: Solace Fix #1). Sent verbatim, with
 # no model call, the moment risk is detected — and it REPLACES the normal
 # therapy reply.
@@ -121,12 +148,76 @@ FIXED_CRISIS_RESPONSE = (
     "call 911. I'm here with you — do you want to tell me what's going on?"
 )
 
+# The same fixed response, fully in Hebrew, for Hebrew conversations
+# (re-test fix #8): ERAN 1201 first, then 988 / 741741 / 911.
+FIXED_CRISIS_RESPONSE_HE = (
+    "אני ממש שמח שסיפרת לי על זה. חשוב לי לוודא שאתה בטוח עכשיו. "
+    "האם אתה חושב לפעול על פי המחשבות האלה הלילה? אתה לא צריך לעבור את זה לבד — "
+    "בישראל אפשר להתקשר לער״ן, קו הסיוע הנפשי, במספר 1201 (זמין 24/7). "
+    "בארה״ב אפשר להתקשר או לשלוח הודעה ל־988 (קו החיים למניעת התאבדות, 24/7), "
+    "או לשלוח HOME ל־741741. אם אתה בסכנה מיידית, התקשר ל־911. "
+    "אני כאן איתך — אתה רוצה לספר לי מה עובר עליך?"
+)
+
+# Gentle check-in sent ONCE when a person walks back a crisis statement
+# while crisis mode is latched (re-test fix #2). A retraction no longer
+# switches safety mode off instantly: this check-in goes out, crisis
+# mode stays latched, and only the NEXT calm, non-risk exchange steps
+# therapy back down. No relief emoji, no instant "that's a relief".
+RETRACTION_CHECKIN_RESPONSE = (
+    "I'm really glad to hear that — and I hope you understand, I'd still "
+    "rather check than just move on: are you safe right now? You shared "
+    "something serious a moment ago, and your safety matters more than "
+    "anything else here. If anything changes, you can call or text 988 "
+    "any time — free, confidential, 24/7 — or text HOME to 741741. "
+    "And I'm right here with you; we can keep talking about whatever "
+    "you need."
+)
+RETRACTION_CHECKIN_RESPONSE_HE = (
+    "אני ממש שמח לשמוע את זה — ובכל זאת חשוב לי לבדוק ולא פשוט לעבור הלאה: "
+    "אתה בטוח עכשיו? סיפרת לי משהו רציני לפני רגע, והבטיחות שלך חשובה יותר מהכול. "
+    "אם משהו משתנה, בישראל אפשר להתקשר לער״ן במספר 1201 בכל שעה, "
+    "ובארה״ב ל־988. אני כאן איתך — אפשר להמשיך לדבר על מה שאתה צריך."
+)
+
+# Dedicated prompt for clearly informational questions about the word
+# itself (re-test fix #7): answer the question, gentle check-in in the
+# spirit of the essay path, soft resource line. Never the crisis script.
+INFO_SYSTEM_PROMPT = """You are Solace, a warm AI companion for emotional support (not a licensed psychologist). The person has asked a clearly informational question about the word or topic of suicide — for example what the word means.
+
+Do exactly this, in a few short sentences:
+1. Answer their actual question directly, accurately and plainly (e.g. give the definition they asked for).
+2. Add ONE gentle check-in sentence in this spirit: sometimes people look this up because it connects to something they're going through personally, and sometimes it's purely academic or curiosity — either is completely okay.
+3. End with one soft, low-key resource line: if it ever does feel personal, in the US they can call or text 988 any time.
+
+Never ask "are you thinking about acting on this tonight?", never use a crisis script, never alarm. If the person is writing in Hebrew, answer fully in Hebrew and name Israel's ERAN hotline (1201) as the resource instead."""
+
+# Deterministic fallback for the informational path if the model call
+# fails — same gentle shape as the essay path (fix #7).
+INFO_FALLBACK = (
+    "\u201cSuicide\u201d means the act of a person intentionally ending "
+    "their own life. I wanted to answer that plainly \u2014 and to check "
+    "in gently: sometimes people look this up because it connects to "
+    "something personal, and sometimes it's purely for school or "
+    "curiosity. Either is completely okay, and I'm here if you ever "
+    "want to talk. If it ever does feel personal, in the US you can "
+    "call or text 988 any time."
+)
+INFO_FALLBACK_HE = (
+    "\u05f3התאבדות\u05f3 היא מעשה שבו אדם מסיים את חייו בכוונה. "
+    "רציתי לענות על זה בפשטות \u2014 וגם לבדוק בעדינות: לפעמים אנשים "
+    "מחפשים את זה כי זה מתחבר למשהו אישי, ולפעמים זה פשוט מסקרנות או "
+    "ללימודים. שני הדברים בסדר גמור, ואני כאן אם תרצה לדבר. אם זה "
+    "אי פעם מרגיש אישי, בישראל אפשר להתקשר לער\u05f4ן במספר 1201 בכל שעה."
+)
+
 # System prompt used for follow-up turns while crisis mode is latched:
 # safety only — no therapy techniques, no homework, no jargon.
 CRISIS_SYSTEM_PROMPT = """You are Solace, in CRISIS MODE with a person who has expressed thoughts of suicide or self-harm. Rules for every reply in this mode:
 - Your only job is the person's safety right now. Stay warm, steady, human. Take everything seriously; never panic, never moralize or shame.
 - Ask directly how they are doing and whether they are safe right now / tonight. Keep gently checking safety each reply.
-- In every reply, remind them: in the US they can call or text 988 (Suicide & Crisis Lifeline, 24/7) or text HOME to 741741; if they are in immediate danger, call 911. If (and only if) they are writing in Hebrew, mention Israel's ERAN hotline (1201) prominently instead.
+- In every reply, remind them: in the US they can call or text 988 (Suicide & Crisis Lifeline, 24/7) or text HOME to 741741; if they are in immediate danger, call 911.
+- Match the person's language: reply in the language they are writing in. If they write in Hebrew, your ENTIRE reply must be in Hebrew — not English with a Hebrew line added — and the resources lead with Israel's ERAN emotional-support hotline (1201) first, then 988 / 741741 / 911.
 - Do NOT do therapy: no CBT/ACT/DBT techniques, no thought-challenging, no homework or exercises, no analysis of their patterns, no jargon (never say things like "resistance" or "emotional conditioning").
 - Short replies (2-4 sentences). One caring question at a time. Stay with them; do not rush to wrap up."""
 
@@ -155,7 +246,8 @@ RETRACTION_RE = re.compile(
     r"i feel better|false alarm|i take it back|"
     r"don'?t wanna die|do not wanna die|don'?t want to die|"
     r"do not want to die|don'?t want to kill myself|"
-    r"do not want to kill myself|לא רוצה למות)\b"
+    r"do not want to kill myself|לא רוצה למות|"
+    r"אני בסדר|הכול בסדר|הכל בסדר|רק צחקתי|סתם צחקתי|תשכח מזה|לא התכוונתי)\b"
 )
 
 SYSTEM_PROMPT = """You are Solace, a warm and skilled AI companion for emotional support. You carry the knowledge depth of a fully trained clinical psychologist — CBT, ACT, DBT, trauma-informed care, attachment theory, grief work, motivational interviewing — but you are NOT a licensed psychologist, NOT a therapist, and this is NOT therapy.
@@ -252,6 +344,23 @@ def init_db():
             conn.execute(
                 "ALTER TABLE users ADD COLUMN crisis_mode INTEGER DEFAULT 0"
             )
+        # Re-test fix #2: step-down state + session-level banner flag.
+        # crisis_stepdown: the gentle post-retraction check-in has been
+        # given and one calm exchange is still owed before unlatching.
+        # crisis_banner: once any crisis happened in this session, the
+        # 988 banner stays visible for the rest of the session, even
+        # after therapy steps back down.
+        if "crisis_stepdown" not in cols:
+            conn.execute(
+                "ALTER TABLE users ADD COLUMN crisis_stepdown INTEGER DEFAULT 0"
+            )
+        if "crisis_banner" not in cols:
+            conn.execute(
+                "ALTER TABLE users ADD COLUMN crisis_banner INTEGER DEFAULT 0"
+            )
+            conn.execute(
+                "UPDATE users SET crisis_banner=1 WHERE crisis_mode=1"
+            )
         conn.commit()
         conn.close()
 
@@ -335,10 +444,20 @@ def detect_crisis_keywords(text):
             words = re.findall(r"[a-z'\u0590-\u05FF]+", before)
             if NEGATION_RE.search(" ".join(words[-2:])):
                 continue
-            if INFORMATIONAL_RE.search(t):
+            if INFORMATIONAL_RE.search(t) or INFO_QUERY_RE.search(t):
                 return False
             return True
     return False
+
+
+def is_informational_word_question(text):
+    """True for clearly informational questions about the word 'suicide'
+    itself (meaning/definition/spelling). Caller must still run the
+    classifier fail-safe before taking the gentle path."""
+    t = text.lower()
+    return any(b.search(t) for b in BARE_SUICIDE_RE) and bool(
+        INFO_QUERY_RE.search(t)
+    )
 
 
 def classify_risk(text):
@@ -381,15 +500,26 @@ def has_hebrew(text):
     return bool(HEBREW_RE.search(text))
 
 
-def crisis_resource_line(msg, reply):
+def conversation_is_hebrew(hist_rows, msg):
+    """True when the conversation is in Hebrew: the current message or
+    any of the last few user messages contains Hebrew. Used so a Hebrew
+    conversation stays fully Hebrew even if one follow-up is short or
+    typed in transliteration."""
+    if has_hebrew(msg):
+        return True
+    user_msgs = [r["content"] for r in hist_rows if r["role"] == "user"]
+    return any(has_hebrew(c) for c in user_msgs[-3:])
+
+
+def crisis_resource_line(hebrew, reply):
     """Deterministic crisis-resource footer, locale-aware.
 
-    Hebrew input -> Israel's ERAN emotional-support hotline 1201 is
-    prominent. English -> make sure 988 is present (the model usually
+    Hebrew conversation -> Israel's ERAN emotional-support hotline 1201
+    is prominent. English -> make sure 988 is present (the model usually
     includes it via the crisis protocol; this is the deterministic
     backstop so the right number is always there).
     """
-    if has_hebrew(msg):
+    if hebrew:
         if "1201" in reply:
             return ""
         return (
@@ -482,6 +612,10 @@ class ChatIn(BaseModel):
     message: str
 
 
+class DeleteIn(BaseModel):
+    user_id: str
+
+
 @asynccontextmanager
 async def lifespan(app):
     init_db()
@@ -512,9 +646,9 @@ def chat(body: ChatIn, background: BackgroundTasks):
     uid = body.user_id.strip()
     msg = body.message.strip()
     if not uid:
-        return {"reply": "Something went wrong starting your session. Please refresh and try again.", "crisis": False}
+        return {"reply": "Something went wrong starting your session. Please refresh and try again.", "crisis": False, "banner": False}
     if not msg:
-        return {"reply": "I'm here — what's on your mind?", "crisis": False}
+        return {"reply": "I'm here — what's on your mind?", "crisis": False, "banner": False}
 
     with db_lock:
         conn = _conn()
@@ -545,13 +679,27 @@ def chat(body: ChatIn, background: BackgroundTasks):
 
     # ---- Pre-model risk check (Solace Fix #1) ----
     # Runs BEFORE any therapy model call, on every user message:
-    # keyword layer, then a small classifier prompt.
-    risk = assess_risk(msg)
+    # keyword layer first, then the classifier fail-safe.
+    hebrew = conversation_is_hebrew(hist, msg)
+    hotline = "1201" if hebrew else "988"
+    kw_risk = detect_crisis_keywords(msg)
+    info_q = (not kw_risk) and is_informational_word_question(msg)
+    if kw_risk:
+        risk = True
+    else:
+        # The classifier also runs for informational word questions, so
+        # anything ambiguous or first-person still escalates; only a
+        # clearly informational question the classifier clears takes
+        # the gentle path (re-test fix #7).
+        risk = classify_risk(msg)
     in_crisis_mode = bool(profile.get("crisis_mode"))
-    # Explicit retraction with no active risk signal de-escalates — it is
-    # the ONLY exit from crisis mode.
+    stepdown = bool(profile.get("crisis_stepdown"))
+    banner = bool(profile.get("crisis_banner"))
+    # Explicit retraction with no active risk signal is the ONLY exit
+    # path from crisis mode — and it is a two-step step-down now
+    # (gentle check-in first, one calm exchange after), never an
+    # instant exit (re-test fix #2).
     retracted = detect_retraction(msg) and not risk
-    hotline = "1201" if has_hebrew(msg) else "988"
     messages = [{"role": r["role"], "content": r["content"]} for r in reversed(hist)]
 
     def _save_assistant(text):
@@ -564,45 +712,93 @@ def chat(body: ChatIn, background: BackgroundTasks):
             c.commit()
             c.close()
 
-    def _set_crisis_mode(on):
+    def _set_state(crisis_mode=None, stepdown_v=None, banner_v=None):
+        sets, vals = [], []
+        if crisis_mode is not None:
+            sets.append("crisis_mode=?")
+            vals.append(1 if crisis_mode else 0)
+        if stepdown_v is not None:
+            sets.append("crisis_stepdown=?")
+            vals.append(1 if stepdown_v else 0)
+        if banner_v is not None:
+            sets.append("crisis_banner=?")
+            vals.append(1 if banner_v else 0)
+        if not sets:
+            return
+        vals.append(uid)
         with db_lock:
             c = _conn()
             c.execute(
-                "UPDATE users SET crisis_mode=? WHERE id=?",
-                (1 if on else 0, uid),
+                "UPDATE users SET %s WHERE id=?" % ", ".join(sets), vals
             )
             c.commit()
             c.close()
 
-    # Fresh risk signal: fixed human response, no therapy reply, latch on.
+    # Fresh risk signal: fixed human response, no therapy reply, latch
+    # on, step-down reset, banner on for the rest of the session. Fully
+    # Hebrew for Hebrew conversations (re-test fix #8).
     if risk:
-        _set_crisis_mode(True)
-        reply = FIXED_CRISIS_RESPONSE + crisis_resource_line(msg, FIXED_CRISIS_RESPONSE)
+        _set_state(crisis_mode=True, stepdown_v=False, banner_v=True)
+        base = FIXED_CRISIS_RESPONSE_HE if hebrew else FIXED_CRISIS_RESPONSE
+        reply = base + crisis_resource_line(hebrew, base)
         _save_assistant(reply)
-        return {"reply": reply, "crisis": True, "hotline": hotline}
+        return {"reply": reply, "crisis": True, "hotline": hotline, "banner": True}
 
-    # Crisis mode latched from an earlier message: stay in it.
-    if in_crisis_mode and not retracted:
-        system = CRISIS_SYSTEM_PROMPT
-        if profile.get("name"):
-            system += "\n\nThe person's name is %s." % profile["name"]
+    # Clearly informational word question (and not in crisis mode):
+    # answer it, with the gentle check-in — never the crisis script.
+    if info_q and not in_crisis_mode:
         try:
-            reply = call_anthropic(CHAT_MODEL, system, messages)
+            reply = call_anthropic(CHAT_MODEL, INFO_SYSTEM_PROMPT, messages)
         except Exception:
-            reply = (
-                "I'm still here with you. Are you safe right now? "
-                "Please reach out — call or text 988 any time, or text "
-                "HOME to 741741."
-            )
+            reply = INFO_FALLBACK_HE if hebrew else INFO_FALLBACK
         if reply.startswith("[CRISIS]"):
             reply = reply[len("[CRISIS]"):].strip()
-        reply += crisis_resource_line(msg, reply)
         _save_assistant(reply)
-        return {"reply": reply, "crisis": True, "hotline": hotline}
+        return {"reply": reply, "crisis": False, "hotline": hotline, "banner": banner}
 
-    # Explicit retraction while latched: clear crisis mode, normal flow.
-    if in_crisis_mode and retracted:
-        _set_crisis_mode(False)
+    # Crisis mode latched from an earlier message.
+    if in_crisis_mode:
+        if stepdown:
+            # The gentle check-in already went out; this is the next
+            # exchange. Risk is False here (a fresh risk signal was
+            # handled above and re-latches fully), so a calm, non-risk
+            # exchange completes the step-down: therapy resumes, but
+            # the banner flag stays on for the rest of the session.
+            _set_state(crisis_mode=False, stepdown_v=False)
+            in_crisis_mode = False
+            # fall through to the normal flow below
+        elif retracted:
+            # First walk-back: do NOT unlatch. One gentle check-in,
+            # no relief tone, still in crisis mode, banner stays.
+            _set_state(stepdown_v=True)
+            reply = (
+                RETRACTION_CHECKIN_RESPONSE_HE if hebrew
+                else RETRACTION_CHECKIN_RESPONSE
+            )
+            reply += crisis_resource_line(hebrew, reply)
+            _save_assistant(reply)
+            return {"reply": reply, "crisis": True, "hotline": hotline, "banner": True}
+        else:
+            system = CRISIS_SYSTEM_PROMPT
+            if profile.get("name"):
+                system += "\n\nThe person's name is %s." % profile["name"]
+            try:
+                reply = call_anthropic(CHAT_MODEL, system, messages)
+            except Exception:
+                reply = (
+                    "אני עדיין כאן איתך. אתה בטוח עכשיו? בישראל אפשר "
+                    "להתקשר לער״ן במספר 1201 בכל שעה. בארה״ב אפשר "
+                    "להתקשר או לשלוח הודעה ל־988, או לשלוח HOME ל־741741."
+                    if hebrew else
+                    "I'm still here with you. Are you safe right now? "
+                    "Please reach out — call or text 988 any time, or text "
+                    "HOME to 741741."
+                )
+            if reply.startswith("[CRISIS]"):
+                reply = reply[len("[CRISIS]"):].strip()
+            reply += crisis_resource_line(hebrew, reply)
+            _save_assistant(reply)
+            return {"reply": reply, "crisis": True, "hotline": hotline, "banner": True}
 
     crisis = False
     system = build_system(profile, summary)
@@ -611,23 +807,42 @@ def chat(body: ChatIn, background: BackgroundTasks):
         reply = call_anthropic(CHAT_MODEL, system, messages)
     except Exception:
         err = "I'm having trouble connecting right now. Please try again in a moment — I'm still here."
-        return {"reply": err, "crisis": False, "hotline": hotline}
+        return {"reply": err, "crisis": False, "hotline": hotline, "banner": banner}
 
     if reply.startswith("[CRISIS]"):
         reply = reply[len("[CRISIS]"):].strip()
         if not retracted:
             crisis = True
-            _set_crisis_mode(True)
+            banner = True
+            _set_state(crisis_mode=True, stepdown_v=False, banner_v=True)
 
     if crisis:
-        reply += crisis_resource_line(msg, reply)
+        reply += crisis_resource_line(hebrew, reply)
 
     _save_assistant(reply)
 
     if user_count % 10 == 0:
         background.add_task(update_summary, user_id)
 
-    return {"reply": reply, "crisis": crisis, "hotline": hotline}
+    return {"reply": reply, "crisis": crisis, "hotline": hotline, "banner": banner}
+
+
+@app.post("/api/delete")
+def delete_data(body: DeleteIn):
+    """Delete ALL data stored for a user_id (re-test fix #3): profile,
+    every message, the memory/summary note, and all crisis state.
+    Backs the in-app "Delete my data" button."""
+    uid = body.user_id.strip()
+    if not uid:
+        return {"ok": False, "deleted": False}
+    with db_lock:
+        conn = _conn()
+        conn.execute("DELETE FROM messages WHERE user_id=?", (uid,))
+        conn.execute("DELETE FROM summaries WHERE user_id=?", (uid,))
+        conn.execute("DELETE FROM users WHERE id=?", (uid,))
+        conn.commit()
+        conn.close()
+    return {"ok": True, "deleted": True}
 
 
 @app.get("/api/history")
@@ -642,13 +857,14 @@ def history(user_id: str):
             "SELECT summary FROM summaries WHERE user_id=?", (user_id,)
         ).fetchone()
         u = conn.execute(
-            "SELECT crisis_mode FROM users WHERE id=?", (user_id,)
+            "SELECT crisis_mode, crisis_banner FROM users WHERE id=?", (user_id,)
         ).fetchone()
         conn.close()
     return {
         "messages": [dict(r) for r in rows],
         "summary": s["summary"] if s else "",
         "crisis": bool(u["crisis_mode"]) if u else False,
+        "banner": bool(u["crisis_banner"]) if u else False,
     }
 
 
