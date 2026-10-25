@@ -164,6 +164,57 @@
     background: var(--sage); color: #fff; border: none; border-radius: 999px;
     padding: 0 22px; font-size: 16px; font-weight: 700; cursor: pointer;
   }
+
+  /* Rehearse a hard talk */
+  .btn.secondary { background: var(--sage); }
+  .btn.ghost { background: none; color: var(--clay); border: 1px solid var(--line); }
+  #rehearse { display: none; flex: 1; flex-direction: column; min-height: 0; }
+  .rh-scroll { overflow-y: auto; padding: 22px 20px; display: flex; flex-direction: column; gap: 16px; }
+  .rh-scroll h2 { font-size: 24px; margin: 2px 0 0; }
+  .rh-scroll p.lead { color: var(--muted); font-size: 16px; line-height: 1.6; margin: 0; }
+  .rh-top { display: flex; align-items: center; gap: 12px; padding: 10px 14px; border-bottom: 1px solid var(--line); background: var(--card); }
+  .rh-top .rh-name { font-weight: 700; font-size: 16px; }
+  .person-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .pcard {
+    border: 1px solid var(--line); background: var(--card); border-radius: 16px;
+    padding: 18px 10px; font-size: 16px; font-weight: 600; cursor: pointer; color: var(--ink);
+    font-family: inherit;
+  }
+  .pcard.on { background: var(--clay); border-color: var(--clay); color: #fff; }
+  #rh-step-live { flex: 1; flex-direction: column; min-height: 0; }
+  .rh-live-head {
+    display: flex; align-items: center; justify-content: space-between; gap: 10px;
+    padding: 10px 14px; background: var(--clay-soft); border-bottom: 1px solid var(--line);
+    font-size: 14px; font-weight: 600;
+  }
+  .btn.small { width: auto; padding: 10px 14px; font-size: 14px; border-radius: 999px; }
+  #rh-messages { flex: 1; overflow-y: auto; padding: 18px 14px 28px; display: flex; flex-direction: column; gap: 10px; }
+  #rh-composer {
+    display: flex; gap: 8px; padding: 12px 14px calc(12px + env(safe-area-inset-bottom));
+    background: var(--card); border-top: 1px solid var(--line);
+  }
+  #rh-composer input {
+    flex: 1; border: 1px solid var(--line); border-radius: 999px; padding: 12px 16px; font-size: 16px; font-family: inherit;
+  }
+  #rh-composer button {
+    background: var(--sage); color: #fff; border: none; border-radius: 999px;
+    padding: 0 22px; font-size: 16px; font-weight: 700; cursor: pointer;
+  }
+  .debrief-block h3 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 0 0 8px; }
+  .debrief-block { background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 14px 16px; }
+  .debrief-block ul { margin: 0; padding-left: 20px; font-size: 15px; line-height: 1.6; }
+  .debrief-block p { margin: 0; font-size: 15px; line-height: 1.6; }
+  .debrief-block blockquote {
+    margin: 0 0 8px; padding: 10px 12px; background: var(--sage-soft); border-radius: 12px;
+    font-size: 15px; line-height: 1.55;
+  }
+  [dir="rtl"] .debrief-block ul { padding-left: 0; padding-right: 20px; }
+  .rhcard {
+    align-self: stretch; background: var(--clay-soft); border: 1px solid var(--line);
+    border-radius: 16px; padding: 12px 14px; font-size: 14px; line-height: 1.55;
+  }
+  .rhcard strong { display: block; font-size: 15px; margin-bottom: 2px; }
+  .rhcard .tip { color: var(--ink); }
 </style>
 </head>
 <body>
@@ -220,6 +271,7 @@
     </div>
 
     <button class="btn" id="begin">Start a reflection</button>
+    <button class="btn secondary" id="begin-rehearse" type="button">Rehearse a hard talk</button>
     <p class="tiny">By continuing you agree to the <a href="/terms" target="_blank">Terms</a> and <a href="/privacy" target="_blank">Privacy Policy</a>, and you understand Solace is an AI self-help companion, not professional care.<br>If you're ever in crisis, call or text 988.</p>
   </section>
 
@@ -230,7 +282,68 @@
       <input type="text" id="input" placeholder="Share what's on your mind…" autocomplete="off">
       <button id="send">Send</button>
     </div>
-    <p class="tiny" style="text-align:center;margin:6px 0 10px"><a href="/privacy" target="_blank">Privacy</a> · <a href="/terms" target="_blank">Terms</a> · <button type="button" id="memory-open" class="linkbtn">What Solace remembers</button> · <button type="button" id="delete-data" class="linkbtn danger">Delete my data</button></p>
+    <p class="tiny" style="text-align:center;margin:6px 0 10px"><a href="/privacy" target="_blank">Privacy</a> · <a href="/terms" target="_blank">Terms</a> · <button type="button" id="rehearse-open" class="linkbtn">Rehearse a hard talk</button> · <button type="button" id="memory-open" class="linkbtn">What Solace remembers</button> · <button type="button" id="delete-data" class="linkbtn danger">Delete my data</button></p>
+  </section>
+
+  <!-- Rehearse a hard talk -->
+  <section id="rehearse">
+    <div class="rh-top">
+      <button type="button" id="rh-back" class="linkbtn">← <span data-rh="back">Back</span></button>
+      <span class="rh-name" data-rh="title">Rehearse a hard talk</span>
+    </div>
+
+    <div id="rh-step-person" class="rh-scroll">
+      <p class="lead" data-rh="whoQ">Who's the talk with?</p>
+      <div class="person-grid" id="rh-people"></div>
+      <div id="rh-custom" style="display:none;flex-direction:column;gap:14px">
+        <div>
+          <label class="q" for="rh-cname" data-rh="nameL">Their name</label>
+          <input type="text" id="rh-cname" autocomplete="off">
+        </div>
+        <div>
+          <label class="q" for="rh-crel" data-rh="relL">Who are they to you?</label>
+          <input type="text" id="rh-crel" autocomplete="off">
+        </div>
+      </div>
+      <button class="btn" id="rh-to-setup" type="button" data-rh="cont">Continue</button>
+    </div>
+
+    <div id="rh-step-setup" class="rh-scroll" style="display:none">
+      <p class="lead" id="rh-setup-sub"></p>
+      <div>
+        <label class="q" for="rh-topic" data-rh="topicL">What's the talk about?</label>
+        <textarea id="rh-topic"></textarea>
+      </div>
+      <div>
+        <label class="q" data-rh="reactL">How do they usually react?</label>
+        <div class="chips" id="rh-reactions"></div>
+      </div>
+      <div>
+        <label class="q" for="rh-context"><span data-rh="ctxL">Anything else they should know?</span> <span style="color:var(--muted);font-weight:400" data-rh="optional">(optional)</span></label>
+        <input type="text" id="rh-context" autocomplete="off">
+      </div>
+      <button class="btn" id="rh-start" type="button" data-rh="start">Start rehearsing</button>
+      <button class="btn ghost" id="rh-start-skip" type="button" data-rh="skip">Skip setup &amp; start now</button>
+    </div>
+
+    <div id="rh-step-live" style="display:none">
+      <div class="rh-live-head">
+        <span id="rh-with"></span>
+        <button type="button" id="rh-end" class="btn small" data-rh="end">End &amp; get coaching</button>
+      </div>
+      <div id="rh-messages"></div>
+      <div id="rh-composer">
+        <input type="text" id="rh-input" autocomplete="off">
+        <button id="rh-send" type="button" data-rh="send">Send</button>
+      </div>
+    </div>
+
+    <div id="rh-step-debrief" class="rh-scroll" style="display:none">
+      <h2 data-rh="coachTitle">Your coaching</h2>
+      <div id="rh-debrief-body" style="display:flex;flex-direction:column;gap:12px"></div>
+      <button class="btn" id="rh-again" type="button" data-rh="again">Rehearse again</button>
+      <button class="btn ghost" id="rh-done" type="button" data-rh="done">Done</button>
+    </div>
   </section>
 </main>
 
@@ -330,6 +443,8 @@ document.getElementById('new-chat').addEventListener('click', () => {
   beginBtn.disabled = false;
   beginBtn.textContent = 'Start a reflection';
   document.getElementById('chat').style.display = 'none';
+  document.getElementById('rehearse').style.display = 'none';
+  rhState = null;
   document.getElementById('welcome').style.display = 'flex';
   window.scrollTo(0, 0);
 });
@@ -613,6 +728,8 @@ async function doDeleteData() {
     beginBtn.disabled = false;
     beginBtn.textContent = 'Start a reflection';
     document.getElementById('chat').style.display = 'none';
+    document.getElementById('rehearse').style.display = 'none';
+    rhState = null;
     document.getElementById('welcome').style.display = 'flex';
     alert('Your data has been deleted.');
     window.scrollTo(0, 0);
@@ -679,20 +796,480 @@ document.getElementById('memory-close').addEventListener('click', closeMemory);
 document.getElementById('memory-delete-all').addEventListener('click', doDeleteData);
 memoryOverlay.addEventListener('click', e => { if (e.target === memoryOverlay) closeMemory(); });
 
+// ---- Rehearse a hard talk ----
+const RH_PEOPLE = ['boss', 'partner', 'dad', 'mom', 'friend', 'custom'];
+const RH_REACTIONS = [
+  ['Gets defensive', 'מתגונן'],
+  ['Goes quiet', 'משתתק'],
+  ['Guilt-trips', 'גורם לי להרגיש אשם'],
+  ['Calm but stubborn', 'רגוע אבל עקשן'],
+  ['Raises their voice', 'מרים את הקול'],
+  ['Cries', 'בוכה'],
+  ['Changes the subject', 'משנה נושא'],
+  ['Gets sarcastic', 'נהיה ציני'],
+  ['Shuts down', 'נסגר'],
+  ['Listens, then pushes back later', 'מקשיב, ואז מתנגד אחר כך'],
+];
+const RH = {
+  en: {
+    back: 'Back', title: 'Rehearse a hard talk', whoQ: "Who's the talk with?",
+    cont: 'Continue', nameL: 'Their name', relL: 'Who are they to you?',
+    topicL: "What's the talk about?",
+    topicPh: 'What you need to say, or how you want it to end…',
+    reactL: 'How do they usually react?',
+    ctxL: 'Anything else they should know?', optional: '(optional)',
+    ctxPh: 'e.g. He hates being surprised at work…',
+    start: 'Start rehearsing', skip: 'Skip setup & start now',
+    end: 'End & get coaching', send: 'Send', sayPh: 'Say it like you would…',
+    coachTitle: 'Your coaching', worked: 'What worked', sideways: 'Where it got hard',
+    youSaid: 'You said:', instead: 'Try saying this instead',
+    again: 'Rehearse again', done: 'Done',
+    people: {boss: 'Boss', partner: 'Partner', dad: 'Dad', mom: 'Mom', friend: 'Friend', custom: 'Someone else'},
+    display: {boss: 'your boss', partner: 'your partner', dad: 'Dad', mom: 'Mom', friend: 'your friend'},
+    setupSub: d => 'A few quick taps, then you practice with ' + d + ". They'll react the way you describe — so you can try your words out first.",
+    withP: d => "You're practicing with " + d,
+    pickFirst: 'Pick who the talk is with first.',
+    errConn: 'Connection trouble — try that line again.',
+    notNow: "Rehearsal isn't available right now — this space is here for you.",
+    rhCard: d => '🎭 Rehearsal — ' + d,
+  },
+  he: {
+    back: 'חזרה', title: 'לתרגל שיחה קשה', whoQ: 'עם מי השיחה?',
+    cont: 'המשך', nameL: 'השם שלהם', relL: 'מה הם בשבילך?',
+    topicL: 'על מה השיחה?',
+    topicPh: 'מה אתה צריך להגיד, או איך אתה רוצה שזה ייגמר…',
+    reactL: 'איך הם בדרך כלל מגיבים?',
+    ctxL: 'עוד משהו שכדאי שיידעו?', optional: '(לא חובה)',
+    ctxPh: 'למשל: הוא שונא הפתעות בעבודה…',
+    start: 'מתחילים לתרגל', skip: 'דלג והתחל עכשיו',
+    end: 'סיים וקבל הדרכה', send: 'שלח', sayPh: 'תגיד את זה כמו שבאמת היית אומר…',
+    coachTitle: 'ההדרכה שלך', worked: 'מה עבד', sideways: 'איפה זה נתקע',
+    youSaid: 'אמרת:', instead: 'אפשר לנסות להגיד ככה',
+    again: 'לתרגל שוב', done: 'סיימתי',
+    people: {boss: 'הבוס', partner: 'בן/בת הזוג', dad: 'אבא', mom: 'אמא', friend: 'חבר/ה', custom: 'מישהו אחר'},
+    display: {boss: 'הבוס שלך', partner: 'בן/בת הזוג שלך', dad: 'אבא', mom: 'אמא', friend: 'החבר/ה שלך'},
+    setupSub: d => 'כמה הקשות מהירות, ואז מתרגלים עם ' + d + '. הוא יגיב כמו שתתאר — כדי שתוכל לנסות את המילים שלך קודם.',
+    withP: d => 'אתה מתרגל עם ' + d,
+    pickFirst: 'קודם בחר עם מי השיחה.',
+    errConn: 'בעיית חיבור — נסה שוב את המשפט הזה.',
+    notNow: 'התרגול לא זמין כרגע — המרחב הזה כאן בשבילך.',
+    rhCard: d => '🎭 תרגול — ' + d,
+  },
+};
+let rhState = null;
+
+function rhLang() {
+  return (bannerLang === 'he' || /^he/i.test(navigator.language || '')) ? 'he' : 'en';
+}
+function rhT() { return RH[(rhState && rhState.lang) || rhLang()]; }
+
+function rhApplyStrings() {
+  const t = rhT();
+  document.querySelectorAll('[data-rh]').forEach(el => {
+    const k = el.getAttribute('data-rh');
+    if (typeof t[k] === 'string') el.textContent = t[k];
+  });
+  document.getElementById('rh-topic').placeholder = t.topicPh;
+  document.getElementById('rh-context').placeholder = t.ctxPh;
+  document.getElementById('rh-input').placeholder = t.sayPh;
+  document.getElementById('rehearse').setAttribute('dir', rhState.lang === 'he' ? 'rtl' : 'ltr');
+  const grid = document.getElementById('rh-people');
+  grid.innerHTML = '';
+  RH_PEOPLE.forEach(p => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'pcard' + (rhState.personType === p ? ' on' : '');
+    b.textContent = t.people[p];
+    b.addEventListener('click', () => rhPickPerson(p));
+    grid.appendChild(b);
+  });
+  const rc = document.getElementById('rh-reactions');
+  rc.innerHTML = '';
+  RH_REACTIONS.forEach(([en, he]) => {
+    const c = document.createElement('button');
+    c.type = 'button';
+    c.className = 'chip' + (rhState.setup.reactions.includes(en) ? ' on' : '');
+    c.textContent = rhState.lang === 'he' ? he : en;
+    c.addEventListener('click', () => {
+      const i = rhState.setup.reactions.indexOf(en);
+      if (i >= 0) rhState.setup.reactions.splice(i, 1);
+      else rhState.setup.reactions.push(en);
+      c.classList.toggle('on');
+    });
+    rc.appendChild(c);
+  });
+}
+
+function rhPickPerson(p) {
+  rhState.personType = p;
+  document.querySelectorAll('#rh-people .pcard').forEach((el, i) =>
+    el.classList.toggle('on', RH_PEOPLE[i] === p));
+  document.getElementById('rh-custom').style.display = p === 'custom' ? 'flex' : 'none';
+}
+
+function rhDisplay() {
+  const t = rhT();
+  if (rhState.personType === 'custom') {
+    return rhState.setup.person_name || rhState.setup.relationship || t.people.custom;
+  }
+  return t.display[rhState.personType];
+}
+
+function rhShowStep(name) {
+  ['person', 'setup', 'live', 'debrief'].forEach(s => {
+    document.getElementById('rh-step-' + s).style.display = s === name ? 'flex' : 'none';
+  });
+}
+
+async function openRehearse() {
+  if (!userId) {
+    userId = Array.from(crypto.getRandomValues(new Uint8Array(8)))
+      .map(b => b.toString(16).padStart(2, '0')).join('');
+    localStorage.setItem('solace_uid', userId);
+    setUidCookie(userId);
+    try {
+      const res = await api('/api/profile', {user_id: userId, name: '', notes: ''});
+      userId = res.user_id;
+      localStorage.setItem('solace_uid', userId);
+      setUidCookie(userId);
+    } catch (e) { /* the start call creates the user row too */ }
+  }
+  rhState = {
+    personType: '', id: null, display: '', debrief: null, busy: false,
+    lang: rhLang(),
+    setup: {person_name: '', relationship: '', topic: '', reactions: [], context: ''},
+    returnTo: document.getElementById('chat').style.display === 'flex' ? 'chat' : 'welcome',
+  };
+  document.getElementById('rh-cname').value = '';
+  document.getElementById('rh-crel').value = '';
+  document.getElementById('rh-topic').value = '';
+  document.getElementById('rh-context').value = '';
+  document.getElementById('rh-messages').innerHTML = '';
+  document.getElementById('rh-custom').style.display = 'none';
+  document.getElementById('welcome').style.display = 'none';
+  document.getElementById('chat').style.display = 'none';
+  document.getElementById('rehearse').style.display = 'flex';
+  rhApplyStrings();
+  rhShowStep('person');
+  window.scrollTo(0, 0);
+}
+
+function closeRehearse() {
+  document.getElementById('rehearse').style.display = 'none';
+  if (rhState && rhState.returnTo === 'welcome' &&
+      !document.querySelectorAll('#messages .msg, #messages .rhcard').length) {
+    document.getElementById('welcome').style.display = 'flex';
+  } else {
+    document.getElementById('chat').style.display = 'flex';
+  }
+  rhState = null;
+  window.scrollTo(0, 0);
+}
+
+function rhCrisisExit(payload) {
+  document.getElementById('rehearse').style.display = 'none';
+  rhState = null;
+  showChat();
+  if (payload.banner_lang) bannerLang = payload.banner_lang;
+  addMsg(payload.reply, 'ai');
+  showBanner();
+}
+
+function rhAddMsg(text, who) {
+  const d = document.createElement('div');
+  d.className = 'msg ' + who;
+  const span = document.createElement('span');
+  if (who === 'user') span.textContent = text;
+  else span.innerHTML = renderAI(text);
+  d.appendChild(span);
+  document.getElementById('rh-messages').appendChild(d);
+  scrollToLatest(d);
+  return d;
+}
+
+function rhBubble() {
+  const d = document.createElement('div');
+  d.className = 'msg ai';
+  const span = document.createElement('span');
+  d.appendChild(span);
+  document.getElementById('rh-messages').appendChild(d);
+  return {box: d, span};
+}
+
+async function rhStream(text) {
+  const typing = rhAddMsg('…', 'ai typing');
+  let acc = '', bubble = null, payload = null, errEvt = null;
+  try {
+    const r = await fetch('/api/rehearse/stream', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({user_id: userId, rehearsal_id: rhState.id, message: text})
+    });
+    if (!r.ok || !r.body) throw new Error('stream unavailable');
+    const reader = r.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = '';
+    for (;;) {
+      const {done, value} = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, {stream: true});
+      let idx;
+      while ((idx = buf.indexOf('\n\n')) >= 0) {
+        const rawEvt = buf.slice(0, idx);
+        buf = buf.slice(idx + 2);
+        const line = rawEvt.split('\n').find(l => l.startsWith('data:'));
+        if (!line) continue;
+        const evt = JSON.parse(line.slice(5));
+        if (evt.type === 'delta') {
+          if (!bubble) { typing.remove(); bubble = rhBubble(); }
+          acc += evt.text;
+          bubble.span.innerHTML = renderAI(acc);
+          scrollToLatest(bubble.box);
+        } else if (evt.type === 'done') {
+          payload = evt;
+        } else if (evt.type === 'error') {
+          errEvt = evt;
+        }
+      }
+    }
+  } catch (e) {
+    if (!errEvt) errEvt = {error: 'connection'};
+  }
+  if (typing.isConnected) typing.remove();
+  if (errEvt && !acc) {
+    const s = document.createElement('div');
+    s.className = 'sysline';
+    s.textContent = rhT().errConn;
+    document.getElementById('rh-messages').appendChild(s);
+    return;
+  }
+  if (payload && payload.crisis) { rhCrisisExit(payload); return; }
+  const final = (payload && payload.reply) || acc;
+  if (bubble) {
+    bubble.span.innerHTML = renderAI(final);
+    scrollToLatest(bubble.box);
+  } else if (final) {
+    rhAddMsg(final, 'ai');
+  }
+}
+
+async function rhLaunch() {
+  const res = await api('/api/rehearse/start', {
+    user_id: userId,
+    person_type: rhState.personType,
+    person_name: rhState.setup.person_name,
+    relationship: rhState.setup.relationship,
+    topic: rhState.setup.topic,
+    reactions: rhState.setup.reactions,
+    context: rhState.setup.context,
+  });
+  if (res.crisis && res.reply) { rhCrisisExit(res); return; }
+  if (!res.ok) {
+    closeRehearse();
+    if (res.reason === 'crisis_mode') {
+      const s = document.createElement('div');
+      s.className = 'sysline';
+      s.textContent = RH[rhLang()].notNow;
+      document.getElementById('messages').appendChild(s);
+      if (res.banner_lang) bannerLang = res.banner_lang;
+      if (res.banner) showBanner();
+    }
+    return;
+  }
+  rhState.id = res.rehearsal_id;
+  rhState.debrief = null;
+  if (rhState.personType === 'custom' && res.person_display) rhState.display = res.person_display;
+  document.getElementById('rh-with').textContent = rhT().withP(rhState.display);
+  document.getElementById('rh-messages').innerHTML = '';
+  rhShowStep('live');
+  await rhStream(null);
+}
+
+async function rhBegin() {
+  if (!rhState || rhState.busy) return;
+  rhState.setup.topic = document.getElementById('rh-topic').value.trim();
+  rhState.setup.context = document.getElementById('rh-context').value.trim();
+  if (/[\u0590-\u05FF]/.test(rhState.setup.topic + ' ' + rhState.setup.context)) {
+    rhState.lang = 'he';
+    document.getElementById('rehearse').setAttribute('dir', 'rtl');
+  }
+  rhState.busy = true;
+  try { await rhLaunch(); } catch (e) { alert(rhT().errConn); }
+  if (rhState) rhState.busy = false;
+}
+
+async function rhDoSend() {
+  const inp = document.getElementById('rh-input');
+  const text = inp.value.trim();
+  if (!text || !rhState || rhState.busy || !rhState.id) return;
+  inp.value = '';
+  rhAddMsg(text, 'user');
+  rhState.busy = true;
+  await rhStream(text);
+  if (rhState) rhState.busy = false;
+}
+
+function rhRenderDebrief(d) {
+  const t = rhT();
+  const body = document.getElementById('rh-debrief-body');
+  body.innerHTML = '';
+  const block = (title, build) => {
+    const div = document.createElement('div');
+    div.className = 'debrief-block';
+    const h = document.createElement('h3');
+    h.textContent = title;
+    div.appendChild(h);
+    build(div);
+    body.appendChild(div);
+  };
+  const listBlock = (title, items) => block(title, div => {
+    const ul = document.createElement('ul');
+    items.forEach(w => {
+      const li = document.createElement('li');
+      li.textContent = w;
+      ul.appendChild(li);
+    });
+    div.appendChild(ul);
+  });
+  if (d.worked && d.worked.length) listBlock(t.worked, d.worked);
+  if (d.sideways_quote) {
+    block(t.sideways, div => {
+      const q = document.createElement('blockquote');
+      q.textContent = t.youSaid + ' ' + d.sideways_quote;
+      div.appendChild(q);
+      const p = document.createElement('p');
+      p.textContent = d.sideways_note || '';
+      div.appendChild(p);
+    });
+  } else if (d.sideways_note) {
+    block(t.sideways, div => {
+      const p = document.createElement('p');
+      p.textContent = d.sideways_note;
+      div.appendChild(p);
+    });
+  }
+  if (d.say_instead && d.say_instead.length) listBlock(t.instead, d.say_instead);
+  if (d.readiness) {
+    const p = document.createElement('p');
+    p.className = 'lead';
+    p.style.color = 'var(--muted)';
+    p.style.lineHeight = '1.6';
+    p.textContent = d.readiness;
+    body.appendChild(p);
+  }
+}
+
+async function rhEnd() {
+  if (!rhState || rhState.busy || !rhState.id) return;
+  rhState.busy = true;
+  const btn = document.getElementById('rh-end');
+  btn.disabled = true;
+  try {
+    const res = await api('/api/rehearse/debrief', {user_id: userId, rehearsal_id: rhState.id});
+    if (!res.ok) throw new Error('debrief failed');
+    rhState.debrief = res.debrief;
+    rhRenderDebrief(res.debrief);
+    rhShowStep('debrief');
+  } catch (e) {
+    alert(rhT().errConn);
+  }
+  btn.disabled = false;
+  if (rhState) rhState.busy = false;
+}
+
+function renderRehearsalCard(rec) {
+  const t = RH[(rhState && rhState.lang) || rhLang()];
+  const card = document.createElement('div');
+  card.className = 'rhcard';
+  const head = document.createElement('strong');
+  head.textContent = t.rhCard(rec.person_display || '');
+  card.appendChild(head);
+  if (rec.topic) {
+    const p = document.createElement('div');
+    p.textContent = rec.topic;
+    card.appendChild(p);
+  }
+  const d = rec.debrief;
+  if (d && d.readiness) {
+    const p = document.createElement('div');
+    p.textContent = d.readiness;
+    card.appendChild(p);
+  }
+  if (d && d.say_instead && d.say_instead.length) {
+    const p = document.createElement('div');
+    p.className = 'tip';
+    p.textContent = '💬 ' + d.say_instead[0];
+    card.appendChild(p);
+  }
+  document.getElementById('messages').appendChild(card);
+  scrollToLatest(card);
+  return card;
+}
+
+document.getElementById('begin-rehearse').addEventListener('click', openRehearse);
+document.getElementById('rehearse-open').addEventListener('click', openRehearse);
+document.getElementById('rh-back').addEventListener('click', closeRehearse);
+document.getElementById('rh-to-setup').addEventListener('click', () => {
+  if (!rhState) return;
+  if (!rhState.personType) { alert(rhT().pickFirst); return; }
+  if (rhState.personType === 'custom') {
+    rhState.setup.person_name = document.getElementById('rh-cname').value.trim();
+    rhState.setup.relationship = document.getElementById('rh-crel').value.trim();
+  }
+  rhState.display = rhDisplay();
+  document.getElementById('rh-setup-sub').textContent = rhT().setupSub(rhState.display);
+  rhShowStep('setup');
+});
+document.getElementById('rh-start').addEventListener('click', rhBegin);
+document.getElementById('rh-start-skip').addEventListener('click', rhBegin);
+document.getElementById('rh-send').addEventListener('click', rhDoSend);
+document.getElementById('rh-input').addEventListener('keydown', e => {
+  if (e.key === 'Enter') rhDoSend();
+});
+document.getElementById('rh-end').addEventListener('click', rhEnd);
+document.getElementById('rh-again').addEventListener('click', async () => {
+  if (!rhState || rhState.busy) return;
+  rhState.busy = true;
+  try { await rhLaunch(); } catch (e) { alert(rhT().errConn); }
+  if (rhState) rhState.busy = false;
+});
+document.getElementById('rh-done').addEventListener('click', () => {
+  if (!rhState) return;
+  const rec = {
+    person_display: rhState.display,
+    topic: rhState.setup.topic,
+    debrief: rhState.debrief,
+  };
+  document.getElementById('rehearse').style.display = 'none';
+  showChat();
+  renderRehearsalCard(rec);
+  rhState = null;
+});
+
 // Returning user: skip intake, restore history
 (async function init() {
   if (!userId) return;
   try {
     const r = await fetch('/api/history?user_id=' + encodeURIComponent(userId));
     const h = await r.json();
-    if (h.messages && h.messages.length) {
+    const rhs = h.rehearsals || [];
+    if ((h.messages && h.messages.length) || rhs.length) {
       showChat();
+      if (h.banner_lang) bannerLang = h.banner_lang;
       const divider = document.createElement('div');
       divider.className = 'sysline';
       divider.textContent = 'Welcome back — here\u2019s where you left off.';
       document.getElementById('messages').appendChild(divider);
-      h.messages.forEach(m => addMsg(m.content, m.role === 'user' ? 'user' : 'ai'));
-      if (h.banner_lang) bannerLang = h.banner_lang;
+      // Completed rehearsals appear in history distinctly, in
+      // chronological position among the messages.
+      const events = [];
+      (h.messages || []).forEach(m => events.push({ts: m.created_at || '', m}));
+      rhs.forEach(rec => events.push({ts: rec.created_at || '', rec}));
+      events.sort((a, b) => a.ts < b.ts ? -1 : a.ts > b.ts ? 1 : 0);
+      events.forEach(e => {
+        if (e.m) addMsg(e.m.content, e.m.role === 'user' ? 'user' : 'ai');
+        else renderRehearsalCard(e.rec);
+      });
       if (h.crisis || h.banner) showBanner();
     }
   } catch (e) { /* stay on welcome */ }

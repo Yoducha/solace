@@ -349,6 +349,21 @@ def init_db():
                 norm TEXT NOT NULL,
                 PRIMARY KEY (user_id, norm)
             );
+            CREATE TABLE IF NOT EXISTS rehearsals (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id TEXT NOT NULL,
+                person_type TEXT DEFAULT '',
+                person_name TEXT DEFAULT '',
+                relationship TEXT DEFAULT '',
+                topic TEXT DEFAULT '',
+                reactions TEXT DEFAULT '[]',
+                context TEXT DEFAULT '',
+                state TEXT DEFAULT 'rehearsing',
+                transcript TEXT DEFAULT '[]',
+                debrief TEXT DEFAULT '',
+                created_at TEXT DEFAULT (datetime('now')),
+                updated_at TEXT DEFAULT (datetime('now'))
+            );
             """
         )
         # Migration: persistent crisis-mode latch per user (Solace Fix #1).
@@ -644,10 +659,35 @@ def update_summary(user_id):
             old = conn.execute(
                 "SELECT summary FROM summaries WHERE user_id=?", (user_id,)
             ).fetchone()
+            rehearsal_rows = conn.execute(
+                "SELECT person_type, person_name, relationship, topic "
+                "FROM rehearsals WHERE user_id=? AND state='debriefed' "
+                "ORDER BY id DESC LIMIT 3",
+                (user_id,),
+            ).fetchall()
             conn.close()
         transcript = "\n".join(
             "%s: %s" % (r["role"], r["content"]) for r in reversed(rows)
         )
+        # Completed rehearsals feed memory through this same updater:
+        # one describing-language line each, so a finished practice
+        # shows up as a theme/goal item the person can review. (They
+        # are re-fed on every refresh, so the item survives refreshes.)
+        rehearsal_note = ""
+        if rehearsal_rows:
+            lines = []
+            for rr in reversed(rehearsal_rows):
+                label = _rehearsal_person_label(rr)
+                topic = (rr["topic"] or "").strip()
+                lines.append(
+                    "The person rehearsed a hard talk with %s%s."
+                    % (label, (" about " + topic) if topic else "")
+                )
+            rehearsal_note = (
+                "\n\nRecent practice conversations to fold into the "
+                "note and the ITEMS (describing language only):\n"
+                + "\n".join(lines)
+            )
         prompt = (
             "You are updating a private memory note for an AI support companion. "
             "Read the recent conversation and write (or update) a concise note covering: "
@@ -662,8 +702,8 @@ def update_summary(user_id):
             "Goals are what they are working toward, including any small step they agreed to try. "
             "Describing language only — never condition names or labels. At most 10 items. "
             "If there is nothing solid yet, end with ITEMS: [].\n\n"
-            "Previous note:\n%s\n\nRecent conversation:\n%s"
-            % (old["summary"] if old else "(none)", transcript)
+            "Previous note:\n%s\n\nRecent conversation:\n%s%s"
+            % (old["summary"] if old else "(none)", transcript, rehearsal_note)
         )
         out = call_anthropic(
             SUMMARY_MODEL,
@@ -1180,6 +1220,501 @@ def chat_stream(body: ChatIn, background: BackgroundTasks):
     return resp
 
 
+# ------------------------------------------------------- Rehearse ----
+# "Rehearse a hard talk": the user practices a difficult conversation
+# before it happens. The model plays the other person, built from a
+# quick setup (who, what the talk is about, how they usually react);
+# afterwards a coach debriefs with concrete lines to say instead.
+# Safety: every piece of user text in this mode — setup fields and
+# every rehearsal turn — goes through the SAME pre-model risk check
+# as normal chat (assess_risk: keyword layer, then classifier). A hit
+# exits the mode and returns the frozen crisis response through the
+# exact same latch/banner path as chat, byte-identical.
+
+PERSON_TYPES = ("boss", "partner", "dad", "mom", "friend", "custom")
+
+PERSONA_SYSTEM = """You are playing a real person in a PRACTICE conversation inside Solace, a self-help companion app. The user is rehearsing a difficult conversation they need to have in real life, and you are the other person in that conversation, so they can practice saying it out loud first. Afterwards a separate coach debriefs the user — giving feedback is NOT your job.
+
+WHO YOU ARE
+{who}
+{user_line}The user has come to talk to you about: {topic}
+{react_line}{context_line}
+
+HOW TO PLAY
+- Stay completely in character as this person for the whole rehearsal. Talk the way they would: their priorities, their tone, what they care about, what would worry or rub them the wrong way.
+- Be realistic, not a pushover. If the user is vague, unfair, or springs something on you, push back the way this person genuinely would. If the user is clear, fair and honest, let it land — soften the way a real person would.
+- Keep reactions human-sized: firm, defensive, hurt, stubborn, quiet, skeptical — yes. Shouting tirades, threats, cruelty or abuse — never.
+- Short, natural turns — usually 1 to 3 sentences. Talk like a person in a real conversation, not a speech.
+- Never break character: no advice, no feedback, no stepping out of the scene. If the user asks a meta question (about the app, whether you are real, anything outside the scene), deflect briefly in character — puzzled, or brushing it off the way this person would — and steer back to the conversation.
+- Never bring up suicide or harming anyone — yours or the user's — as part of the scene, and never threaten anyone.
+- Never use clinical or diagnostic labels about the user or yourself.
+- Match the user's language: if they write in Hebrew, reply fully in Hebrew."""
+
+DEBRIEF_SYSTEM = """You are the Solace coach, debriefing a PRACTICE conversation the user just finished. The user rehearsed a hard talk with {label}; an AI played that person. Your job is a short, concrete, kind debrief that makes the real conversation go better.
+
+Rules:
+- Communication coaching only. Never use clinical or diagnostic labels for the user or the other person, and never comment on anyone's mental health.
+- Be specific: everything must tie to lines the user actually said in the transcript.
+- Refer to the other person as {label}.
+- Output ONLY a JSON object — no prose before or after — with exactly these keys:
+  "worked": array of 2-3 short strings: specific things the user did that genuinely worked.
+  "sideways_index": integer — the index (from the numbered list of the user's own lines given to you) of the line where the talk got hardest or went sideways.
+  "sideways_note": 1-2 sentences, kind and plain: what made that moment hard.
+  "say_instead": array of 2-3 exact alternative lines the user could say at that moment — real wording they can actually use, short and quotable, in the user's own voice.
+  "readiness": one honest, encouraging line about being ready for the real talk.
+- Match the user's language: if the conversation is in Hebrew, every string in the JSON is in Hebrew."""
+
+
+def _persona_who(rec):
+    ptype = rec["person_type"]
+    name = (rec["person_name"] or "").strip()
+    rel = (rec["relationship"] or "").strip()
+    if ptype == "boss":
+        return "You are the user's boss at work."
+    if ptype == "partner":
+        return "You are the user's partner — the person they are in a relationship with."
+    if ptype == "dad":
+        return "You are the user's father."
+    if ptype == "mom":
+        return "You are the user's mother."
+    if ptype == "friend":
+        return "You are a close friend of the user."
+    return "You are %s, the user's %s." % (
+        name or "someone important", rel or "someone in their life")
+
+
+def _rehearsal_person_label(rec):
+    """Short third-person label for memory lines and history cards,
+    e.g. 'their boss', 'their dad', or a custom name/relationship."""
+    ptype = rec["person_type"]
+    name = (rec["person_name"] or "").strip()
+    rel = (rec["relationship"] or "").strip()
+    if ptype == "boss":
+        return "their boss"
+    if ptype == "partner":
+        return "their partner"
+    if ptype == "dad":
+        return "their dad"
+    if ptype == "mom":
+        return "their mom"
+    if ptype == "friend":
+        return "a friend"
+    if name and rel:
+        return "%s (their %s)" % (name, rel)
+    if name:
+        return name
+    if rel:
+        return "their %s" % rel
+    return "someone"
+
+
+def _persona_display(rec):
+    """How the UI refers to the persona: 'Dad', 'Your boss', a name."""
+    ptype = rec["person_type"]
+    name = (rec["person_name"] or "").strip()
+    known = {
+        "boss": "Your boss", "partner": "Your partner", "dad": "Dad",
+        "mom": "Mom", "friend": "Your friend",
+    }
+    return known.get(ptype) or name or (rec["relationship"] or "").strip() or "Them"
+
+
+def _persona_system(rec, user_name):
+    reactions = []
+    try:
+        reactions = [str(x) for x in json.loads(rec["reactions"] or "[]")]
+    except Exception:
+        reactions = []
+    if reactions:
+        react_line = (
+            "How you usually react in a hard talk: %s. Let it show "
+            "realistically when the moment calls for it — not in every line.\n"
+            % "; ".join(reactions)
+        )
+    else:
+        react_line = "React the way a real person in your position naturally would.\n"
+    context_line = ""
+    if (rec["context"] or "").strip():
+        context_line = "Background the user shared: %s\n" % rec["context"].strip()
+    user_line = ""
+    if user_name:
+        user_line = "The user's name is %s.\n" % user_name
+    topic = (rec["topic"] or "").strip() or "something important they need to bring up"
+    return PERSONA_SYSTEM.format(
+        who=_persona_who(rec), user_line=user_line, topic=topic,
+        react_line=react_line, context_line=context_line,
+    )
+
+
+def _persona_opener_direction(rec):
+    topic = (rec["topic"] or "").strip() or "something important they need to bring up"
+    return (
+        "The practice conversation is starting now. The user has come "
+        "to you to talk about: %s. Open with ONE short, natural line, "
+        "in character — the way this conversation would really begin. "
+        "Do not explain anything; just be the person, first line of "
+        "the scene." % topic
+    )
+
+
+def _load_transcript(rec):
+    try:
+        t = json.loads(rec["transcript"] or "[]")
+        return t if isinstance(t, list) else []
+    except Exception:
+        return []
+
+
+def _save_transcript(rid, transcript, state=None):
+    with db_lock:
+        c = _conn()
+        if state:
+            c.execute(
+                "UPDATE rehearsals SET transcript=?, state=?, updated_at=datetime('now') WHERE id=?",
+                (json.dumps(transcript), state, rid),
+            )
+        else:
+            c.execute(
+                "UPDATE rehearsals SET transcript=?, updated_at=datetime('now') WHERE id=?",
+                (json.dumps(transcript), rid),
+            )
+        c.commit()
+        c.close()
+
+
+def _get_rehearsal(uid, rid):
+    with db_lock:
+        c = _conn()
+        row = c.execute(
+            "SELECT * FROM rehearsals WHERE id=? AND user_id=?", (rid, uid)
+        ).fetchone()
+        c.close()
+    return dict(row) if row else None
+
+
+def _persona_model_messages(rec, new_user_msg=None):
+    """Model messages for a rehearsal turn: a constant stage-direction
+    as the first user message, then the transcript (persona lines as
+    assistant), then optionally the user's new line."""
+    msgs = [{"role": "user", "content": _persona_opener_direction(rec)}]
+    for t in _load_transcript(rec):
+        if t.get("role") == "persona":
+            msgs.append({"role": "assistant", "content": t.get("content", "")})
+        else:
+            msgs.append({"role": "user", "content": t.get("content", "")})
+    if new_user_msg is not None:
+        msgs.append({"role": "user", "content": new_user_msg})
+    return msgs
+
+
+def _rehearsal_hebrew(rec, msg):
+    if has_hebrew(msg):
+        return True
+    users = [t.get("content", "") for t in _load_transcript(rec)
+             if t.get("role") == "user"]
+    if any(has_hebrew(c) for c in users[-3:]):
+        return True
+    with db_lock:
+        c = _conn()
+        rows = c.execute(
+            "SELECT role, content FROM messages WHERE user_id=? ORDER BY id DESC LIMIT 20",
+            (rec["user_id"],),
+        ).fetchall()
+        c.close()
+    return conversation_is_hebrew(rows, msg)
+
+
+def _rehearsal_crisis_exit(rec, saved_user_text, hebrew):
+    """A crisis signal inside Rehearse mode: exit the mode, latch
+    crisis state, and return the frozen response — the exact same
+    payload shape and saved-message path as a normal-chat crisis."""
+    uid = rec["user_id"]
+    banner_lang = "he" if hebrew else "en"
+    _set_user_state(uid, crisis_mode=True, stepdown_v=False,
+                    banner_v=True, lang_v=banner_lang)
+    with db_lock:
+        c = _conn()
+        if saved_user_text:
+            c.execute(
+                "INSERT INTO messages (user_id, role, content) VALUES (?,?,?)",
+                (uid, "user", saved_user_text),
+            )
+        if rec.get("id"):
+            c.execute(
+                "UPDATE rehearsals SET state='ended', updated_at=datetime('now') WHERE id=?",
+                (rec["id"],),
+            )
+        c.commit()
+        c.close()
+    base = FIXED_CRISIS_RESPONSE_HE if hebrew else FIXED_CRISIS_RESPONSE
+    reply = base + crisis_resource_line(hebrew, base)
+    _save_assistant_msg(uid, reply)
+    return {"reply": reply, "crisis": True,
+            "hotline": "1201" if hebrew else "988", "banner": True,
+            "banner_lang": banner_lang, "exited": True}
+
+
+class RehearseStartIn(BaseModel):
+    user_id: str
+    person_type: str = "custom"
+    person_name: str = ""
+    relationship: str = ""
+    topic: str = ""
+    reactions: list = []
+    context: str = ""
+
+
+class RehearseTurnIn(BaseModel):
+    user_id: str
+    rehearsal_id: int
+    message: "str | None" = None  # None => the persona's opening line
+
+
+class RehearseDebriefIn(BaseModel):
+    user_id: str
+    rehearsal_id: int
+
+
+@app.post("/api/rehearse/start")
+def rehearse_start(body: RehearseStartIn):
+    uid = (body.user_id or "").strip()
+    if not uid:
+        return {"ok": False, "error": "no_user"}
+    ptype = body.person_type if body.person_type in PERSON_TYPES else "custom"
+    name = (body.person_name or "").strip()[:80]
+    rel = (body.relationship or "").strip()[:80]
+    topic = (body.topic or "").strip()[:1000]
+    context = (body.context or "").strip()[:1000]
+    reactions = [
+        str(x).strip()[:60] for x in (body.reactions or []) if str(x).strip()
+    ][:6]
+    with db_lock:
+        conn = _conn()
+        row = conn.execute("SELECT * FROM users WHERE id=?", (uid,)).fetchone()
+        if not row:
+            conn.execute("INSERT INTO users (id) VALUES (?)", (uid,))
+            conn.commit()
+            row = conn.execute("SELECT * FROM users WHERE id=?", (uid,)).fetchone()
+        profile = dict(row)
+        conn.close()
+    # While crisis mode is latched, Solace stays in support mode —
+    # rehearsal waits until things have stepped back down.
+    if profile.get("crisis_mode"):
+        return {"ok": False, "reason": "crisis_mode", "crisis": True,
+                "banner": True,
+                "banner_lang": profile.get("crisis_lang") or "en"}
+    # The setup text is user text: same pre-model risk check as chat.
+    setup_text = "\n".join(x for x in (topic, context, rel, name) if x)
+    rec_stub = {"id": None, "user_id": uid, "transcript": "[]"}
+    if setup_text and assess_risk(setup_text):
+        payload = _rehearsal_crisis_exit(
+            rec_stub, topic or context, has_hebrew(setup_text))
+        return {"ok": False, **payload}
+    with db_lock:
+        conn = _conn()
+        cur = conn.execute(
+            "INSERT INTO rehearsals (user_id, person_type, person_name, "
+            "relationship, topic, reactions, context, state) "
+            "VALUES (?,?,?,?,?,?,?, 'rehearsing')",
+            (uid, ptype, name, rel, topic, json.dumps(reactions), context),
+        )
+        rid = cur.lastrowid
+        conn.commit()
+        conn.close()
+    return {"ok": True, "rehearsal_id": rid,
+            "person_display": _persona_display(
+                {"person_type": ptype, "person_name": name,
+                 "relationship": rel})}
+
+
+def _rehearse_stream_events(uid, rid, message):
+    rec = _get_rehearsal(uid, rid)
+    if not rec:
+        yield _sse({"type": "error", "error": "not_found"})
+        return
+    if rec["state"] != "rehearsing":
+        yield _sse({"type": "error", "error": "not_active"})
+        return
+    transcript = _load_transcript(rec)
+    opener = message is None
+    if opener and transcript:
+        yield _sse({"type": "error", "error": "already_started"})
+        return
+    if not opener:
+        message = (message or "").strip()
+        if not message:
+            yield _sse({"type": "error", "error": "empty"})
+            return
+        # Pre-model risk check on the user's line — identical to chat.
+        # A hit exits the mode with the frozen response.
+        if assess_risk(message):
+            payload = _rehearsal_crisis_exit(
+                rec, message, _rehearsal_hebrew(rec, message))
+            transcript.append({"role": "user", "content": message})
+            _save_transcript(rid, transcript, state="ended")
+            yield _sse({"type": "delta", "text": payload["reply"]})
+            yield _sse({"type": "done", **payload})
+            return
+        transcript.append({"role": "user", "content": message})
+        _save_transcript(rid, transcript)
+
+    with db_lock:
+        c = _conn()
+        u = c.execute("SELECT name FROM users WHERE id=?", (uid,)).fetchone()
+        c.close()
+    system = _persona_system(rec, (u["name"] if u else "") or "")
+    msgs = _persona_model_messages(rec, None if opener else message)
+
+    raw = ""
+    failed = False
+    try:
+        for chunk in _anthropic_stream_chunks(system, msgs):
+            raw += chunk
+            yield _sse({"type": "delta", "text": chunk})
+    except Exception:
+        failed = True
+    if failed and not raw:
+        # Roll back the just-saved user line so a retry doesn't
+        # duplicate the turn, and let the client offer a retry.
+        if not opener:
+            transcript = transcript[:-1]
+            _save_transcript(rid, transcript)
+        yield _sse({"type": "error", "error": "connection"})
+        return
+    reply = raw.strip()
+    transcript.append({"role": "persona", "content": reply})
+    _save_transcript(rid, transcript)
+    yield _sse({"type": "done", "reply": reply, "crisis": False,
+                "mode": "rehearse"})
+
+
+@app.post("/api/rehearse/stream")
+def rehearse_stream(body: RehearseTurnIn):
+    uid = (body.user_id or "").strip()
+    resp = StreamingResponse(
+        _rehearse_stream_events(uid, body.rehearsal_id, body.message),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+    if uid:
+        _set_uid_cookie(resp, uid)
+    return resp
+
+
+def _fallback_debrief(rec, user_lines):
+    quote = max(user_lines, key=len) if user_lines else ""
+    idx = user_lines.index(quote) if quote else 0
+    return {
+        "worked": ["You showed up and said it out loud — practicing "
+                   "the words once makes the real talk feel familiar."],
+        "sideways_index": idx,
+        "sideways_quote": quote,
+        "sideways_note": "This was the hardest moment in the practice.",
+        "say_instead": [
+            "Try opening with the point, plainly: \u201cThere's "
+            "something important I need to talk about.\u201d",
+            "Try naming what you need: \u201cWhat I need is\u2026\u201d",
+        ],
+        "readiness": "You practiced it once — the real talk will "
+                     "feel more familiar than you expect.",
+    }
+
+
+@app.post("/api/rehearse/debrief")
+def rehearse_debrief(body: RehearseDebriefIn, background: BackgroundTasks):
+    uid = (body.user_id or "").strip()
+    rec = _get_rehearsal(uid, body.rehearsal_id)
+    if not rec:
+        return {"ok": False, "error": "not_found"}
+    if rec["state"] == "debriefed" and rec["debrief"]:
+        try:
+            return {"ok": True, "debrief": json.loads(rec["debrief"])}
+        except Exception:
+            pass
+    if rec["state"] != "rehearsing":
+        return {"ok": False, "error": "not_active"}
+    transcript = _load_transcript(rec)
+    user_lines = [t.get("content", "") for t in transcript
+                  if t.get("role") == "user" and t.get("content", "").strip()]
+    label = _rehearsal_person_label(rec)
+    if not user_lines:
+        debrief = {
+            "worked": ["You took the first step and set the talk up — "
+                       "that counts."],
+            "sideways_index": 0, "sideways_quote": "",
+            "sideways_note": "The practice ended before the talk "
+                             "really got going — that happens.",
+            "say_instead": [],
+            "readiness": "Next time, try staying for one more line "
+                         "than feels comfortable.",
+        }
+    else:
+        script = "\n".join(
+            "%s: %s" % (("You" if t.get("role") == "user" else "Them"),
+                        t.get("content", ""))
+            for t in transcript
+        )
+        numbered = "\n".join(
+            "%d. %s" % (i, line) for i, line in enumerate(user_lines))
+        ask = (
+            "The talk was about: %s\n\nTranscript:\n%s\n\n"
+            "The user's own lines, numbered:\n%s\n\n"
+            "Return the JSON debrief now. sideways_index must be one "
+            "of the numbers above." % (
+                (rec["topic"] or "").strip() or "(not specified)",
+                script, numbered)
+        )
+        debrief = None
+        try:
+            out = call_anthropic(
+                CHAT_MODEL,
+                DEBRIEF_SYSTEM.format(label=label),
+                [{"role": "user", "content": ask}],
+                max_tokens=700,
+            )
+            a, b = out.find("{"), out.rfind("}")
+            data = json.loads(out[a:b + 1])
+            idx = int(data.get("sideways_index", 0))
+            if not (0 <= idx < len(user_lines)):
+                idx = 0
+            worked = [str(x).strip() for x in data.get("worked", [])
+                      if str(x).strip()][:3]
+            instead = [str(x).strip() for x in data.get("say_instead", [])
+                       if str(x).strip()][:3]
+            if worked and len(instead) >= 2 and str(
+                    data.get("sideways_note", "")).strip():
+                debrief = {
+                    "worked": worked,
+                    "sideways_index": idx,
+                    # The quote is taken from the transcript itself,
+                    # so it is always the user's exact words.
+                    "sideways_quote": user_lines[idx],
+                    "sideways_note": str(data["sideways_note"]).strip(),
+                    "say_instead": instead,
+                    "readiness": str(data.get("readiness", "")).strip()
+                    or "You practiced it — you're readier than you were.",
+                }
+        except Exception:
+            debrief = None
+        if debrief is None:
+            debrief = _fallback_debrief(rec, user_lines)
+    with db_lock:
+        c = _conn()
+        c.execute(
+            "UPDATE rehearsals SET debrief=?, state='debriefed', "
+            "updated_at=datetime('now') WHERE id=?",
+            (json.dumps(debrief), rec["id"]),
+        )
+        c.commit()
+        c.close()
+    # A completed rehearsal contributes to "What Solace remembers"
+    # through the existing memory updater (which now folds recent
+    # debriefed rehearsals into the note and items).
+    background.add_task(update_summary, uid)
+    return {"ok": True, "debrief": debrief,
+            "person_label": label, "person_display": _persona_display(rec)}
+
+
 @app.post("/api/delete")
 def delete_data(body: DeleteIn, response: Response):
     """Delete ALL data stored for a user_id (re-test fix #3): profile,
@@ -1195,6 +1730,7 @@ def delete_data(body: DeleteIn, response: Response):
         conn.execute("DELETE FROM summaries WHERE user_id=?", (uid,))
         conn.execute("DELETE FROM memory_items WHERE user_id=?", (uid,))
         conn.execute("DELETE FROM memory_tombstones WHERE user_id=?", (uid,))
+        conn.execute("DELETE FROM rehearsals WHERE user_id=?", (uid,))
         conn.execute("DELETE FROM users WHERE id=?", (uid,))
         conn.commit()
         conn.close()
@@ -1273,13 +1809,30 @@ def history(user_id: str, response: Response):
         u = conn.execute(
             "SELECT crisis_mode, crisis_banner, crisis_lang FROM users WHERE id=?", (user_id,)
         ).fetchone()
+        rh = conn.execute(
+            "SELECT id, person_type, person_name, relationship, topic, "
+            "debrief, created_at FROM rehearsals WHERE user_id=? "
+            "AND state='debriefed' ORDER BY id ASC",
+            (user_id,),
+        ).fetchall()
         conn.close()
+    rehearsals = []
+    for r in rh:
+        d = dict(r)
+        try:
+            d["debrief"] = json.loads(d["debrief"] or "null")
+        except Exception:
+            d["debrief"] = None
+        d["person_label"] = _rehearsal_person_label(r)
+        d["person_display"] = _persona_display(r)
+        rehearsals.append(d)
     return {
         "messages": [dict(r) for r in rows],
         "summary": s["summary"] if s else "",
         "crisis": bool(u["crisis_mode"]) if u else False,
         "banner": bool(u["crisis_banner"]) if u else False,
         "banner_lang": (u["crisis_lang"] or "en") if u else "en",
+        "rehearsals": rehearsals,
     }
 
 
