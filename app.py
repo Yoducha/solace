@@ -361,6 +361,14 @@ def init_db():
             conn.execute(
                 "UPDATE users SET crisis_banner=1 WHERE crisis_mode=1"
             )
+        # Polish round: language of the session's crisis ('en'/'he'),
+        # recorded when crisis mode latches, so the client renders
+        # the sticky banner in the conversation's language (Hebrew
+        # banner with ERAN 1201 for Hebrew crises).
+        if "crisis_lang" not in cols:
+            conn.execute(
+                "ALTER TABLE users ADD COLUMN crisis_lang TEXT DEFAULT 'en'"
+            )
         conn.commit()
         conn.close()
 
@@ -646,9 +654,9 @@ def chat(body: ChatIn, background: BackgroundTasks):
     uid = body.user_id.strip()
     msg = body.message.strip()
     if not uid:
-        return {"reply": "Something went wrong starting your session. Please refresh and try again.", "crisis": False, "banner": False}
+        return {"reply": "Something went wrong starting your session. Please refresh and try again.", "crisis": False, "banner": False, "banner_lang": "en"}
     if not msg:
-        return {"reply": "I'm here — what's on your mind?", "crisis": False, "banner": False}
+        return {"reply": "I'm here — what's on your mind?", "crisis": False, "banner": False, "banner_lang": "en"}
 
     with db_lock:
         conn = _conn()
@@ -695,6 +703,10 @@ def chat(body: ChatIn, background: BackgroundTasks):
     in_crisis_mode = bool(profile.get("crisis_mode"))
     stepdown = bool(profile.get("crisis_stepdown"))
     banner = bool(profile.get("crisis_banner"))
+    # Language of the session's crisis, for the banner. Recorded at
+    # latch time; a fresh risk signal in a new language updates it,
+    # but follow-ups and retractions keep the crisis's own language.
+    banner_lang = profile.get("crisis_lang") or "en"
     # Explicit retraction with no active risk signal is the ONLY exit
     # path from crisis mode — and it is a two-step step-down now
     # (gentle check-in first, one calm exchange after), never an
@@ -712,7 +724,7 @@ def chat(body: ChatIn, background: BackgroundTasks):
             c.commit()
             c.close()
 
-    def _set_state(crisis_mode=None, stepdown_v=None, banner_v=None):
+    def _set_state(crisis_mode=None, stepdown_v=None, banner_v=None, lang_v=None):
         sets, vals = [], []
         if crisis_mode is not None:
             sets.append("crisis_mode=?")
@@ -723,6 +735,9 @@ def chat(body: ChatIn, background: BackgroundTasks):
         if banner_v is not None:
             sets.append("crisis_banner=?")
             vals.append(1 if banner_v else 0)
+        if lang_v is not None:
+            sets.append("crisis_lang=?")
+            vals.append(lang_v)
         if not sets:
             return
         vals.append(uid)
@@ -738,11 +753,13 @@ def chat(body: ChatIn, background: BackgroundTasks):
     # on, step-down reset, banner on for the rest of the session. Fully
     # Hebrew for Hebrew conversations (re-test fix #8).
     if risk:
-        _set_state(crisis_mode=True, stepdown_v=False, banner_v=True)
+        banner_lang = "he" if hebrew else "en"
+        _set_state(crisis_mode=True, stepdown_v=False, banner_v=True,
+                   lang_v=banner_lang)
         base = FIXED_CRISIS_RESPONSE_HE if hebrew else FIXED_CRISIS_RESPONSE
         reply = base + crisis_resource_line(hebrew, base)
         _save_assistant(reply)
-        return {"reply": reply, "crisis": True, "hotline": hotline, "banner": True}
+        return {"reply": reply, "crisis": True, "hotline": hotline, "banner": True, "banner_lang": banner_lang}
 
     # Clearly informational word question (and not in crisis mode):
     # answer it, with the gentle check-in — never the crisis script.
@@ -754,7 +771,7 @@ def chat(body: ChatIn, background: BackgroundTasks):
         if reply.startswith("[CRISIS]"):
             reply = reply[len("[CRISIS]"):].strip()
         _save_assistant(reply)
-        return {"reply": reply, "crisis": False, "hotline": hotline, "banner": banner}
+        return {"reply": reply, "crisis": False, "hotline": hotline, "banner": banner, "banner_lang": banner_lang}
 
     # Crisis mode latched from an earlier message.
     if in_crisis_mode:
@@ -777,7 +794,7 @@ def chat(body: ChatIn, background: BackgroundTasks):
             )
             reply += crisis_resource_line(hebrew, reply)
             _save_assistant(reply)
-            return {"reply": reply, "crisis": True, "hotline": hotline, "banner": True}
+            return {"reply": reply, "crisis": True, "hotline": hotline, "banner": True, "banner_lang": banner_lang}
         else:
             system = CRISIS_SYSTEM_PROMPT
             if profile.get("name"):
@@ -798,7 +815,7 @@ def chat(body: ChatIn, background: BackgroundTasks):
                 reply = reply[len("[CRISIS]"):].strip()
             reply += crisis_resource_line(hebrew, reply)
             _save_assistant(reply)
-            return {"reply": reply, "crisis": True, "hotline": hotline, "banner": True}
+            return {"reply": reply, "crisis": True, "hotline": hotline, "banner": True, "banner_lang": banner_lang}
 
     crisis = False
     system = build_system(profile, summary)
@@ -807,14 +824,16 @@ def chat(body: ChatIn, background: BackgroundTasks):
         reply = call_anthropic(CHAT_MODEL, system, messages)
     except Exception:
         err = "I'm having trouble connecting right now. Please try again in a moment — I'm still here."
-        return {"reply": err, "crisis": False, "hotline": hotline, "banner": banner}
+        return {"reply": err, "crisis": False, "hotline": hotline, "banner": banner, "banner_lang": banner_lang}
 
     if reply.startswith("[CRISIS]"):
         reply = reply[len("[CRISIS]"):].strip()
         if not retracted:
             crisis = True
             banner = True
-            _set_state(crisis_mode=True, stepdown_v=False, banner_v=True)
+            banner_lang = "he" if hebrew else "en"
+            _set_state(crisis_mode=True, stepdown_v=False, banner_v=True,
+                       lang_v=banner_lang)
 
     if crisis:
         reply += crisis_resource_line(hebrew, reply)
@@ -824,7 +843,7 @@ def chat(body: ChatIn, background: BackgroundTasks):
     if user_count % 10 == 0:
         background.add_task(update_summary, user_id)
 
-    return {"reply": reply, "crisis": crisis, "hotline": hotline, "banner": banner}
+    return {"reply": reply, "crisis": crisis, "hotline": hotline, "banner": banner, "banner_lang": banner_lang}
 
 
 @app.post("/api/delete")
@@ -857,7 +876,7 @@ def history(user_id: str):
             "SELECT summary FROM summaries WHERE user_id=?", (user_id,)
         ).fetchone()
         u = conn.execute(
-            "SELECT crisis_mode, crisis_banner FROM users WHERE id=?", (user_id,)
+            "SELECT crisis_mode, crisis_banner, crisis_lang FROM users WHERE id=?", (user_id,)
         ).fetchone()
         conn.close()
     return {
@@ -865,6 +884,7 @@ def history(user_id: str):
         "summary": s["summary"] if s else "",
         "crisis": bool(u["crisis_mode"]) if u else False,
         "banner": bool(u["crisis_banner"]) if u else False,
+        "banner_lang": (u["crisis_lang"] or "en") if u else "en",
     }
 
 

@@ -24,8 +24,12 @@
     background: var(--bg); color: var(--ink);
     min-height: 100dvh; display: flex; flex-direction: column;
   }
+  /* Header + crisis banner stick together at the top: the banner
+     stays pinned directly under the header while messages scroll
+     beneath. The wrapper is in normal flow, so the banner's height
+     pushes content down instead of covering it. */
+  #topbar { position: sticky; top: 0; z-index: 6; }
   header {
-    position: sticky; top: 0; z-index: 5;
     background: var(--card); border-bottom: 1px solid var(--line);
     padding: 12px 16px; display: flex; align-items: center; justify-content: space-between;
     flex-wrap: nowrap; gap: 8px;
@@ -79,6 +83,7 @@
   }
   #crisis-banner strong { display: block; margin-bottom: 4px; }
   #crisis-banner a { color: var(--danger-ink); font-weight: 700; }
+  #crisis-banner[dir="rtl"] { text-align: right; }
   main { flex: 1; display: flex; flex-direction: column; max-width: 640px; width: 100%; margin: 0 auto; }
 
   /* Welcome / intake */
@@ -133,6 +138,7 @@
 </head>
 <body>
 
+<div id="topbar">
 <header>
   <div class="brand">Solace<small>a calm space to talk</small></div>
   <div class="hdr-actions">
@@ -142,15 +148,16 @@
   </div>
 </header>
 
-<div class="disclaimer" id="disclaimer">
-  <span class="disc-full">Solace is an AI companion, not a licensed psychologist. It doesn't diagnose and it's not for emergencies.</span><span class="disc-short">Solace is an AI companion, not a licensed psychologist.</span>
-  <button class="x" id="disclaimer-x" title="Make this smaller" aria-label="Collapse disclaimer">×</button>
-</div>
-
 <div id="crisis-banner">
   <strong>If you feel you might act on these thoughts, please reach out right now.</strong>
   In the US, call or text <a href="tel:988">988</a> any time — free, confidential, 24/7.
   You don't have to go through this alone.
+</div>
+</div>
+
+<div class="disclaimer" id="disclaimer">
+  <span class="disc-full">Solace is an AI companion, not a licensed psychologist. It doesn't diagnose and it's not for emergencies.</span><span class="disc-short">Solace is an AI companion, not a licensed psychologist.</span>
+  <button class="x" id="disclaimer-x" title="Make this smaller" aria-label="Collapse disclaimer">×</button>
 </div>
 
 <main>
@@ -199,6 +206,10 @@
 let userId = localStorage.getItem('solace_uid') || '';
 let mood = '';
 let voiceOn = false;
+// Language of the session's crisis ('en'/'he'), carried from the
+// server's chat/history state so the banner renders in the
+// conversation's language.
+let bannerLang = 'en';
 
 function pickVoice() {
   const vs = speechSynthesis.getVoices();
@@ -243,7 +254,8 @@ document.getElementById('new-chat').addEventListener('click', () => {
     .map(b => b.toString(16).padStart(2, '0')).join('');
   localStorage.setItem('solace_uid', userId);
   document.getElementById('messages').innerHTML = '';
-  document.getElementById('crisis-banner').style.display = 'none';
+  bannerLang = 'en';
+  hideBanner();
   if ('speechSynthesis' in window) speechSynthesis.cancel();
   // reset the intake form
   document.getElementById('name').value = '';
@@ -340,7 +352,13 @@ async function api(path, body) {
   return r.json();
 }
 
-function crisisBannerHTML(hotline) {
+function crisisBannerHTML(hotline, lang) {
+  if (lang === 'he') {
+    return '<strong>אם אתם מרגישים שאתם עלולים לפעול לפי המחשבות האלה, אנא פנו לעזרה ממש עכשיו.</strong>'
+      + 'בישראל אפשר להתקשר לער״ן — סיוע רגשי — למספר <a href="tel:1201">1201</a>, בכל שעה, 24/7. '
+      + 'בארצות הברית אפשר להתקשר או לשלוח הודעה ל־<a href="tel:988">988</a>. '
+      + 'אתם לא צריכים לעבור את זה לבד.';
+  }
   if (hotline === '1201') {
     return '<strong>If you feel you might act on these thoughts, please reach out right now.</strong>'
       + 'In Israel, call ERAN\u2019s emotional support hotline: <a href="tel:1201">1201</a> (24/7). '
@@ -352,22 +370,33 @@ function crisisBannerHTML(hotline) {
     + 'You don\u2019t have to go through this alone.';
 }
 
+// Render the crisis banner in the crisis's language and show it.
+// It lives inside the sticky #topbar, directly under the header, so
+// it stays visible while messages scroll beneath it.
+function showBanner() {
+  const banner = document.getElementById('crisis-banner');
+  banner.innerHTML = crisisBannerHTML(bannerLang === 'he' ? '1201' : '988', bannerLang);
+  banner.setAttribute('dir', bannerLang === 'he' ? 'rtl' : 'ltr');
+  banner.style.display = 'block';
+}
+
+function hideBanner() {
+  document.getElementById('crisis-banner').style.display = 'none';
+}
+
 async function sendChat(text) {
   if ('speechSynthesis' in window) speechSynthesis.cancel();
   const typing = addMsg('…', 'ai typing');
   try {
     const res = await api('/api/chat', {user_id: userId, message: text});
     typing.remove();
-    const banner = document.getElementById('crisis-banner');
-    if (res.crisis) {
-      banner.innerHTML = crisisBannerHTML(res.hotline || '988');
-      banner.style.display = 'block';
-    } else if (res.banner) {
-      // Stepped down from crisis mode: therapy is back, but the banner
-      // stays for the rest of the session.
-      banner.style.display = 'block';
+    if (res.banner_lang) bannerLang = res.banner_lang;
+    if (res.crisis || res.banner) {
+      // In crisis, and also after stepping down: the banner stays
+      // for the rest of the session.
+      showBanner();
     } else {
-      banner.style.display = 'none';
+      hideBanner();
     }
     const reply = res.reply || "I'm here.";
     addMsg(reply, 'ai');
@@ -431,7 +460,8 @@ document.getElementById('delete-data').addEventListener('click', async () => {
     userId = '';
     if ('speechSynthesis' in window) speechSynthesis.cancel();
     document.getElementById('messages').innerHTML = '';
-    document.getElementById('crisis-banner').style.display = 'none';
+    bannerLang = 'en';
+    hideBanner();
     document.getElementById('name').value = '';
     document.getElementById('concern').value = '';
     mood = '';
@@ -457,11 +487,8 @@ document.getElementById('delete-data').addEventListener('click', async () => {
     if (h.messages && h.messages.length) {
       showChat();
       h.messages.forEach(m => addMsg(m.content, m.role === 'user' ? 'user' : 'ai'));
-      if (h.crisis || h.banner) {
-        const banner = document.getElementById('crisis-banner');
-        banner.innerHTML = crisisBannerHTML('988');
-        banner.style.display = 'block';
-      }
+      if (h.banner_lang) bannerLang = h.banner_lang;
+      if (h.crisis || h.banner) showBanner();
     }
   } catch (e) { /* stay on welcome */ }
 })();
