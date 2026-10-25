@@ -749,7 +749,13 @@ def update_summary(user_id):
                 )
             rehearsal_note = (
                 "\n\nRecent practice conversations to fold into the "
-                "note and the ITEMS (describing language only):\n"
+                "note and the ITEMS (describing language only). Each "
+                "practice conversation is something the person has "
+                "already DONE, so in ITEMS it is ALWAYS a \"theme\" — "
+                "a short past-tense, dated note of what happened, "
+                "e.g. {\"kind\": \"theme\", \"text\": \"Practiced the "
+                "talk with their boss on October 25, 2026\"} — NEVER "
+                "a \"goal\":\n"
                 + "\n".join(lines)
             )
         prompt = (
@@ -771,6 +777,8 @@ def update_summary(user_id):
             "{\"kind\": \"theme\" or \"goal\", \"text\": \"a short plain-language phrase\"}. "
             "Themes are what has been weighing on them and the topics they keep coming back to. "
             "Goals are what they are working toward, including any small step they agreed to try. "
+            "Something the person has already DONE — including a practice conversation they completed — "
+            "is a theme (a dated note of what happened), never a goal. "
             "Describing language only — never condition names or labels. At most 10 items. "
             "If there is nothing solid yet, end with ITEMS: [].\n\n"
             "Previous note:\n%s\n\nRecent conversation:\n%s%s"
@@ -808,9 +816,18 @@ def update_summary(user_id):
                 for it in items:
                     if _norm_item(it["text"]) in tombs:
                         continue  # the person deleted this — keep it deleted
+                    kind = it["kind"]
+                    if kind == "goal" and re.search(
+                            r"rehears|practiced|practice (talk|conversation)",
+                            it["text"], re.I):
+                        # A completed practice conversation is a
+                        # dated note of something that happened —
+                        # a theme, never a goal (Tab fix), whatever
+                        # kind the updater model assigned it.
+                        kind = "theme"
                     conn.execute(
                         "INSERT INTO memory_items (user_id, kind, text) VALUES (?,?,?)",
-                        (user_id, it["kind"], it["text"]),
+                        (user_id, kind, it["text"]),
                     )
             conn.commit()
             conn.close()
@@ -1312,11 +1329,15 @@ class GreetingIn(BaseModel):
 
 @app.post("/api/greeting")
 def greeting(body: GreetingIn):
-    """Continuity opener for a returning visit: when the person's
-    last message is hours old, Solace speaks first with ONE line
-    about last time. Server-checked: never while crisis mode is
-    latched, and never twice for the same return — the saved opener
-    becomes the newest message, so the age check closes behind it."""
+    """Continuity opener for a returning visit: when the person has
+    been away for hours, Solace speaks first with ONE line about
+    last time. Server-checked: never while crisis mode is latched,
+    and never twice for the same return — the saved opener becomes
+    the newest message, so the age check closes behind it. The
+    3-hour gap is measured from the person's latest activity of ANY
+    kind — chat messages and rehearsal turns/debriefs alike: a
+    rehearsal that ended a minute ago is not a 'return', and the
+    opener must stay silent (Tab's 1-minute bug)."""
     uid = (body.user_id or "").strip()
     if not uid:
         return {"greeting": None}
@@ -1333,17 +1354,27 @@ def greeting(body: GreetingIn):
         srow = conn.execute(
             "SELECT summary FROM summaries WHERE user_id=?", (uid,)
         ).fetchone()
+        last_row = conn.execute(
+            "SELECT MAX(ts) AS last_ts FROM ("
+            "SELECT created_at AS ts FROM messages WHERE user_id=? "
+            "UNION ALL "
+            "SELECT updated_at AS ts FROM rehearsals WHERE user_id=?)",
+            (uid, uid),
+        ).fetchone()
         conn.close()
-    if not rows:
+    summary = srow["summary"] if srow else ""
+    if not rows and not summary:
+        return {"greeting": None}
+    last_ts = last_row["last_ts"] if last_row else None
+    if not last_ts:
         return {"greeting": None}
     try:
-        last_at = datetime.strptime(rows[0]["created_at"], "%Y-%m-%d %H:%M:%S")
+        last_at = datetime.strptime(last_ts, "%Y-%m-%d %H:%M:%S")
         now = datetime.now(timezone.utc).replace(tzinfo=None)
         if (now - last_at).total_seconds() < 3 * 3600:
             return {"greeting": None}
     except Exception:
         return {"greeting": None}
-    summary = srow["summary"] if srow else ""
     convo = "\n".join(
         "%s: %s" % (r["role"], r["content"]) for r in reversed(rows))
     ask = "Memory note:\n%s\n\nRecent messages:\n%s" % (
@@ -1405,7 +1436,11 @@ Rules:
   "sideways_index": integer — the index (from the numbered list of the user's own lines given to you) of the line where the talk got hardest or went sideways.
   "sideways_note": 1-2 sentences, kind and plain: what made that moment hard.
   "say_instead": array of 2-3 exact alternative lines the user could say at that moment — real wording they can actually use, short and quotable, in the user's own voice.
-  "readiness": one honest, encouraging line about being ready for the real talk.
+  "outcome": one of "full", "partial", "none" — judged ONLY by what the other person actually agreed to in the transcript: "full" = they clearly agreed to what the user asked for; "partial" = they gave something real but short of the ask (a smaller step, or a concrete next move); "none" = they agreed to NOTHING — they refused, deflected, or the talk ended with no concession of any kind.
+  "readiness": one honest closing line that MUST match "outcome":
+    - "full": you may say they are ready for the real talk.
+    - "partial": name the ground they won and the one thing still left to get.
+    - "none": NEVER say the user is ready or prepared, and never imply it went well — they won no concession. Close with what they DID hold on to (they stayed calm, they said the hard sentence out loud) plus ONE concrete target for next time, in this shape: "<what they held>; next time get one concrete yes."
 - Match the user's language: if the conversation is in Hebrew, every string in the JSON is in Hebrew."""
 
 
@@ -1595,7 +1630,12 @@ def _rehearsal_crisis_exit(rec, saved_user_text, hebrew):
     _save_assistant_msg(uid, reply)
     return {"reply": reply, "crisis": True,
             "hotline": "1201" if hebrew else "988", "banner": True,
-            "banner_lang": banner_lang, "exited": True}
+            "banner_lang": banner_lang, "exited": True,
+            # The triggering user text (already saved above as a main
+            # chat message) — echoed so the client can render it in
+            # the main chat directly above this reply; without it the
+            # person lands in chat seeing a reply with no context.
+            "user_message": saved_user_text or ""}
 
 
 class RehearseStartIn(BaseModel):
@@ -1761,6 +1801,7 @@ def _fallback_debrief(rec, user_lines):
         ],
         "readiness": "You practiced it once — the real talk will "
                      "feel more familiar than you expect.",
+        "outcome": "",
     }
 
 
@@ -1791,6 +1832,7 @@ def rehearse_debrief(body: RehearseDebriefIn, background: BackgroundTasks):
             "say_instead": [],
             "readiness": "Next time, try staying for one more line "
                          "than feels comfortable.",
+            "outcome": "",
         }
     else:
         script = "\n".join(
@@ -1827,6 +1869,23 @@ def rehearse_debrief(body: RehearseDebriefIn, background: BackgroundTasks):
                        if str(x).strip()][:3]
             if worked and len(instead) >= 2 and str(
                     data.get("sideways_note", "")).strip():
+                outcome = str(data.get("outcome", "")).strip().lower()
+                if outcome not in ("full", "partial", "none"):
+                    outcome = ""
+                readiness = str(data.get("readiness", "")).strip() \
+                    or "You practiced it — you're readier than you were."
+                if outcome == "none" and re.search(
+                        r"ready|readier|מוכן|מוכנה", readiness, re.I):
+                    # The rehearsal won NO concession — the closing
+                    # must never declare the user ready (Tab's Dave
+                    # case: he agreed to nothing, yet the debrief
+                    # said "you're genuinely ready"). Held ground +
+                    # one concrete next target instead.
+                    readiness = (
+                        "עמדת על שלך; בפעם הבאה נסה להשיג כן אחד ברור."
+                        if any(has_hebrew(x) for x in user_lines) else
+                        "You held your ground; next time get one "
+                        "concrete yes.")
                 debrief = {
                     "worked": worked,
                     "sideways_index": idx,
@@ -1835,8 +1894,8 @@ def rehearse_debrief(body: RehearseDebriefIn, background: BackgroundTasks):
                     "sideways_quote": user_lines[idx],
                     "sideways_note": str(data["sideways_note"]).strip(),
                     "say_instead": instead,
-                    "readiness": str(data.get("readiness", "")).strip()
-                    or "You practiced it — you're readier than you were.",
+                    "readiness": readiness,
+                    "outcome": outcome,
                 }
         except Exception:
             debrief = None
