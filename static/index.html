@@ -246,7 +246,7 @@
   <section id="welcome">
     <h1>Welcome. I'm glad you're here.</h1>
     <p class="tagline">A private AI companion for reflection and self-help. Not therapy, not a substitute for professional care.</p>
-    <p class="audience">For anyone carrying stress, anxiety, or a heavy mind who wants a private place to sort out their thoughts — day or night, no judgment, and nothing kept unless you want it kept.</p>
+    <p class="audience">For anyone carrying stress, anxiety, or a heavy mind who wants a private place to sort out their thoughts — day or night, no judgment. Solace remembers key themes so you can pick up where you left off. See or delete them anytime.</p>
     <p class="lead">This is a quiet space to talk through what's on your mind, at your own pace. Your chats are processed by an AI provider to generate replies. We never sell them, and you can delete everything anytime with Delete my data.</p>
 
     <div>
@@ -1271,6 +1271,20 @@ document.getElementById('rh-done').addEventListener('click', () => {
         else renderRehearsalCard(e.rec);
       });
       if (h.crisis || h.banner) showBanner();
+      // Continuity opener: if the last message is hours old, Solace
+      // speaks first with one line about last time (the server
+      // decides — never in crisis mode, never twice per return).
+      const msgs = h.messages || [];
+      const lastMsg = msgs[msgs.length - 1];
+      if (lastMsg && lastMsg.created_at && !h.crisis) {
+        const lastTs = Date.parse(lastMsg.created_at.replace(' ', 'T') + 'Z');
+        if (!isNaN(lastTs) && Date.now() - lastTs >= 3 * 3600 * 1000) {
+          try {
+            const g = await api('/api/greeting', {user_id: userId});
+            if (g && g.greeting) addMsg(g.greeting, 'ai');
+          } catch (e) { /* no opener — normal flow */ }
+        }
+      }
     }
   } catch (e) { /* stay on welcome */ }
 })();

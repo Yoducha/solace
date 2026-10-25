@@ -268,6 +268,7 @@ You have been given their name, current mood, and what's weighing on them (see "
 
 ONGOING SESSIONS (when a summary of earlier sessions exists):
 - Greet them warmly, show you remember what matters, ask how they've been since last time.
+- ANSWER FIRST: if the person asks you a question, answer it first and directly. Only after answering, if it fits naturally, weave in what you remember. Never ignore their question to ask about a remembered item.
 - Reflective listening first: mirror their words and feelings before offering anything new.
 - Draw on evidence-based approaches as they fit the moment: CBT (noticing and gently examining unhelpful thought patterns), ACT (values, making room for difficult feelings), DBT (distress tolerance, emotion regulation skills), motivational interviewing (open questions, affirming their strengths), trauma-informed care (safety and choice first — never push anyone to disclose), attachment and grief awareness.
 - Adapt to their concern. Don't force techniques. Meet them where they are.
@@ -570,18 +571,55 @@ def crisis_resource_line(hebrew, reply):
     return ""
 
 
+def _today_str():
+    """Today's date as the user lives it (America/New_York), e.g.
+    'Sunday, October 25, 2026'. Falls back to UTC if tzdata is
+    unavailable. The model must always know what day it is — without
+    it, a remembered plan for 'Thursday' gets asked about as if it
+    already happened (Tab's date bug)."""
+    try:
+        from zoneinfo import ZoneInfo
+
+        now = datetime.now(ZoneInfo("America/New_York"))
+    except Exception:
+        now = datetime.now(timezone.utc)
+    return now.strftime("%A, %B %d, %Y").replace(" 0", " ")
+
+
+def _fmt_date(ts):
+    """'2026-10-25 14:03:11' -> 'October 25, 2026' ('' if unparseable)."""
+    try:
+        dt = datetime.strptime((ts or "")[:10], "%Y-%m-%d")
+        return dt.strftime("%B %d, %Y").replace(" 0", " ")
+    except Exception:
+        return ""
+
+
+DATE_RULES = (
+    "DATES: Today is {today}. Before you ask about anything from "
+    "memory, check its date against today. A remembered plan or event "
+    "dated today or later has NOT happened yet — never ask how it "
+    "went; at most, ask if they feel ready for it. If a remembered "
+    "item carries no clear date, do not assume it already happened."
+)
+
 RETURN_NOTE = (
     "RETURNING VISIT: This person is coming back after a break — their "
     "previous message was a while ago, so this is a new visit, not a "
-    "continuation of the same sitting. Open by warmly welcoming them "
-    "back. Briefly reference what they were working through — from the "
-    "memory note and the messages above — and ask how things have been "
-    "since. Then continue naturally."
+    "continuation of the same sitting. Open with ONE brief line that "
+    "picks up where you left off — what they were working through, "
+    "from the memory note and the messages above. Then follow their "
+    "lead: if they ask a question or raise something new, answer that "
+    "first — never hold their question hostage to a memory check-in. "
+    "And mind the dates (see DATES): a remembered plan dated today or "
+    "later hasn't happened yet — don't ask how it went."
 )
 
 
-def build_system(profile, summary, has_prior=False, returning=False):
+def build_system(profile, summary, has_prior=False, returning=False,
+                 summary_date=""):
     parts = [SYSTEM_PROMPT]
+    parts.append(DATE_RULES.format(today=_today_str()))
     bits = []
     if profile.get("name"):
         bits.append("Name: %s" % profile["name"])
@@ -592,7 +630,11 @@ def build_system(profile, summary, has_prior=False, returning=False):
     if bits:
         parts.append("About this person:\n" + "\n".join(bits))
     if summary:
-        parts.append("What you remember from earlier sessions:\n" + summary)
+        label = "What you remember from earlier sessions"
+        d = _fmt_date(summary_date)
+        if d:
+            label += " (memory note last updated %s)" % d
+        parts.append(label + ":\n" + summary)
     elif has_prior:
         parts.append(
             "This person has spoken with you before — their earlier "
@@ -660,7 +702,7 @@ def update_summary(user_id):
                 "SELECT summary FROM summaries WHERE user_id=?", (user_id,)
             ).fetchone()
             rehearsal_rows = conn.execute(
-                "SELECT person_type, person_name, relationship, topic "
+                "SELECT person_type, person_name, relationship, topic, created_at "
                 "FROM rehearsals WHERE user_id=? AND state='debriefed' "
                 "ORDER BY id DESC LIMIT 3",
                 (user_id,),
@@ -679,9 +721,11 @@ def update_summary(user_id):
             for rr in reversed(rehearsal_rows):
                 label = _rehearsal_person_label(rr)
                 topic = (rr["topic"] or "").strip()
+                when = _fmt_date(rr["created_at"])
                 lines.append(
-                    "The person rehearsed a hard talk with %s%s."
-                    % (label, (" about " + topic) if topic else "")
+                    "The person rehearsed a hard talk with %s%s%s."
+                    % (label, (" about " + topic) if topic else "",
+                       (" (rehearsed on " + when + ")") if when else "")
                 )
             rehearsal_note = (
                 "\n\nRecent practice conversations to fold into the "
@@ -689,12 +733,18 @@ def update_summary(user_id):
                 + "\n".join(lines)
             )
         prompt = (
+            "Today is %s.\n\n"
             "You are updating a private memory note for an AI support companion. "
             "Read the recent conversation and write (or update) a concise note covering: "
             "presenting concerns, key facts about the person, what seems to be helping, "
             "any practical exercises or homework assigned and whether the person tried them, "
             "and the current focus. Describing language only — describe, never label. "
-            "Keep it under 200 words. If a previous note exists, merge the new information into it.\n\n"
+            "Keep it under 200 words. If a previous note exists, merge the new information into it. "
+            "DATING: when the person mentions a plan or event tied to a day or date "
+            "('on Thursday', 'tomorrow'), write it WITH its full date — e.g. 'plans to "
+            "talk with Dave on Thursday, October 29, 2026' — resolving relative days "
+            "against today's date above, so a future plan is never later mistaken for "
+            "something that already happened. Keep full dates already recorded.\n\n"
             "After the note, add one final line that begins with ITEMS: followed by a JSON array "
             "of the memory items the person should be able to review, each an object "
             "{\"kind\": \"theme\" or \"goal\", \"text\": \"a short plain-language phrase\"}. "
@@ -703,7 +753,8 @@ def update_summary(user_id):
             "Describing language only — never condition names or labels. At most 10 items. "
             "If there is nothing solid yet, end with ITEMS: [].\n\n"
             "Previous note:\n%s\n\nRecent conversation:\n%s%s"
-            % (old["summary"] if old else "(none)", transcript, rehearsal_note)
+            % (_today_str(), old["summary"] if old else "(none)",
+               transcript, rehearsal_note)
         )
         out = call_anthropic(
             SUMMARY_MODEL,
@@ -883,9 +934,10 @@ def _prepare_turn(uid, msg):
         )
         conn.commit()
         srow = conn.execute(
-            "SELECT summary FROM summaries WHERE user_id=?", (uid,)
+            "SELECT summary, updated_at FROM summaries WHERE user_id=?", (uid,)
         ).fetchone()
         summary = srow["summary"] if srow else ""
+        summary_date = srow["updated_at"] if srow else ""
         hist = conn.execute(
             "SELECT role, content, created_at FROM messages WHERE user_id=? ORDER BY id DESC LIMIT 20",
             (uid,),
@@ -940,6 +992,7 @@ def _prepare_turn(uid, msg):
 
     ctx = {
         "uid": uid, "profile": profile, "summary": summary,
+        "summary_date": summary_date,
         "messages": messages, "hebrew": hebrew, "hotline": hotline,
         "banner": banner, "banner_lang": banner_lang,
         "user_count": user_count, "retracted": retracted,
@@ -1008,6 +1061,7 @@ def _prepare_turn(uid, msg):
     system = build_system(
         profile, summary,
         has_prior=user_count > 1, returning=returning,
+        summary_date=summary_date,
     )
     return ctx, ("model", "normal", system)
 
@@ -1218,6 +1272,74 @@ def chat_stream(body: ChatIn, background: BackgroundTasks):
     if body.user_id.strip():
         _set_uid_cookie(resp, body.user_id.strip())
     return resp
+
+
+GREETING_SYSTEM = """You are Solace, a warm AI self-help companion. The person is returning after a break of a few hours or more. Write ONE short welcome-back line — a single sentence — that picks up where you left off, using the memory note and recent messages provided.
+
+Rules:
+- Warm and brief. Reference ONE thing they were working through, by its content.
+- Today is {today}. Respect dates: if the thing you reference was a plan or event dated today or later, it has NOT happened — do not ask how it went; you can wish them well for it, or ask if they feel ready.
+- Never claim you were thinking about them, missed them, or did anything while they were away — you are simply picking up the thread.
+- If their recent messages are in Hebrew, write the line fully in Hebrew.
+- Output only the line itself — no quotes, no preamble."""
+
+
+class GreetingIn(BaseModel):
+    user_id: str
+
+
+@app.post("/api/greeting")
+def greeting(body: GreetingIn):
+    """Continuity opener for a returning visit: when the person's
+    last message is hours old, Solace speaks first with ONE line
+    about last time. Server-checked: never while crisis mode is
+    latched, and never twice for the same return — the saved opener
+    becomes the newest message, so the age check closes behind it."""
+    uid = (body.user_id or "").strip()
+    if not uid:
+        return {"greeting": None}
+    with db_lock:
+        conn = _conn()
+        u = conn.execute("SELECT * FROM users WHERE id=?", (uid,)).fetchone()
+        if not u or u["crisis_mode"]:
+            conn.close()
+            return {"greeting": None}
+        rows = conn.execute(
+            "SELECT role, content, created_at FROM messages WHERE user_id=? ORDER BY id DESC LIMIT 8",
+            (uid,),
+        ).fetchall()
+        srow = conn.execute(
+            "SELECT summary FROM summaries WHERE user_id=?", (uid,)
+        ).fetchone()
+        conn.close()
+    if not rows:
+        return {"greeting": None}
+    try:
+        last_at = datetime.strptime(rows[0]["created_at"], "%Y-%m-%d %H:%M:%S")
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        if (now - last_at).total_seconds() < 3 * 3600:
+            return {"greeting": None}
+    except Exception:
+        return {"greeting": None}
+    summary = srow["summary"] if srow else ""
+    convo = "\n".join(
+        "%s: %s" % (r["role"], r["content"]) for r in reversed(rows))
+    ask = "Memory note:\n%s\n\nRecent messages:\n%s" % (
+        summary or "(none)", convo)
+    try:
+        line = call_anthropic(
+            SUMMARY_MODEL,
+            GREETING_SYSTEM.format(today=_today_str()),
+            [{"role": "user", "content": ask}],
+            max_tokens=120,
+        )
+    except Exception:
+        return {"greeting": None}
+    line = " ".join(line.strip().strip('"').split())[:300]
+    if not line:
+        return {"greeting": None}
+    _save_assistant_msg(uid, line)
+    return {"greeting": line}
 
 
 # ------------------------------------------------------- Rehearse ----
