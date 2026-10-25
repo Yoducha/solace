@@ -91,6 +91,34 @@
   #welcome { padding: 28px 20px; display: flex; flex-direction: column; gap: 18px; }
   #welcome h1 { font-size: 30px; margin: 6px 0 0; font-weight: 700; }
   #welcome p.tagline { color: var(--muted); font-size: 14px; line-height: 1.55; margin: -8px 0 0; }
+  #welcome p.audience { color: var(--ink); font-size: 16px; line-height: 1.6; margin: -6px 0 0; }
+  .sysline { align-self: center; color: var(--muted); font-size: 13px; text-align: center; padding: 2px 10px; }
+  /* What Solace remembers — overlay */
+  #memory-overlay {
+    display: none; position: fixed; inset: 0; z-index: 20; background: rgba(61,54,48,.45);
+    align-items: flex-end; justify-content: center;
+  }
+  #memory-overlay.open { display: flex; }
+  #memory-card {
+    background: var(--card); width: 100%; max-width: 640px; max-height: 82dvh; overflow-y: auto;
+    border-radius: 20px 20px 0 0; padding: 20px 18px calc(18px + env(safe-area-inset-bottom));
+  }
+  #memory-card h2 { font-size: 20px; margin: 0 0 6px; }
+  #memory-card p.sub { color: var(--muted); font-size: 14px; line-height: 1.55; margin: 0 0 14px; }
+  #memory-card h3 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 16px 0 8px; }
+  .mem-item {
+    display: flex; align-items: center; gap: 10px; background: var(--sage-soft);
+    border-radius: 12px; padding: 10px 12px; margin-bottom: 8px; font-size: 15px; line-height: 1.45;
+  }
+  .mem-item span { flex: 1; }
+  .mem-item button {
+    background: none; border: none; color: var(--danger-ink); font-size: 17px; cursor: pointer; padding: 4px 6px;
+  }
+  .mem-empty { color: var(--muted); font-size: 15px; line-height: 1.55; }
+  #memory-card .row { display: flex; gap: 10px; margin-top: 18px; }
+  #memory-card .row button { flex: 1; border-radius: 14px; padding: 13px; font-size: 15px; font-weight: 700; cursor: pointer; }
+  #memory-close { background: var(--sage); color: #fff; border: none; }
+  #memory-delete-all { background: none; border: 1px solid var(--danger-ink); color: var(--danger-ink); }
   #welcome p.lead { color: var(--muted); font-size: 16px; line-height: 1.6; margin: 0; }
   label.q { font-size: 14px; font-weight: 600; margin-bottom: 8px; display: block; }
   input[type=text], textarea {
@@ -167,6 +195,7 @@
   <section id="welcome">
     <h1>Welcome. I'm glad you're here.</h1>
     <p class="tagline">A private AI companion for reflection and self-help. Not therapy, not a substitute for professional care.</p>
+    <p class="audience">For anyone carrying stress, anxiety, or a heavy mind who wants a private place to sort out their thoughts — day or night, no judgment, and nothing kept unless you want it kept.</p>
     <p class="lead">This is a quiet space to talk through what's on your mind, at your own pace. Your chats are processed by an AI provider to generate replies. We never sell them, and you can delete everything anytime with Delete my data.</p>
 
     <div>
@@ -201,12 +230,43 @@
       <input type="text" id="input" placeholder="Share what's on your mind…" autocomplete="off">
       <button id="send">Send</button>
     </div>
-    <p class="tiny" style="text-align:center;margin:6px 0 10px"><a href="/privacy" target="_blank">Privacy</a> · <a href="/terms" target="_blank">Terms</a> · <button type="button" id="delete-data" class="linkbtn danger">Delete my data</button></p>
+    <p class="tiny" style="text-align:center;margin:6px 0 10px"><a href="/privacy" target="_blank">Privacy</a> · <a href="/terms" target="_blank">Terms</a> · <button type="button" id="memory-open" class="linkbtn">What Solace remembers</button> · <button type="button" id="delete-data" class="linkbtn danger">Delete my data</button></p>
   </section>
 </main>
 
+<!-- What Solace remembers about you -->
+<div id="memory-overlay" role="dialog" aria-label="What Solace remembers about you">
+  <div id="memory-card">
+    <h2>What Solace remembers about you</h2>
+    <p class="sub">So we can pick up where we left off, Solace keeps a short note of the themes and goals you share. You can remove anything here — it stays removed — or delete everything at once.</p>
+    <div id="memory-list"></div>
+    <div class="row">
+      <button type="button" id="memory-close">Close</button>
+      <button type="button" id="memory-delete-all">Delete everything</button>
+    </div>
+  </div>
+</div>
+
 <script>
-let userId = localStorage.getItem('solace_uid') || '';
+// Identity: localStorage first, with a long-lived cookie as backup —
+// browsers evict or partition localStorage (in-app browsers, private
+// tabs, storage cleanup), and losing the id means losing the whole
+// history. The server also re-sets this cookie on its responses.
+function cookieUid() {
+  const m = document.cookie.match(/(?:^|;\s*)solace_uid=([^;]+)/);
+  return m ? decodeURIComponent(m[1]) : '';
+}
+function setUidCookie(id) {
+  document.cookie = 'solace_uid=' + encodeURIComponent(id) + '; Max-Age=31536000; Path=/; SameSite=Lax';
+}
+function clearUidCookie() {
+  document.cookie = 'solace_uid=; Max-Age=0; Path=/; SameSite=Lax';
+}
+let userId = localStorage.getItem('solace_uid') || cookieUid() || '';
+if (userId) {
+  localStorage.setItem('solace_uid', userId);
+  setUidCookie(userId);
+}
 let mood = '';
 let voiceOn = false;
 // Language of the session's crisis ('en'/'he'), carried from the
@@ -256,6 +316,7 @@ document.getElementById('new-chat').addEventListener('click', () => {
   userId = Array.from(crypto.getRandomValues(new Uint8Array(8)))
     .map(b => b.toString(16).padStart(2, '0')).join('');
   localStorage.setItem('solace_uid', userId);
+  setUidCookie(userId);
   document.getElementById('messages').innerHTML = '';
   bannerLang = 'en';
   hideBanner();
@@ -387,26 +448,100 @@ function hideBanner() {
   document.getElementById('crisis-banner').style.display = 'none';
 }
 
+// A streaming AI bubble: text is rendered (markdown + links) as it
+// arrives; auto-scroll follows the growing bubble.
+function addStreamBubble() {
+  const d = document.createElement('div');
+  d.className = 'msg ai';
+  const span = document.createElement('span');
+  d.appendChild(span);
+  document.getElementById('messages').appendChild(d);
+  return { box: d, span };
+}
+function finishBubble(b, text) {
+  b.span.innerHTML = renderAI(text);
+  if ('speechSynthesis' in window) {
+    const btn = document.createElement('button');
+    btn.className = 'speak';
+    btn.textContent = '🔊';
+    btn.title = 'Read out loud';
+    btn.addEventListener('click', () => speak(text));
+    b.box.appendChild(btn);
+  }
+  scrollToLatest(b.box);
+}
+
 async function sendChat(text) {
   if ('speechSynthesis' in window) speechSynthesis.cancel();
   const typing = addMsg('…', 'ai typing');
-  try {
-    const res = await api('/api/chat', {user_id: userId, message: text});
-    typing.remove();
-    if (res.banner_lang) bannerLang = res.banner_lang;
-    if (res.crisis || res.banner) {
+  const applyPayload = (payload, bubble, acc) => {
+    if (payload.banner_lang) bannerLang = payload.banner_lang;
+    if (payload.crisis || payload.banner) {
       // In crisis, and also after stepping down: the banner stays
       // for the rest of the session.
       showBanner();
     } else {
       hideBanner();
     }
-    const reply = res.reply || "I'm here.";
-    addMsg(reply, 'ai');
+    const reply = payload.reply || acc || "I'm here.";
+    if (bubble) {
+      finishBubble(bubble, reply);
+    } else {
+      addMsg(reply, 'ai');
+    }
     if (voiceOn) speak(reply);
+  };
+  let acc = '', bubble = null;
+  try {
+    const r = await fetch('/api/chat/stream', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({user_id: userId, message: text})
+    });
+    if (!r.ok || !r.body) throw new Error('stream unavailable');
+    const reader = r.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = '', payload = null;
+    for (;;) {
+      const {done, value} = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, {stream: true});
+      let idx;
+      while ((idx = buf.indexOf('\n\n')) >= 0) {
+        const rawEvt = buf.slice(0, idx);
+        buf = buf.slice(idx + 2);
+        const line = rawEvt.split('\n').find(l => l.startsWith('data:'));
+        if (!line) continue;
+        const evt = JSON.parse(line.slice(5));
+        if (evt.type === 'delta') {
+          if (!bubble) { typing.remove(); bubble = addStreamBubble(); }
+          acc += evt.text;
+          bubble.span.innerHTML = renderAI(acc);
+          scrollToLatest(bubble.box);
+        } else if (evt.type === 'done') {
+          payload = evt;
+        }
+      }
+    }
+    if (!payload) throw new Error('stream ended without done');
+    if (typing.isConnected) typing.remove();
+    applyPayload(payload, bubble, acc);
   } catch (e) {
-    typing.remove();
-    addMsg("I'm having trouble connecting. Please check your connection and try again.", 'ai');
+    if (typing.isConnected) typing.remove();
+    if (bubble) {
+      // Part of the reply already arrived — never re-send the message
+      // (that would duplicate the turn); just settle what we have.
+      finishBubble(bubble, acc || "I'm here.");
+    } else {
+      // Streaming unavailable before anything arrived — fall back to
+      // the classic request.
+      try {
+        const res = await api('/api/chat', {user_id: userId, message: text});
+        applyPayload(res, null, '');
+      } catch (e2) {
+        addMsg("I'm having trouble connecting. Please check your connection and try again.", 'ai');
+      }
+    }
   }
 }
 
@@ -428,6 +563,7 @@ document.getElementById('begin').addEventListener('click', async () => {
     const res = await api('/api/profile', {user_id: userId, name, notes});
     userId = res.user_id;
     localStorage.setItem('solace_uid', userId);
+    setUidCookie(userId);
     showChat();
     addMsg(concern ? concern : "Hi, I'd like to talk.", 'user');
     await sendChat(concern ? concern : "Hi, I'd like to talk.");
@@ -452,14 +588,18 @@ document.getElementById('input').addEventListener('keydown', e => {
 });
 
 // Delete my data: wipe everything stored for this session's user_id
-// (messages, profile, memory notes, crisis state), then reset the app.
-document.getElementById('delete-data').addEventListener('click', async () => {
+// (messages, profile, memory notes and items, crisis state), then
+// reset the app. Shared by the chat footer button and the remembers
+// view's "Delete everything".
+async function doDeleteData() {
   if (!userId) { alert('There is no saved data to delete yet.'); return; }
   if (!confirm('Permanently delete ALL your Solace data — every message, your profile, and the memory notes? This cannot be undone.')) return;
   try {
     const res = await api('/api/delete', {user_id: userId});
     if (!res.ok) throw new Error('delete failed');
     localStorage.removeItem('solace_uid');
+    clearUidCookie();
+    closeMemory();
     userId = '';
     if ('speechSynthesis' in window) speechSynthesis.cancel();
     document.getElementById('messages').innerHTML = '';
@@ -479,7 +619,65 @@ document.getElementById('delete-data').addEventListener('click', async () => {
   } catch (e) {
     alert('Could not delete your data just now — please try again, or email us and we will delete it for you.');
   }
-});
+}
+document.getElementById('delete-data').addEventListener('click', doDeleteData);
+
+// ---- What Solace remembers about you ----
+const memoryOverlay = document.getElementById('memory-overlay');
+function closeMemory() { memoryOverlay.classList.remove('open'); }
+function renderMemory(items) {
+  const list = document.getElementById('memory-list');
+  list.innerHTML = '';
+  if (!items || !items.length) {
+    const p = document.createElement('p');
+    p.className = 'mem-empty';
+    p.textContent = 'Nothing saved yet. As we talk, a short note of the themes and goals you share will appear here — and you can remove any of it, any time.';
+    list.appendChild(p);
+    return;
+  }
+  [['theme', 'Themes'], ['goal', 'Goals']].forEach(([kind, label]) => {
+    const group = items.filter(i => i.kind === kind);
+    if (!group.length) return;
+    const h = document.createElement('h3');
+    h.textContent = label;
+    list.appendChild(h);
+    group.forEach(item => {
+      const row = document.createElement('div');
+      row.className = 'mem-item';
+      const span = document.createElement('span');
+      span.textContent = item.text;
+      const x = document.createElement('button');
+      x.textContent = '✕';
+      x.title = 'Remove this';
+      x.setAttribute('aria-label', 'Remove this memory item');
+      x.addEventListener('click', async () => {
+        try {
+          const res = await api('/api/memory/delete-item', {user_id: userId, item_id: item.id});
+          if (res.ok) renderMemory(res.items);
+        } catch (e) { alert('Could not remove that just now — please try again.'); }
+      });
+      row.appendChild(span);
+      row.appendChild(x);
+      list.appendChild(row);
+    });
+  });
+}
+async function openMemory() {
+  if (!userId) { alert('Nothing is saved yet — start a conversation first.'); return; }
+  memoryOverlay.classList.add('open');
+  document.getElementById('memory-list').innerHTML = '<p class="mem-empty">Loading…</p>';
+  try {
+    const r = await fetch('/api/memory?user_id=' + encodeURIComponent(userId));
+    const m = await r.json();
+    renderMemory(m.items || []);
+  } catch (e) {
+    document.getElementById('memory-list').innerHTML = '<p class="mem-empty">Could not load your memory just now — please try again.</p>';
+  }
+}
+document.getElementById('memory-open').addEventListener('click', openMemory);
+document.getElementById('memory-close').addEventListener('click', closeMemory);
+document.getElementById('memory-delete-all').addEventListener('click', doDeleteData);
+memoryOverlay.addEventListener('click', e => { if (e.target === memoryOverlay) closeMemory(); });
 
 // Returning user: skip intake, restore history
 (async function init() {
@@ -489,6 +687,10 @@ document.getElementById('delete-data').addEventListener('click', async () => {
     const h = await r.json();
     if (h.messages && h.messages.length) {
       showChat();
+      const divider = document.createElement('div');
+      divider.className = 'sysline';
+      divider.textContent = 'Welcome back — here\u2019s where you left off.';
+      document.getElementById('messages').appendChild(divider);
       h.messages.forEach(m => addMsg(m.content, m.role === 'user' ? 'user' : 'ai'));
       if (h.banner_lang) bannerLang = h.banner_lang;
       if (h.crisis || h.banner) showBanner();

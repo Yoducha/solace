@@ -14,10 +14,11 @@ import subprocess
 import threading
 import uuid
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 
 import httpx
-from fastapi import FastAPI, BackgroundTasks
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, BackgroundTasks, Response
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -336,6 +337,18 @@ def init_db():
                 summary TEXT DEFAULT '',
                 updated_at TEXT DEFAULT (datetime('now'))
             );
+            CREATE TABLE IF NOT EXISTS memory_items (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id TEXT NOT NULL,
+                kind TEXT NOT NULL DEFAULT 'theme',
+                text TEXT NOT NULL,
+                created_at TEXT DEFAULT (datetime('now'))
+            );
+            CREATE TABLE IF NOT EXISTS memory_tombstones (
+                user_id TEXT NOT NULL,
+                norm TEXT NOT NULL,
+                PRIMARY KEY (user_id, norm)
+            );
             """
         )
         # Migration: persistent crisis-mode latch per user (Solace Fix #1).
@@ -542,7 +555,17 @@ def crisis_resource_line(hebrew, reply):
     return ""
 
 
-def build_system(profile, summary):
+RETURN_NOTE = (
+    "RETURNING VISIT: This person is coming back after a break — their "
+    "previous message was a while ago, so this is a new visit, not a "
+    "continuation of the same sitting. Open by warmly welcoming them "
+    "back. Briefly reference what they were working through — from the "
+    "memory note and the messages above — and ask how things have been "
+    "since. Then continue naturally."
+)
+
+
+def build_system(profile, summary, has_prior=False, returning=False):
     parts = [SYSTEM_PROMPT]
     bits = []
     if profile.get("name"):
@@ -555,15 +578,62 @@ def build_system(profile, summary):
         parts.append("About this person:\n" + "\n".join(bits))
     if summary:
         parts.append("What you remember from earlier sessions:\n" + summary)
+    elif has_prior:
+        parts.append(
+            "This person has spoken with you before — their earlier "
+            "messages are in this conversation — but there is no memory "
+            "note yet. Do NOT treat them as brand new and do NOT restart "
+            "the first-session intake: greet them as someone returning, "
+            "pick up the thread from the messages above, and continue "
+            "naturally."
+        )
     else:
         parts.append(
             "This is a new person — no earlier sessions. Follow the FIRST-SESSION INTAKE."
         )
+    if returning:
+        parts.append(RETURN_NOTE)
     return "\n\n---\n\n".join(parts)
 
 
+def _norm_item(text):
+    return re.sub(r"\s+", " ", (text or "").lower()).strip()
+
+
+def _parse_summary_output(out):
+    """Split the memory-model output into (note, items|None).
+
+    The model is asked to end with an ITEMS: line carrying a JSON array
+    of {"kind": "theme"|"goal", "text": ...}. Parsing is defensive: any
+    failure leaves items=None (existing items stay untouched)."""
+    if not out:
+        return "", None
+    idx = out.rfind("ITEMS:")
+    if idx < 0:
+        return out.strip(), None
+    note = out[:idx].strip()
+    raw = out[idx + len("ITEMS:"):]
+    items = None
+    try:
+        a = raw.index("[")
+        b = raw.rindex("]")
+        data = json.loads(raw[a:b + 1])
+        items = []
+        for it in data[:10]:
+            if isinstance(it, dict) and it.get("kind") in ("theme", "goal"):
+                t = str(it.get("text", "")).strip()
+                if t:
+                    items.append({"kind": it["kind"], "text": t[:200]})
+    except Exception:
+        items = None
+    return note, items
+
+
 def update_summary(user_id):
-    """Background job: refresh the rolling clinical-style memory note (cheap model)."""
+    """Background job: refresh the rolling memory note (cheap model) AND
+    the structured memory items (themes/goals) the person can review in
+    the "What Solace remembers about you" view. Items the person deleted
+    are tombstoned and never re-added."""
     try:
         with db_lock:
             conn = _conn()
@@ -585,15 +655,25 @@ def update_summary(user_id):
             "any practical exercises or homework assigned and whether the person tried them, "
             "and the current focus. Describing language only — describe, never label. "
             "Keep it under 200 words. If a previous note exists, merge the new information into it.\n\n"
+            "After the note, add one final line that begins with ITEMS: followed by a JSON array "
+            "of the memory items the person should be able to review, each an object "
+            "{\"kind\": \"theme\" or \"goal\", \"text\": \"a short plain-language phrase\"}. "
+            "Themes are what has been weighing on them and the topics they keep coming back to. "
+            "Goals are what they are working toward, including any small step they agreed to try. "
+            "Describing language only — never condition names or labels. At most 10 items. "
+            "If there is nothing solid yet, end with ITEMS: [].\n\n"
             "Previous note:\n%s\n\nRecent conversation:\n%s"
             % (old["summary"] if old else "(none)", transcript)
         )
-        new_summary = call_anthropic(
+        out = call_anthropic(
             SUMMARY_MODEL,
             "You write brief private memory notes for a support companion.",
             [{"role": "user", "content": prompt}],
-            max_tokens=512,
+            max_tokens=640,
         )
+        new_summary, items = _parse_summary_output(out)
+        if not new_summary:
+            new_summary = out.strip()
         with db_lock:
             conn = _conn()
             conn.execute(
@@ -601,6 +681,24 @@ def update_summary(user_id):
                 "ON CONFLICT(user_id) DO UPDATE SET summary=excluded.summary, updated_at=datetime('now')",
                 (user_id, new_summary),
             )
+            if items is not None:
+                tombs = {
+                    r["norm"]
+                    for r in conn.execute(
+                        "SELECT norm FROM memory_tombstones WHERE user_id=?",
+                        (user_id,),
+                    )
+                }
+                conn.execute(
+                    "DELETE FROM memory_items WHERE user_id=?", (user_id,)
+                )
+                for it in items:
+                    if _norm_item(it["text"]) in tombs:
+                        continue  # the person deleted this — keep it deleted
+                    conn.execute(
+                        "INSERT INTO memory_items (user_id, kind, text) VALUES (?,?,?)",
+                        (user_id, it["kind"], it["text"]),
+                    )
             conn.commit()
             conn.close()
     except Exception:
@@ -624,6 +722,23 @@ class DeleteIn(BaseModel):
     user_id: str
 
 
+class MemoryItemDeleteIn(BaseModel):
+    user_id: str
+    item_id: int
+
+
+UID_COOKIE = "solace_uid"
+
+
+def _set_uid_cookie(response: Response, uid: str):
+    """Long-lived first-party identity cookie — the backup for
+    localStorage, which browsers evict or partition (in-app browsers,
+    private tabs, storage cleanup). Device-level identity only."""
+    response.set_cookie(
+        UID_COOKIE, uid, max_age=60 * 60 * 24 * 365, path="/", samesite="lax"
+    )
+
+
 @asynccontextmanager
 async def lifespan(app):
     init_db()
@@ -634,30 +749,86 @@ app = FastAPI(title="Solace", lifespan=lifespan)
 
 
 @app.post("/api/profile")
-def save_profile(body: ProfileIn):
+def save_profile(body: ProfileIn, response: Response):
     uid = body.user_id.strip() or uuid.uuid4().hex[:16]
+    name = body.name.strip()
+    notes = body.notes.strip()
     with db_lock:
         conn = _conn()
+        existing = conn.execute(
+            "SELECT name, notes FROM users WHERE id=?", (uid,)
+        ).fetchone()
+        if existing:
+            # A returning person who lands on the intake form again
+            # (e.g. their history failed to load) must not clobber the
+            # profile already stored: keep the original intake notes,
+            # and never blank out a stored name.
+            has_msgs = conn.execute(
+                "SELECT COUNT(*) AS c FROM messages WHERE user_id=?", (uid,)
+            ).fetchone()["c"]
+            if has_msgs and existing["notes"]:
+                notes = existing["notes"]
+            if not name:
+                name = existing["name"] or ""
         conn.execute(
             "INSERT INTO users (id, name, age_range, notes) VALUES (?,?,?,?) "
             "ON CONFLICT(id) DO UPDATE SET name=excluded.name, age_range=excluded.age_range, "
             "notes=excluded.notes",
-            (uid, body.name.strip(), body.age_range.strip(), body.notes.strip()),
+            (uid, name, body.age_range.strip(), notes),
         )
         conn.commit()
         conn.close()
+    _set_uid_cookie(response, uid)
     return {"user_id": uid}
 
 
-@app.post("/api/chat")
-def chat(body: ChatIn, background: BackgroundTasks):
-    uid = body.user_id.strip()
-    msg = body.message.strip()
-    if not uid:
-        return {"reply": "Something went wrong starting your session. Please refresh and try again.", "crisis": False, "banner": False, "banner_lang": "en"}
-    if not msg:
-        return {"reply": "I'm here — what's on your mind?", "crisis": False, "banner": False, "banner_lang": "en"}
+def _save_assistant_msg(uid, text):
+    with db_lock:
+        c = _conn()
+        c.execute(
+            "INSERT INTO messages (user_id, role, content) VALUES (?,?,?)",
+            (uid, "assistant", text),
+        )
+        c.commit()
+        c.close()
 
+
+def _set_user_state(uid, crisis_mode=None, stepdown_v=None, banner_v=None,
+                    lang_v=None):
+    sets, vals = [], []
+    if crisis_mode is not None:
+        sets.append("crisis_mode=?")
+        vals.append(1 if crisis_mode else 0)
+    if stepdown_v is not None:
+        sets.append("crisis_stepdown=?")
+        vals.append(1 if stepdown_v else 0)
+    if banner_v is not None:
+        sets.append("crisis_banner=?")
+        vals.append(1 if banner_v else 0)
+    if lang_v is not None:
+        sets.append("crisis_lang=?")
+        vals.append(lang_v)
+    if not sets:
+        return
+    vals.append(uid)
+    with db_lock:
+        c = _conn()
+        c.execute("UPDATE users SET %s WHERE id=?" % ", ".join(sets), vals)
+        c.commit()
+        c.close()
+
+
+def _prepare_turn(uid, msg):
+    """Load state, record the user message, run the pre-model risk
+    check, and decide the turn — BEFORE any model call, exactly as the
+    original /api/chat pipeline did.
+
+    Returns (ctx, outcome): outcome is ("final", payload) for the
+    fixed-response paths, or ("model", mode, system) with mode in
+    {"normal", "crisis", "info"} when a model reply is needed. The
+    safety path therefore never streams through the model: a crisis
+    hit is decided here and returned as a fixed final payload.
+    """
     with db_lock:
         conn = _conn()
         row = conn.execute("SELECT * FROM users WHERE id=?", (uid,)).fetchone()
@@ -676,7 +847,7 @@ def chat(body: ChatIn, background: BackgroundTasks):
         ).fetchone()
         summary = srow["summary"] if srow else ""
         hist = conn.execute(
-            "SELECT role, content FROM messages WHERE user_id=? ORDER BY id DESC LIMIT 20",
+            "SELECT role, content, created_at FROM messages WHERE user_id=? ORDER BY id DESC LIMIT 20",
             (uid,),
         ).fetchall()
         user_count = conn.execute(
@@ -714,64 +885,46 @@ def chat(body: ChatIn, background: BackgroundTasks):
     retracted = detect_retraction(msg) and not risk
     messages = [{"role": r["role"], "content": r["content"]} for r in reversed(hist)]
 
-    def _save_assistant(text):
-        with db_lock:
-            c = _conn()
-            c.execute(
-                "INSERT INTO messages (user_id, role, content) VALUES (?,?,?)",
-                (uid, "assistant", text),
+    # A new visit after a real break (previous message hours old) gets
+    # an explicit welcome-back instruction in the normal flow.
+    returning = False
+    if len(hist) >= 2:
+        try:
+            prev_at = datetime.strptime(
+                hist[1]["created_at"], "%Y-%m-%d %H:%M:%S"
             )
-            c.commit()
-            c.close()
+            now = datetime.now(timezone.utc).replace(tzinfo=None)
+            returning = (now - prev_at).total_seconds() >= 3 * 3600
+        except Exception:
+            returning = False
 
-    def _set_state(crisis_mode=None, stepdown_v=None, banner_v=None, lang_v=None):
-        sets, vals = [], []
-        if crisis_mode is not None:
-            sets.append("crisis_mode=?")
-            vals.append(1 if crisis_mode else 0)
-        if stepdown_v is not None:
-            sets.append("crisis_stepdown=?")
-            vals.append(1 if stepdown_v else 0)
-        if banner_v is not None:
-            sets.append("crisis_banner=?")
-            vals.append(1 if banner_v else 0)
-        if lang_v is not None:
-            sets.append("crisis_lang=?")
-            vals.append(lang_v)
-        if not sets:
-            return
-        vals.append(uid)
-        with db_lock:
-            c = _conn()
-            c.execute(
-                "UPDATE users SET %s WHERE id=?" % ", ".join(sets), vals
-            )
-            c.commit()
-            c.close()
+    ctx = {
+        "uid": uid, "profile": profile, "summary": summary,
+        "messages": messages, "hebrew": hebrew, "hotline": hotline,
+        "banner": banner, "banner_lang": banner_lang,
+        "user_count": user_count, "retracted": retracted,
+        "returning": returning, "fallback_text": "",
+    }
 
     # Fresh risk signal: fixed human response, no normal reply, latch
     # on, step-down reset, banner on for the rest of the session. Fully
     # Hebrew for Hebrew conversations (re-test fix #8).
     if risk:
         banner_lang = "he" if hebrew else "en"
-        _set_state(crisis_mode=True, stepdown_v=False, banner_v=True,
-                   lang_v=banner_lang)
+        _set_user_state(uid, crisis_mode=True, stepdown_v=False,
+                        banner_v=True, lang_v=banner_lang)
         base = FIXED_CRISIS_RESPONSE_HE if hebrew else FIXED_CRISIS_RESPONSE
         reply = base + crisis_resource_line(hebrew, base)
-        _save_assistant(reply)
-        return {"reply": reply, "crisis": True, "hotline": hotline, "banner": True, "banner_lang": banner_lang}
+        _save_assistant_msg(uid, reply)
+        return ctx, ("final", {"reply": reply, "crisis": True,
+                               "hotline": hotline, "banner": True,
+                               "banner_lang": banner_lang})
 
     # Clearly informational word question (and not in crisis mode):
     # answer it, with the gentle check-in — never the crisis script.
     if info_q and not in_crisis_mode:
-        try:
-            reply = call_anthropic(CHAT_MODEL, INFO_SYSTEM_PROMPT, messages)
-        except Exception:
-            reply = INFO_FALLBACK_HE if hebrew else INFO_FALLBACK
-        if reply.startswith("[CRISIS]"):
-            reply = reply[len("[CRISIS]"):].strip()
-        _save_assistant(reply)
-        return {"reply": reply, "crisis": False, "hotline": hotline, "banner": banner, "banner_lang": banner_lang}
+        ctx["fallback_text"] = INFO_FALLBACK_HE if hebrew else INFO_FALLBACK
+        return ctx, ("model", "info", INFO_SYSTEM_PROMPT)
 
     # Crisis mode latched from an earlier message.
     if in_crisis_mode:
@@ -779,78 +932,260 @@ def chat(body: ChatIn, background: BackgroundTasks):
             # The gentle check-in already went out; this is the next
             # exchange. Risk is False here (a fresh risk signal was
             # handled above and re-latches fully), so a calm, non-risk
-            # exchange completes the step-down: normal conversation resumes, but
-            # the banner flag stays on for the rest of the session.
-            _set_state(crisis_mode=False, stepdown_v=False)
-            in_crisis_mode = False
+            # exchange completes the step-down: normal conversation
+            # resumes, but the banner flag stays on for the rest of
+            # the session.
+            _set_user_state(uid, crisis_mode=False, stepdown_v=False)
             # fall through to the normal flow below
         elif retracted:
             # First walk-back: do NOT unlatch. One gentle check-in,
             # no relief tone, still in crisis mode, banner stays.
-            _set_state(stepdown_v=True)
+            _set_user_state(uid, stepdown_v=True)
             reply = (
                 RETRACTION_CHECKIN_RESPONSE_HE if hebrew
                 else RETRACTION_CHECKIN_RESPONSE
             )
             reply += crisis_resource_line(hebrew, reply)
-            _save_assistant(reply)
-            return {"reply": reply, "crisis": True, "hotline": hotline, "banner": True, "banner_lang": banner_lang}
+            _save_assistant_msg(uid, reply)
+            return ctx, ("final", {"reply": reply, "crisis": True,
+                                   "hotline": hotline, "banner": True,
+                                   "banner_lang": banner_lang})
         else:
             system = CRISIS_SYSTEM_PROMPT
             if profile.get("name"):
                 system += "\n\nThe person's name is %s." % profile["name"]
-            try:
-                reply = call_anthropic(CHAT_MODEL, system, messages)
-            except Exception:
-                reply = (
-                    "אני עדיין כאן איתך. אתה בטוח עכשיו? בישראל אפשר "
-                    "להתקשר לער״ן במספר 1201 בכל שעה. בארה״ב אפשר "
-                    "להתקשר או לשלוח הודעה ל־988, או לשלוח HOME ל־741741."
-                    if hebrew else
-                    "I'm still here with you. Are you safe right now? "
-                    "Please reach out — call or text 988 any time, or text "
-                    "HOME to 741741."
-                )
-            if reply.startswith("[CRISIS]"):
-                reply = reply[len("[CRISIS]"):].strip()
-            reply += crisis_resource_line(hebrew, reply)
-            _save_assistant(reply)
-            return {"reply": reply, "crisis": True, "hotline": hotline, "banner": True, "banner_lang": banner_lang}
+            ctx["fallback_text"] = (
+                "אני עדיין כאן איתך. אתה בטוח עכשיו? בישראל אפשר "
+                "להתקשר לער״ן במספר 1201 בכל שעה. בארה״ב אפשר "
+                "להתקשר או לשלוח הודעה ל־988, או לשלוח HOME ל־741741."
+                if hebrew else
+                "I'm still here with you. Are you safe right now? "
+                "Please reach out — call or text 988 any time, or text "
+                "HOME to 741741."
+            )
+            return ctx, ("model", "crisis", system)
 
+    system = build_system(
+        profile, summary,
+        has_prior=user_count > 1, returning=returning,
+    )
+    return ctx, ("model", "normal", system)
+
+
+def _finish_model_turn(ctx, mode, reply, background):
+    """Post-process a model reply exactly as the original pipeline did
+    (strip a [CRISIS] marker, latch on it in the normal flow, append
+    the deterministic resource line where the original did, save the
+    message, schedule the memory update) and build the payload."""
+    uid = ctx["uid"]
+    hebrew = ctx["hebrew"]
+    hotline = ctx["hotline"]
+    banner = ctx["banner"]
+    banner_lang = ctx["banner_lang"]
+
+    if mode == "info":
+        if reply.startswith("[CRISIS]"):
+            reply = reply[len("[CRISIS]"):].strip()
+        _save_assistant_msg(uid, reply)
+        return {"reply": reply, "crisis": False, "hotline": hotline,
+                "banner": banner, "banner_lang": banner_lang}
+
+    if mode == "crisis":
+        if reply.startswith("[CRISIS]"):
+            reply = reply[len("[CRISIS]"):].strip()
+        reply += crisis_resource_line(hebrew, reply)
+        _save_assistant_msg(uid, reply)
+        return {"reply": reply, "crisis": True, "hotline": hotline,
+                "banner": True, "banner_lang": banner_lang}
+
+    # normal
     crisis = False
-    system = build_system(profile, summary)
-
-    try:
-        reply = call_anthropic(CHAT_MODEL, system, messages)
-    except Exception:
-        err = "I'm having trouble connecting right now. Please try again in a moment — I'm still here."
-        return {"reply": err, "crisis": False, "hotline": hotline, "banner": banner, "banner_lang": banner_lang}
-
     if reply.startswith("[CRISIS]"):
         reply = reply[len("[CRISIS]"):].strip()
-        if not retracted:
+        if not ctx["retracted"]:
             crisis = True
             banner = True
             banner_lang = "he" if hebrew else "en"
-            _set_state(crisis_mode=True, stepdown_v=False, banner_v=True,
-                       lang_v=banner_lang)
-
+            _set_user_state(uid, crisis_mode=True, stepdown_v=False,
+                            banner_v=True, lang_v=banner_lang)
     if crisis:
         reply += crisis_resource_line(hebrew, reply)
+    _save_assistant_msg(uid, reply)
+    # Memory note + reviewable items: build one early (3rd user
+    # message) so a returning visitor is actually remembered, then
+    # refresh every 5. (It used to update only every 10th message,
+    # which short trial conversations never reached.)
+    if ctx["user_count"] == 3 or ctx["user_count"] % 5 == 0:
+        background.add_task(update_summary, uid)
+    return {"reply": reply, "crisis": crisis, "hotline": hotline,
+            "banner": banner, "banner_lang": banner_lang}
 
-    _save_assistant(reply)
 
-    if user_count % 10 == 0:
-        background.add_task(update_summary, user_id)
+def _chat_payload(uid, msg, background):
+    uid = (uid or "").strip()
+    msg = (msg or "").strip()
+    if not uid:
+        return {"reply": "Something went wrong starting your session. Please refresh and try again.", "crisis": False, "banner": False, "banner_lang": "en"}
+    if not msg:
+        return {"reply": "I'm here — what's on your mind?", "crisis": False, "banner": False, "banner_lang": "en"}
 
-    return {"reply": reply, "crisis": crisis, "hotline": hotline, "banner": banner, "banner_lang": banner_lang}
+    ctx, outcome = _prepare_turn(uid, msg)
+    if outcome[0] == "final":
+        return outcome[1]
+    _, mode, system = outcome
+    try:
+        reply = call_anthropic(CHAT_MODEL, system, ctx["messages"])
+    except Exception:
+        if mode == "normal":
+            return {"reply": "I'm having trouble connecting right now. Please try again in a moment — I'm still here.", "crisis": False, "hotline": ctx["hotline"], "banner": ctx["banner"], "banner_lang": ctx["banner_lang"]}
+        reply = ctx["fallback_text"]
+    return _finish_model_turn(ctx, mode, reply, background)
+
+
+@app.post("/api/chat")
+def chat(body: ChatIn, background: BackgroundTasks, response: Response):
+    if body.user_id.strip():
+        _set_uid_cookie(response, body.user_id.strip())
+    return _chat_payload(body.user_id, body.message, background)
+
+
+def _anthropic_stream_chunks(system, messages):
+    """Yield raw reply text chunks from the Anthropic API (streaming).
+    Local-dev fallback (no API key): one chunk via call_anthropic."""
+    key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
+    if not key:
+        yield call_anthropic(CHAT_MODEL, system, messages)
+        return
+    payload = {
+        "model": CHAT_MODEL,
+        "system": system,
+        "messages": messages,
+        "max_tokens": 1024,
+        "stream": True,
+    }
+    with httpx.Client(timeout=120) as client:
+        with client.stream(
+            "POST",
+            "https://api.anthropic.com/v1/messages",
+            headers={
+                "x-api-key": key,
+                "anthropic-version": "2023-06-01",
+                "content-type": "application/json",
+            },
+            json=payload,
+        ) as r:
+            r.raise_for_status()
+            for line in r.iter_lines():
+                if not line.startswith("data:"):
+                    continue
+                data = line[5:].strip()
+                if not data or data == "[DONE]":
+                    continue
+                try:
+                    evt = json.loads(data)
+                except Exception:
+                    continue
+                if evt.get("type") == "content_block_delta":
+                    text = evt.get("delta", {}).get("text", "")
+                    if text:
+                        yield text
+
+
+def _sse(obj):
+    return "data: " + json.dumps(obj) + "\n\n"
+
+
+def _chat_stream_events(uid, msg, background):
+    """SSE event generator for /api/chat/stream. The pre-model risk
+    check (_prepare_turn) runs first: fixed-response paths emit their
+    frozen text as ONE delta, immediately — they never stream through
+    the model. Only decided model turns stream, and a [CRISIS] marker
+    at the very start is held back (never emitted) until it can be
+    stripped, mirroring the non-streaming post-processing."""
+    uid = (uid or "").strip()
+    msg = (msg or "").strip()
+    if not uid:
+        payload = {"reply": "Something went wrong starting your session. Please refresh and try again.", "crisis": False, "banner": False, "banner_lang": "en"}
+        yield _sse({"type": "delta", "text": payload["reply"]})
+        yield _sse({"type": "done", **payload})
+        return
+    if not msg:
+        payload = {"reply": "I'm here — what's on your mind?", "crisis": False, "banner": False, "banner_lang": "en"}
+        yield _sse({"type": "delta", "text": payload["reply"]})
+        yield _sse({"type": "done", **payload})
+        return
+
+    ctx, outcome = _prepare_turn(uid, msg)
+    if outcome[0] == "final":
+        payload = outcome[1]
+        yield _sse({"type": "delta", "text": payload["reply"]})
+        yield _sse({"type": "done", **payload})
+        return
+    _, mode, system = outcome
+
+    raw = ""
+    skip = None  # None until the [CRISIS]-marker question is settled
+    emitted_visible = ""
+    failed = False
+    try:
+        for chunk in _anthropic_stream_chunks(system, ctx["messages"]):
+            raw += chunk
+            if skip is None:
+                if raw.startswith("[CRISIS]"):
+                    skip = len("[CRISIS]")
+                elif len(raw) >= len("[CRISIS]"):
+                    skip = 0
+                else:
+                    continue
+            # Leading whitespace is stripped once, in effect: raw only
+            # grows at the end, so raw[skip:].lstrip() is a stable
+            # prefix across chunks (the final text is stripped anyway).
+            visible = raw[skip:].lstrip()
+            if len(visible) > len(emitted_visible):
+                new = visible[len(emitted_visible):]
+                emitted_visible = visible
+                yield _sse({"type": "delta", "text": new})
+    except Exception:
+        failed = True
+
+    if failed and not raw:
+        # The model call failed before any text — mirror /api/chat.
+        if mode == "normal":
+            payload = {"reply": "I'm having trouble connecting right now. Please try again in a moment — I'm still here.", "crisis": False, "hotline": ctx["hotline"], "banner": ctx["banner"], "banner_lang": ctx["banner_lang"]}
+            yield _sse({"type": "delta", "text": payload["reply"]})
+            yield _sse({"type": "done", **payload})
+            return
+        raw = ctx["fallback_text"]
+
+    if skip is None:
+        skip = len("[CRISIS]") if raw.startswith("[CRISIS]") else 0
+    payload = _finish_model_turn(ctx, mode, raw, background)
+    final = payload["reply"]
+    visible = raw[skip:].lstrip()
+    if final.startswith(visible) and len(final) > len(visible):
+        yield _sse({"type": "delta", "text": final[len(visible):]})
+    yield _sse({"type": "done", **payload})
+
+
+@app.post("/api/chat/stream")
+def chat_stream(body: ChatIn, background: BackgroundTasks):
+    resp = StreamingResponse(
+        _chat_stream_events(body.user_id, body.message, background),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        background=background,
+    )
+    if body.user_id.strip():
+        _set_uid_cookie(resp, body.user_id.strip())
+    return resp
 
 
 @app.post("/api/delete")
-def delete_data(body: DeleteIn):
+def delete_data(body: DeleteIn, response: Response):
     """Delete ALL data stored for a user_id (re-test fix #3): profile,
-    every message, the memory/summary note, and all crisis state.
-    Backs the in-app "Delete my data" button."""
+    every message, the memory/summary note, the memory items and
+    tombstones, and all crisis state. Backs the in-app
+    "Delete my data" button."""
     uid = body.user_id.strip()
     if not uid:
         return {"ok": False, "deleted": False}
@@ -858,14 +1193,74 @@ def delete_data(body: DeleteIn):
         conn = _conn()
         conn.execute("DELETE FROM messages WHERE user_id=?", (uid,))
         conn.execute("DELETE FROM summaries WHERE user_id=?", (uid,))
+        conn.execute("DELETE FROM memory_items WHERE user_id=?", (uid,))
+        conn.execute("DELETE FROM memory_tombstones WHERE user_id=?", (uid,))
         conn.execute("DELETE FROM users WHERE id=?", (uid,))
         conn.commit()
         conn.close()
+    response.delete_cookie(UID_COOKIE, path="/")
     return {"ok": True, "deleted": True}
 
 
+@app.get("/api/memory")
+def get_memory(user_id: str, response: Response):
+    """The "What Solace remembers about you" view data: the memory
+    note plus the structured items (themes/goals — describing
+    language only, never labels)."""
+    if user_id.strip():
+        _set_uid_cookie(response, user_id.strip())
+    with db_lock:
+        conn = _conn()
+        s = conn.execute(
+            "SELECT summary FROM summaries WHERE user_id=?", (user_id,)
+        ).fetchone()
+        rows = conn.execute(
+            "SELECT id, kind, text FROM memory_items WHERE user_id=? ORDER BY id ASC",
+            (user_id,),
+        ).fetchall()
+        conn.close()
+    return {
+        "summary": s["summary"] if s else "",
+        "items": [dict(r) for r in rows],
+    }
+
+
+@app.post("/api/memory/delete-item")
+def delete_memory_item(body: MemoryItemDeleteIn):
+    """Remove ONE memory item from the remembers view. The item's text
+    is tombstoned so a later memory refresh does not silently bring
+    it back."""
+    uid = body.user_id.strip()
+    if not uid:
+        return {"ok": False, "items": []}
+    with db_lock:
+        conn = _conn()
+        row = conn.execute(
+            "SELECT text FROM memory_items WHERE id=? AND user_id=?",
+            (body.item_id, uid),
+        ).fetchone()
+        if row:
+            conn.execute(
+                "INSERT OR IGNORE INTO memory_tombstones (user_id, norm) VALUES (?,?)",
+                (uid, _norm_item(row["text"])),
+            )
+            conn.execute(
+                "DELETE FROM memory_items WHERE id=? AND user_id=?",
+                (body.item_id, uid),
+            )
+            conn.commit()
+        rows = conn.execute(
+            "SELECT id, kind, text FROM memory_items WHERE user_id=? ORDER BY id ASC",
+            (uid,),
+        ).fetchall()
+        conn.close()
+    return {"ok": True, "items": [dict(r) for r in rows]}
+
+
 @app.get("/api/history")
-def history(user_id: str):
+def history(user_id: str, response: Response):
+    if user_id.strip():
+        _set_uid_cookie(response, user_id.strip())
     with db_lock:
         conn = _conn()
         rows = conn.execute(
