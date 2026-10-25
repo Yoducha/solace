@@ -3,7 +3,8 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<title>Solace — a calm space to talk</title>
+<meta name="description" content="Solace — a private AI self-help companion for reflection and support">
+<title>Solace — a private AI self-help companion for reflection and support</title>
 <style>
   :root {
     --bg: #faf7f1;
@@ -140,7 +141,7 @@
 
 <div id="topbar">
 <header>
-  <div class="brand">Solace<small>a calm space to talk</small></div>
+  <div class="brand">Solace<small>a private AI self-help companion</small></div>
   <div class="hdr-actions">
     <button id="new-chat" class="hdr-btn" title="Start a new conversation">↺ <span class="btn-label">New chat</span></button>
     <button id="voice-toggle" class="hdr-btn" title="Voice on/off">🔇 <span class="btn-label">Voice off</span></button>
@@ -156,7 +157,7 @@
 </div>
 
 <div class="disclaimer" id="disclaimer">
-  <span class="disc-full">Solace is an AI companion, not a licensed psychologist. It doesn't diagnose and it's not for emergencies.</span><span class="disc-short">Solace is an AI companion, not a licensed psychologist.</span>
+  <span class="disc-full">Solace is an AI self-help companion — not a therapist, not a licensed professional, and not for emergencies. It doesn't diagnose.</span><span class="disc-short">Solace is an AI self-help companion, not a therapist.</span>
   <button class="x" id="disclaimer-x" title="Make this smaller" aria-label="Collapse disclaimer">×</button>
 </div>
 
@@ -164,7 +165,7 @@
   <!-- First-session intake -->
   <section id="welcome">
     <h1>Welcome. I'm glad you're here.</h1>
-    <p class="lead">This is a quiet space to talk through what's on your mind — like a first session, at your own pace. Nothing you write here is shared with anyone.</p>
+    <p class="lead">This is a quiet space to talk through what's on your mind, at your own pace. Your chats are processed by an AI provider to generate replies. We never sell them, and you can delete everything anytime with Delete my data.</p>
 
     <div>
       <label class="q" for="name">What should I call you? <span style="color:var(--muted);font-weight:400">(optional)</span></label>
@@ -187,8 +188,8 @@
       <textarea id="concern" placeholder="Whatever comes to mind — there's no wrong answer."></textarea>
     </div>
 
-    <button class="btn" id="begin">Begin my first session</button>
-    <p class="tiny">By continuing you agree to the <a href="/terms" target="_blank">Terms</a> and <a href="/privacy" target="_blank">Privacy Policy</a>, and you understand Solace is supportive AI, not professional care.<br>If you're ever in crisis, call or text 988.</p>
+    <button class="btn" id="begin">Begin</button>
+    <p class="tiny">By continuing you agree to the <a href="/terms" target="_blank">Terms</a> and <a href="/privacy" target="_blank">Privacy Policy</a>, and you understand Solace is an AI self-help companion, not professional care.<br>If you're ever in crisis, call or text 988.</p>
   </section>
 
   <!-- Chat -->
@@ -264,7 +265,7 @@ document.getElementById('new-chat').addEventListener('click', () => {
   document.querySelectorAll('#moods .chip').forEach(x => x.classList.remove('on'));
   const beginBtn = document.getElementById('begin');
   beginBtn.disabled = false;
-  beginBtn.textContent = 'Begin my first session';
+  beginBtn.textContent = 'Begin';
   document.getElementById('chat').style.display = 'none';
   document.getElementById('welcome').style.display = 'flex';
   window.scrollTo(0, 0);
@@ -427,10 +428,10 @@ document.getElementById('begin').addEventListener('click', async () => {
     localStorage.setItem('solace_uid', userId);
     showChat();
     addMsg(concern ? concern : "Hi, I'd like to talk.", 'user');
-    await sendChat(concern ? concern : "Hi, I'd like to start my first session.");
+    await sendChat(concern ? concern : "Hi, I'd like to talk.");
   } catch (e) {
     btn.disabled = false;
-    btn.textContent = 'Begin my first session';
+    btn.textContent = 'Begin';
     alert('Could not start your session — please check your connection and try again.');
   }
 });
@@ -468,7 +469,7 @@ document.getElementById('delete-data').addEventListener('click', async () => {
     document.querySelectorAll('#moods .chip').forEach(x => x.classList.remove('on'));
     const beginBtn = document.getElementById('begin');
     beginBtn.disabled = false;
-    beginBtn.textContent = 'Begin my first session';
+    beginBtn.textContent = 'Begin';
     document.getElementById('chat').style.display = 'none';
     document.getElementById('welcome').style.display = 'flex';
     alert('Your data has been deleted.');
