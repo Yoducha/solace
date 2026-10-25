@@ -150,13 +150,15 @@ FIXED_CRISIS_RESPONSE = (
 )
 
 # The same fixed response, fully in Hebrew, for Hebrew conversations
-# (re-test fix #8): ERAN 1201 first, then 988 / 741741 / 911.
+# (re-test fix #8): ERAN 1201 first, then 988 / 741741. Immediate
+# danger in Israel is MADA 101 — NOT 911 (Tab round fix: the Hebrew
+# text used to end with "call 911", the wrong country).
 FIXED_CRISIS_RESPONSE_HE = (
     "אני ממש שמח שסיפרת לי על זה. חשוב לי לוודא שאתה בטוח עכשיו. "
     "האם אתה חושב לפעול על פי המחשבות האלה הלילה? אתה לא צריך לעבור את זה לבד — "
     "בישראל אפשר להתקשר לער״ן, קו הסיוע הנפשי, במספר 1201 (זמין 24/7). "
     "בארה״ב אפשר להתקשר או לשלוח הודעה ל־988 (קו החיים למניעת התאבדות, 24/7), "
-    "או לשלוח HOME ל־741741. אם אתה בסכנה מיידית, התקשר ל־911. "
+    "או לשלוח HOME ל־741741. אם אתה בסכנה מיידית, התקשר למד״א במספר 101. "
     "אני כאן איתך — אתה רוצה לספר לי מה עובר עליך?"
 )
 
@@ -218,7 +220,7 @@ CRISIS_SYSTEM_PROMPT = """You are Solace, in CRISIS MODE with a person who has e
 - Your only job is the person's safety right now. Stay warm, steady, human. Take everything seriously; never panic, never moralize or shame.
 - Ask directly how they are doing and whether they are safe right now / tonight. Keep gently checking safety each reply.
 - In every reply, remind them: in the US they can call or text 988 (Suicide & Crisis Lifeline, 24/7) or text HOME to 741741; if they are in immediate danger, call 911.
-- Match the person's language: reply in the language they are writing in. If they write in Hebrew, your ENTIRE reply must be in Hebrew — not English with a Hebrew line added — and the resources lead with Israel's ERAN emotional-support hotline (1201) first, then 988 / 741741 / 911.
+- Match the person's language: reply in the language they are writing in. If they write in Hebrew, your ENTIRE reply must be in Hebrew — not English with a Hebrew line added — and the resources lead with Israel's ERAN emotional-support hotline (1201) first, then 988 / 741741; for immediate danger in Israel the number is MADA (מד״א) 101 — never give 911 to a person in Israel.
 - Do NOT use structured techniques or exercises: no CBT/ACT/DBT methods, no thought-challenging, no homework, no analysis of their patterns, no jargon (never say things like "resistance" or "emotional conditioning").
 - Short replies (2-4 sentences). One caring question at a time. Stay with them; do not rush to wrap up."""
 

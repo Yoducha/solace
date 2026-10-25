@@ -180,6 +180,17 @@ if "ער״ן" not in r["reply"] or "I'm really glad" in r["reply"]:
     failures.append("E2E Hebrew crisis reply is not fully Hebrew: %r" % r["reply"])
 if r.get("hotline") != "1201":
     failures.append("E2E Hebrew crisis hotline field wrong: %r" % r)
+# Tab round fix: immediate danger in Israel is MADA 101, never 911 —
+# the Hebrew fixed response is frozen WITH this text.
+if "מד״א" not in r["reply"] or "101" not in r["reply"]:
+    failures.append("E2E Hebrew crisis reply must direct to MADA 101: %r" % r["reply"])
+if "911" in r["reply"]:
+    failures.append("E2E Hebrew crisis reply must NOT mention 911 (wrong country): %r" % r["reply"])
+if "מד״א" not in solace.FIXED_CRISIS_RESPONSE_HE or "911" in solace.FIXED_CRISIS_RESPONSE_HE:
+    failures.append("Frozen Hebrew crisis constant wrong: %r" % solace.FIXED_CRISIS_RESPONSE_HE)
+if "911" not in solace.FIXED_CRISIS_RESPONSE or "988" not in solace.FIXED_CRISIS_RESPONSE:
+    failures.append("Frozen English crisis constant changed (must stay byte-identical): %r"
+                    % solace.FIXED_CRISIS_RESPONSE)
 
 r = client.post("/api/chat", json={"user_id": uid3, "message": "רק צחקתי, אני בסדר"}).json()
 if r["crisis"] is not True or "אתה בטוח עכשיו" not in r["reply"]:
