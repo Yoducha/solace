@@ -747,6 +747,42 @@ def _tokens_match_deleted(cand, deleted):
     return len(inter) >= 3 and _token_overlap(cand, deleted) >= 0.6
 
 
+# ---- Repeated-closer suppression (Tab fix) -------------------------
+# Two replies in a row ended with the identical closer ("would you be
+# open to trying…"). A reply whose closing sentence repeats the
+# previous reply's closing sentence ships without it.
+
+_RESOURCE_TAIL_RE = re.compile(
+    r"(call or text 988|free, any time|741741|ער״ן|בארה״ב)", re.S)
+
+
+def _closing_sentence(text):
+    """The reply's last real sentence, skipping a trailing
+    deterministic crisis-resource footer if one was appended."""
+    parts = [p.strip() for p in
+             re.split(r"(?<=[.!?…])\s+", (text or "").strip()) if p.strip()]
+    while parts and _RESOURCE_TAIL_RE.search(parts[-1]):
+        parts.pop()
+    return parts[-1] if parts else ""
+
+
+def _drop_repeated_closer(reply, prev_reply):
+    cur = _closing_sentence(reply)
+    prev = _closing_sentence(prev_reply)
+    if not cur or not prev:
+        return reply
+    ct, pt = _item_tokens(cur), _item_tokens(prev)
+    same = _norm_item(cur) == _norm_item(prev) or (
+        len(ct & pt) >= 3 and _token_overlap(ct, pt) >= 0.85)
+    if not same:
+        return reply
+    stripped = reply.strip()
+    if not stripped.endswith(cur):
+        return reply
+    rest = stripped[: -len(cur)].strip()
+    return rest if rest else reply
+
+
 def _deleted_and_not_restated(text, tomb_entries, user_msgs):
     """Tab fix: a deleted theme must NEVER come back through a memory
     rewrite — in any wording. The one exception is the person
@@ -1331,6 +1367,18 @@ def _finish_model_turn(ctx, mode, reply, background):
             banner_lang = "he" if hebrew else "en"
             _set_user_state(uid, crisis_mode=True, stepdown_v=False,
                             banner_v=True, lang_v=banner_lang)
+    # Never end two replies in a row with the same closing line
+    # (Tab fix) — compare against the previous stored reply.
+    with db_lock:
+        conn = _conn()
+        prow = conn.execute(
+            "SELECT content FROM messages WHERE user_id=? AND role='assistant' "
+            "ORDER BY id DESC LIMIT 1",
+            (uid,),
+        ).fetchone()
+        conn.close()
+    if prow:
+        reply = _drop_repeated_closer(reply, prow["content"])
     if crisis:
         reply += crisis_resource_line(hebrew, reply)
     _save_assistant_msg(uid, reply)

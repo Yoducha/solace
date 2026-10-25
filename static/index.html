@@ -226,6 +226,9 @@
   .rhcard {
     align-self: stretch; background: var(--clay-soft); border: 1px solid var(--line);
     border-radius: 16px; padding: 12px 14px; font-size: 14px; line-height: 1.55;
+    /* Same clearance .msg has (Tab fix): without it, scrolling the
+       card into view leaves its last line under the sticky composer. */
+    scroll-margin-bottom: 120px;
   }
   .rhcard strong { display: block; font-size: 15px; margin-bottom: 2px; }
   .rhcard .tip { color: var(--ink); }
@@ -498,8 +501,33 @@ function renderAI(text) {
   let h = esc(text);
   h = h.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
   h = h.replace(/\*([^*\n]+)\*/g, '<em>$1</em>');
+  // Bidi isolation (Tab fix): an LTR run like "24/7" inside a Hebrew
+  // sentence dragged the surrounding parentheses to the wrong side —
+  // "(זמין 24/7)" rendered flipped. Isolate slash-number runs so the
+  // stored text stays byte-identical but renders correctly.
+  h = h.replace(/\d+(?:\/\d+)+\/?/g, '<bdi>$&</bdi>');
   h = h.replace(/\n/g, '<br>');
   return linkify(h);
+}
+
+// ONE shared animated typing indicator (Tab fix): the same pulsing
+// .wdots used by "Writing your coaching…" — the chat and rehearsal
+// "…" bubbles used to be a static character that never moved.
+function makeDots() {
+  const s = document.createElement('span');
+  s.className = 'wdots';
+  s.setAttribute('aria-hidden', 'true');
+  s.innerHTML = '<i>.</i><i>.</i><i>.</i>';
+  return s;
+}
+
+function addTyping(containerId) {
+  const d = document.createElement('div');
+  d.className = 'msg ai typing';
+  d.appendChild(makeDots());
+  document.getElementById(containerId).appendChild(d);
+  scrollToLatest(d);
+  return d;
 }
 
 // Bring the newest message fully into view. On iPhone the PAGE scrolls
@@ -521,6 +549,9 @@ function scrollToLatest(el) {
 function addMsg(text, who) {
   const d = document.createElement('div');
   d.className = 'msg ' + who;
+  // Let each bubble take its direction from its own first strong
+  // character, so Hebrew replies lay out RTL (Tab bidi fix).
+  d.setAttribute('dir', 'auto');
   const span = document.createElement('span');
   if (who === 'ai') {
     span.innerHTML = renderAI(text);
@@ -589,6 +620,7 @@ function hideBanner() {
 function addStreamBubble() {
   const d = document.createElement('div');
   d.className = 'msg ai';
+  d.setAttribute('dir', 'auto');
   const span = document.createElement('span');
   d.appendChild(span);
   document.getElementById('messages').appendChild(d);
@@ -609,7 +641,7 @@ function finishBubble(b, text) {
 
 async function sendChat(text) {
   if ('speechSynthesis' in window) speechSynthesis.cancel();
-  const typing = addMsg('…', 'ai typing');
+  const typing = addTyping('messages');
   const applyPayload = (payload, bubble, acc) => {
     if (payload.banner_lang) bannerLang = payload.banner_lang;
     if (payload.crisis || payload.banner) {
@@ -1005,6 +1037,7 @@ function rhCrisisExit(payload) {
 function rhAddMsg(text, who) {
   const d = document.createElement('div');
   d.className = 'msg ' + who;
+  d.setAttribute('dir', 'auto');
   const span = document.createElement('span');
   if (who === 'user') span.textContent = text;
   else span.innerHTML = renderAI(text);
@@ -1017,6 +1050,7 @@ function rhAddMsg(text, who) {
 function rhBubble() {
   const d = document.createElement('div');
   d.className = 'msg ai';
+  d.setAttribute('dir', 'auto');
   const span = document.createElement('span');
   d.appendChild(span);
   document.getElementById('rh-messages').appendChild(d);
@@ -1024,7 +1058,7 @@ function rhBubble() {
 }
 
 async function rhStream(text) {
-  const typing = rhAddMsg('…', 'ai typing');
+  const typing = addTyping('rh-messages');
   let acc = '', bubble = null, payload = null, errEvt = null;
   try {
     const r = await fetch('/api/rehearse/stream', {
@@ -1199,11 +1233,7 @@ async function rhEnd() {
   const st = document.createElement('p');
   st.className = 'lead';
   st.textContent = rhT().writing.replace(/…\s*$/, '');
-  const dots = document.createElement('span');
-  dots.className = 'wdots';
-  dots.setAttribute('aria-hidden', 'true');
-  dots.innerHTML = '<i>.</i><i>.</i><i>.</i>';
-  st.appendChild(dots);
+  st.appendChild(makeDots());
   bodyEl.appendChild(st);
   const againBtn = document.getElementById('rh-again');
   const doneBtn = document.getElementById('rh-done');
@@ -1228,6 +1258,7 @@ function renderRehearsalCard(rec) {
   const t = RH[(rhState && rhState.lang) || rhLang()];
   const card = document.createElement('div');
   card.className = 'rhcard';
+  card.setAttribute('dir', 'auto');
   const head = document.createElement('strong');
   head.textContent = t.rhCard(rec.person_display || '');
   card.appendChild(head);
