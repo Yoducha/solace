@@ -103,7 +103,7 @@
   <div style="display:flex;gap:8px;align-items:center">
     <button id="new-chat" title="Start a new conversation" style="background:none;border:1px solid var(--line);border-radius:20px;padding:6px 10px;font-size:14px;cursor:pointer">↺ New chat</button>
     <button id="voice-toggle" title="Voice on/off" style="background:none;border:1px solid var(--line);border-radius:20px;padding:6px 10px;font-size:14px;cursor:pointer">🔇 Voice off</button>
-    <a class="sos" href="tel:988">988 · help</a>
+    <a class="sos" href="tel:988">In crisis? Call/text 988</a>
   </div>
 </header>
 
@@ -336,6 +336,11 @@ document.getElementById('input').addEventListener('keydown', e => {
     if (h.messages && h.messages.length) {
       showChat();
       h.messages.forEach(m => addMsg(m.content, m.role === 'user' ? 'user' : 'ai'));
+      if (h.crisis) {
+        const banner = document.getElementById('crisis-banner');
+        banner.innerHTML = crisisBannerHTML('988');
+        banner.style.display = 'block';
+      }
     }
   } catch (e) { /* stay on welcome */ }
 })();

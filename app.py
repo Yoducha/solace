@@ -31,18 +31,64 @@ CHAT_MODEL = "claude-sonnet-4-6"
 SUMMARY_MODEL = "claude-haiku-4-5"
 
 CRISIS_PATTERNS = [
+    # --- direct intent ---
     r"kill myself",
+    r"kil+ myself",
+    r"k[i1]ll\s*my\s*self",
+    r"end my life",
+    r"take my own life",
+    r"end it all",
     r"suicid\w*",
+    r"suisid\w*",
     r"self[\s-]?harm",
     r"hurt myself",
     r"harm myself",
     r"cut(?:ting)? myself",
-    r"end my life",
+    r"cut my wrists",
+    r"off myself",
+    r"do myself in",
+    # --- desire to die / not exist ---
     r"wanna die",
     r"want to die",
+    r"want 2 die",
     r"don'?t want to live",
+    r"do not want to live",
+    r"don'?t want to be here",
+    r"don'?t want to exist",
+    r"wish i (was|were) dead",
+    r"wish i didn'?t exist",
+    r"want it all to (end|stop)",
+    # --- hopelessness / burden (indirect) ---
     r"no reason to live",
+    r"no point (in|to) (living|going on|life)",
+    r"what'?s the point of (living|life|going on)",
     r"better off dead",
+    r"better off without me",
+    r"(everyone|everybody|they|people) (would|will|'d) be better off",
+    r"nobody would (care|miss me|notice)",
+    r"if i (was|were) gone",
+    r"tired of (living|life|being alive|existing)",
+    r"can'?t (do this|go on|take it|keep going) anymore",
+    r"cannot (go on|do this anymore)",
+    # --- plan / means ---
+    r"pills saved",
+    r"saved up (pills|meds|medication|tablets)",
+    r"stockpil\w+ (pills|meds|medication)",
+    r"have a plan (to|for) (end|kill|die)",
+    r"how i'?d do it",
+    r"wrote a (goodbye|suicide) (note|letter)",
+    r"goodbye (note|letter)",
+    r"this is (my )?goodbye",
+    r"overdos\w*",
+    r"hang\w* myself",
+    r"shoot myself",
+    r"gun to my head",
+    r"jump(ing)? off",
+    r"slit my",
+    # --- slang / coded ---
+    r"kms",
+    r"unaliv\w* myself",
+    r"sewerslide",
     # Hebrew crisis phrasings (deterministic detection for Hebrew input)
     r"רוצה למות",
     r"להתאבד",
@@ -53,6 +99,44 @@ CRISIS_PATTERNS = [
     r"פוגע בעצמי",
 ]
 CRISIS_RE = [re.compile(r"\b" + p + r"\b") for p in CRISIS_PATTERNS]
+
+# Bare mentions of suicide in an informational context ("suicide prevention
+# walk", "the hotline") must not fire the fixed crisis response on their
+# own. Only the bare suicide-word patterns are guarded this way; every
+# first-person intent/plan/means pattern above always fires.
+BARE_SUICIDE_RE = [re.compile(r"\bsui[cs]id\w*\b")]
+INFORMATIONAL_RE = re.compile(
+    r"\b(prevention|awareness|hotline|helpline|volunteer\w*|fundrais\w*|"
+    r"walk|charity|studying|research|article|movie|book|song|news)\b"
+)
+
+# Fixed, human crisis response (spec: Solace Fix #1). Sent verbatim, with
+# no model call, the moment risk is detected — and it REPLACES the normal
+# therapy reply.
+FIXED_CRISIS_RESPONSE = (
+    "I'm really glad you told me. I want to make sure you're safe right now. "
+    "Are you thinking about acting on this tonight? You don't have to go "
+    "through this alone — you can call or text 988 (Suicide & Crisis "
+    "Lifeline, 24/7) or text HOME to 741741. If you're in immediate danger, "
+    "call 911. I'm here with you — do you want to tell me what's going on?"
+)
+
+# System prompt used for follow-up turns while crisis mode is latched:
+# safety only — no therapy techniques, no homework, no jargon.
+CRISIS_SYSTEM_PROMPT = """You are Solace, in CRISIS MODE with a person who has expressed thoughts of suicide or self-harm. Rules for every reply in this mode:
+- Your only job is the person's safety right now. Stay warm, steady, human. Take everything seriously; never panic, never moralize or shame.
+- Ask directly how they are doing and whether they are safe right now / tonight. Keep gently checking safety each reply.
+- In every reply, remind them: in the US they can call or text 988 (Suicide & Crisis Lifeline, 24/7) or text HOME to 741741; if they are in immediate danger, call 911. If (and only if) they are writing in Hebrew, mention Israel's ERAN hotline (1201) prominently instead.
+- Do NOT do therapy: no CBT/ACT/DBT techniques, no thought-challenging, no homework or exercises, no analysis of their patterns, no jargon (never say things like "resistance" or "emotional conditioning").
+- Short replies (2-4 sentences). One caring question at a time. Stay with them; do not rush to wrap up."""
+
+CLASSIFIER_SYSTEM = (
+    "You are a safety classifier for a mental-health support app. Decide "
+    "whether the user's message expresses suicidal thoughts, intent or a "
+    "plan/means to harm themselves, or a wish to be dead — including "
+    "indirect, coded, or slang phrasing. Benign, informational, or clearly "
+    "retracted statements are SAFE. Reply with exactly one word: RISK or SAFE."
+)
 
 # Negation words that, appearing just before a crisis phrase, turn it into a
 # retraction (e.g. "I don't wanna die", "אני לא רוצה למות").
@@ -162,6 +246,12 @@ def init_db():
             );
             """
         )
+        # Migration: persistent crisis-mode latch per user (Solace Fix #1).
+        cols = [r["name"] for r in conn.execute("PRAGMA table_info(users)")]
+        if "crisis_mode" not in cols:
+            conn.execute(
+                "ALTER TABLE users ADD COLUMN crisis_mode INTEGER DEFAULT 0"
+            )
         conn.commit()
         conn.close()
 
@@ -215,8 +305,12 @@ def detect_crisis_keywords(text):
     ("I don't wanna die" is a retraction, not a crisis). Explicit
     retraction phrases de-escalate. An un-negated crisis phrase always
     wins over a retraction phrase in the same message (safety first).
+
+    Bare mentions of the suicide word in an informational context
+    ("suicide prevention walk") do not fire on their own.
     """
     t = text.lower()
+    bare_only = True
     for rx in CRISIS_RE:
         for m in rx.finditer(t):
             # Look at the ~2 words immediately before the match for a
@@ -229,8 +323,49 @@ def detect_crisis_keywords(text):
             before = t[: m.start()]
             words = re.findall(r"[a-z'\u0590-\u05FF]+", before)
             if not NEGATION_RE.search(" ".join(words[-2:])):
+                if any(b.search(m.group(0)) for b in BARE_SUICIDE_RE) and \
+                        rx.pattern in (r"\bsuicid\w*\b", r"\bsuisid\w*\b"):
+                    continue  # bare suicide word: decide after the loop
                 return True
+    # Only a bare suicide word matched (un-negated). It fires unless the
+    # message is plainly informational.
+    for b in BARE_SUICIDE_RE:
+        for m in b.finditer(t):
+            before = t[: m.start()]
+            words = re.findall(r"[a-z'\u0590-\u05FF]+", before)
+            if NEGATION_RE.search(" ".join(words[-2:])):
+                continue
+            if INFORMATIONAL_RE.search(t):
+                return False
+            return True
     return False
+
+
+def classify_risk(text):
+    """Small classifier prompt — the second layer of the pre-model risk
+    check. Catches indirect/coded phrasing the keyword list misses.
+    Fails SAFE (keyword layer still applies) so a classifier outage can
+    never block or falsely crisis-lock a conversation."""
+    if os.environ.get("CRISIS_CLASSIFIER", "on").lower() == "off":
+        return False
+    try:
+        out = call_anthropic(
+            SUMMARY_MODEL,
+            CLASSIFIER_SYSTEM,
+            [{"role": "user", "content": text}],
+            max_tokens=4,
+        )
+        return out.strip().upper().startswith("RISK")
+    except Exception:
+        return False
+
+
+def assess_risk(text):
+    """Full pre-model risk check: keyword layer first, classifier second.
+    Runs BEFORE any therapy model call, on every user message."""
+    if detect_crisis_keywords(text):
+        return True
+    return classify_risk(text)
 
 
 def detect_retraction(text):
@@ -408,42 +543,86 @@ def chat(body: ChatIn, background: BackgroundTasks):
         ).fetchone()["c"]
         conn.close()
 
-    crisis = detect_crisis_keywords(msg)
-    # Explicit retraction with no active crisis signal: de-escalate even if
-    # the model reflexively emits the crisis marker from conversation history.
-    retracted = detect_retraction(msg) and not crisis
+    # ---- Pre-model risk check (Solace Fix #1) ----
+    # Runs BEFORE any therapy model call, on every user message:
+    # keyword layer, then a small classifier prompt.
+    risk = assess_risk(msg)
+    in_crisis_mode = bool(profile.get("crisis_mode"))
+    # Explicit retraction with no active risk signal de-escalates — it is
+    # the ONLY exit from crisis mode.
+    retracted = detect_retraction(msg) and not risk
     hotline = "1201" if has_hebrew(msg) else "988"
-    system = build_system(profile, summary)
     messages = [{"role": r["role"], "content": r["content"]} for r in reversed(hist)]
+
+    def _save_assistant(text):
+        with db_lock:
+            c = _conn()
+            c.execute(
+                "INSERT INTO messages (user_id, role, content) VALUES (?,?,?)",
+                (uid, "assistant", text),
+            )
+            c.commit()
+            c.close()
+
+    def _set_crisis_mode(on):
+        with db_lock:
+            c = _conn()
+            c.execute(
+                "UPDATE users SET crisis_mode=? WHERE id=?",
+                (1 if on else 0, uid),
+            )
+            c.commit()
+            c.close()
+
+    # Fresh risk signal: fixed human response, no therapy reply, latch on.
+    if risk:
+        _set_crisis_mode(True)
+        reply = FIXED_CRISIS_RESPONSE + crisis_resource_line(msg, FIXED_CRISIS_RESPONSE)
+        _save_assistant(reply)
+        return {"reply": reply, "crisis": True, "hotline": hotline}
+
+    # Crisis mode latched from an earlier message: stay in it.
+    if in_crisis_mode and not retracted:
+        system = CRISIS_SYSTEM_PROMPT
+        if profile.get("name"):
+            system += "\n\nThe person's name is %s." % profile["name"]
+        try:
+            reply = call_anthropic(CHAT_MODEL, system, messages)
+        except Exception:
+            reply = (
+                "I'm still here with you. Are you safe right now? "
+                "Please reach out — call or text 988 any time, or text "
+                "HOME to 741741."
+            )
+        if reply.startswith("[CRISIS]"):
+            reply = reply[len("[CRISIS]"):].strip()
+        reply += crisis_resource_line(msg, reply)
+        _save_assistant(reply)
+        return {"reply": reply, "crisis": True, "hotline": hotline}
+
+    # Explicit retraction while latched: clear crisis mode, normal flow.
+    if in_crisis_mode and retracted:
+        _set_crisis_mode(False)
+
+    crisis = False
+    system = build_system(profile, summary)
 
     try:
         reply = call_anthropic(CHAT_MODEL, system, messages)
     except Exception:
         err = "I'm having trouble connecting right now. Please try again in a moment — I'm still here."
-        if crisis:
-            err += crisis_resource_line(msg, "")
-        return {
-            "reply": err,
-            "crisis": crisis,
-            "hotline": hotline,
-        }
+        return {"reply": err, "crisis": False, "hotline": hotline}
 
     if reply.startswith("[CRISIS]"):
         reply = reply[len("[CRISIS]"):].strip()
         if not retracted:
             crisis = True
+            _set_crisis_mode(True)
 
     if crisis:
         reply += crisis_resource_line(msg, reply)
 
-    with db_lock:
-        conn = _conn()
-        conn.execute(
-            "INSERT INTO messages (user_id, role, content) VALUES (?,?,?)",
-            (uid, "assistant", reply),
-        )
-        conn.commit()
-        conn.close()
+    _save_assistant(reply)
 
     if user_count % 10 == 0:
         background.add_task(update_summary, user_id)
@@ -462,10 +641,14 @@ def history(user_id: str):
         s = conn.execute(
             "SELECT summary FROM summaries WHERE user_id=?", (user_id,)
         ).fetchone()
+        u = conn.execute(
+            "SELECT crisis_mode FROM users WHERE id=?", (user_id,)
+        ).fetchone()
         conn.close()
     return {
         "messages": [dict(r) for r in rows],
         "summary": s["summary"] if s else "",
+        "crisis": bool(u["crisis_mode"]) if u else False,
     }
 
 
