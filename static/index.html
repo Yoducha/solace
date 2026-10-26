@@ -1333,8 +1333,31 @@ function spkTrack(u) {
   u.onboundary = () => { if (typeof vmSpeakBump === 'function') vmSpeakBump(); };
 }
 function spkIdle() {
-  return spkPending === 0 ? Promise.resolve()
-    : new Promise(r => spkWaiters.push(r));
+  // Poll, with a watchdog: iOS can drop cancelled utterances
+  // without firing end/error events, which would otherwise stall
+  // the hands-free loop forever. If the browser insists nothing
+  // is speaking or queued for over a second while we still count
+  // utterances outstanding, trust the browser and drain.
+  return new Promise(res => {
+    let idleSince = 0;
+    const check = () => {
+      const synth = window.speechSynthesis;
+      if (spkPending === 0) { res(); return; }
+      if (!synth || (!synth.speaking && !synth.pending)) {
+        if (!idleSince) idleSince = Date.now();
+        if (Date.now() - idleSince > 1000) {
+          spkPending = 0;
+          spkWaiters.splice(0).forEach(f => f());
+          res();
+          return;
+        }
+      } else {
+        idleSince = 0;
+      }
+      setTimeout(check, 300);
+    };
+    check();
+  });
 }
 
 // ---- Voice Rehearse ----
@@ -1907,7 +1930,13 @@ document.getElementById('rh-start').addEventListener('click', rhBegin);
 document.getElementById('rh-start-skip').addEventListener('click', rhBegin);
 document.getElementById('help-up').addEventListener('click', () => castChatVote(1));
 document.getElementById('help-down').addEventListener('click', () => castChatVote(-1));
-document.getElementById('rh-mic').addEventListener('click', rhMicTap);
+document.getElementById('rh-mic').addEventListener('click', () => {
+  // Tab spec: tapping 🎤 opens the full-screen Voice Mode. The
+  // one-shot dictation remains the fallback where recognition
+  // doesn't exist (its handler shows the unsupported note).
+  if (RH_SR) vmOpen('rehearse');
+  else rhMicTap();
+});
 document.getElementById('rh-voice-toggle').addEventListener('click', () => {
   if (rhState) rhSetPartnerVoice(!rhState.partnerVoice);
 });
@@ -1936,6 +1965,429 @@ document.getElementById('rh-done').addEventListener('click', () => {
   renderRehearsalCard(rec);
   rhState = null;
 });
+
+// ---- Voice Mode (full-screen, hands-free) ----
+// Tapping 🎤 opens a calm full-screen view with one orb. Turns
+// flow through the SAME send paths as typed text — sendChat for
+// reflection, rhUserLine for rehearsal — so the server's pre-model
+// crisis check sees every spoken line identically, delivery
+// coaching captures the same measured voice turns, and the
+// transcript lands in the chat underneath in real time (on ✕ the
+// conversation is simply there, as text). Only recognition
+// transcripts ever cross the wire — the audio itself is the
+// phone's, handled by its own recognition service.
+const VM_STR = {
+  en: { listening: 'Listening…', thinking: 'Thinking…', speaking: 'Speaking…',
+        muted: 'Muted', tapTalk: 'Tap to talk', typePh: 'Type instead…' },
+  he: { listening: 'מקשיב…', thinking: 'חושבת…', speaking: 'מדברת…',
+        muted: 'מושתק', tapTalk: 'הקישו כדי לדבר', typePh: 'אפשר גם לכתוב…' },
+};
+const vm = {
+  active: false, ctx: null, lang: 'en', gen: 0,
+  muted: false, tapMode: false, failStreak: 0,
+  rec: null, sess: null, busy: false, queued: null,
+  act: 0, meter: null, meterOff: false,
+  lastReplyEndAt: 0, bargeTimer: null,
+};
+function vmT() { return VM_STR[vm.lang] || VM_STR.en; }
+function vmEl(id) { return document.getElementById(id); }
+function vmSetStatus(w) { const s = vmEl('vm-status'); if (s) s.textContent = w; }
+function vmSetCaption(t) { const c = vmEl('vm-caption'); if (c) c.textContent = t || ''; }
+function vmLangFor(ctx) {
+  if (ctx === 'rehearse' && rhState) return rhState.lang;
+  return (bannerLang === 'he' || /^he/i.test(navigator.language || '')) ? 'he' : 'en';
+}
+
+// Orb drive: mic level (WebAudio analyser) where available, else
+// an activity proxy bumped by recognition results and by Solace's
+// word boundaries while she speaks.
+function vmSpeakBump() { vm.act = Math.min(1, vm.act + 0.45); }
+function vmMicLevel() {
+  const m = vm.meter;
+  if (!m || !m.analyser) return 0;
+  try {
+    m.analyser.getByteTimeDomainData(m.data);
+    let sum = 0;
+    for (let i = 0; i < m.data.length; i += 4) {
+      const v = (m.data[i] - 128) / 128;
+      sum += v * v;
+    }
+    return Math.min(1, Math.sqrt(sum / (m.data.length / 4)) * 3.2);
+  } catch (e) { return 0; }
+}
+function vmOrbLoop() {
+  if (!vm.active) return;
+  vm.act *= 0.93;
+  const speaking = spkPending > 0;
+  const breathe = 0.03 * (1 + Math.sin(Date.now() / 1600));
+  const lvl = Math.max(vmMicLevel(), vm.act,
+    speaking ? 0.22 + 0.1 * Math.sin(Date.now() / 210) : 0);
+  const orb = vmEl('vm-orb');
+  if (orb) {
+    orb.style.transform = 'scale(' + (1 + breathe + lvl * 0.38).toFixed(3) + ')';
+    orb.style.boxShadow =
+      '0 0 ' + Math.round(60 + lvl * 70) + 'px ' + Math.round(18 + lvl * 26) +
+      'px rgba(192,133,82,' + (0.28 + lvl * 0.25).toFixed(2) +
+      '), 0 0 120px 50px rgba(125,139,111,.16), inset 0 0 44px rgba(250,247,241,.45)';
+  }
+  requestAnimationFrame(vmOrbLoop);
+}
+
+async function vmStartMeter() {
+  if (vm.meterOff || vm.meter) return;
+  try {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return;
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: true, noiseSuppression: true },
+    });
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!vm.active || !AC) { stream.getTracks().forEach(t => t.stop()); return; }
+    const actx = new AC();
+    if (actx.resume) actx.resume();
+    const analyser = actx.createAnalyser();
+    analyser.fftSize = 512;
+    actx.createMediaStreamSource(stream).connect(analyser);
+    vm.meter = { ctx: actx, analyser, stream, data: new Uint8Array(analyser.fftSize) };
+  } catch (e) { /* no meter — the activity proxy animates the orb */ }
+}
+function vmStopMeter() {
+  if (!vm.meter) return;
+  try { vm.meter.stream.getTracks().forEach(t => t.stop()); } catch (e) {}
+  try { vm.meter.ctx.close(); } catch (e) {}
+  vm.meter = null;
+}
+
+// One recognition session. In 'turn' mode it captures the user's
+// next line with the exact measurements the delivery coaching
+// uses (speaking interval, pause-before, located pauses). In
+// 'barge' mode it listens while Solace speaks: a few real words
+// interrupt her, and the SAME session becomes the turn, so
+// nothing the user said is lost.
+function vmStartListening(mode) {
+  if (!vm.active || !RH_SR || vm.rec) return vm.rec;
+  const sess = {
+    mode, finalText: '', interimText: '',
+    captureStartAt: performance.now(), speechStartAt: 0, speechEndAt: 0,
+    firstAt: 0, lastEvtAt: 0, longestGap: 0, pauses: [], prevText: '',
+    pauseBefore: (vm.ctx === 'rehearse' && rhState && rhState.lastTurnEndAt)
+      ? performance.now() - rhState.lastTurnEndAt
+      : (vm.lastReplyEndAt ? performance.now() - vm.lastReplyEndAt : 0),
+    errored: '',
+  };
+  const rec = new RH_SR();
+  rec.lang = vm.lang === 'he' ? 'he-IL' : 'en-US';
+  rec.interimResults = true;
+  rec.continuous = false;
+  rec.maxAlternatives = 1;
+  rec.onspeechstart = () => { sess.speechStartAt = performance.now(); vm.act = Math.max(vm.act, 0.5); };
+  rec.onspeechend = () => { sess.speechEndAt = performance.now(); };
+  rec.onresult = e => {
+    const now = performance.now();
+    if (!sess.firstAt) sess.firstAt = now;
+    if (sess.lastEvtAt) {
+      const gap = now - sess.lastEvtAt;
+      if (gap > sess.longestGap) sess.longestGap = gap;
+      if (gap >= 2000 && sess.prevText) {
+        const w = rhLastWord(sess.prevText);
+        if (w && sess.pauses.length < 6) sess.pauses.push({ ms: Math.round(gap), after: w });
+      }
+    }
+    sess.lastEvtAt = now;
+    sess.interimText = '';
+    for (let i = e.resultIndex; i < e.results.length; i++) {
+      const r = e.results[i];
+      if (r.isFinal) sess.finalText += r[0].transcript;
+      else sess.interimText += r[0].transcript;
+    }
+    const heard = (sess.finalText + sess.interimText).trim();
+    sess.prevText = heard;
+    vm.act = Math.min(1, Math.max(vm.act, 0.35));
+    if (sess.mode === 'barge') {
+      if (heard.replace(/\s/g, '').length >= 3) {
+        sess.mode = 'turn';
+        if ('speechSynthesis' in window) speechSynthesis.cancel();
+        vmSetStatus(vmT().listening);
+        vmSetCaption(heard);
+      }
+      return;
+    }
+    vmSetCaption(heard);
+  };
+  rec.onerror = e => { sess.errored = (e && e.error) || 'error'; };
+  rec.onend = () => vmOnRecEnd(rec, sess);
+  vm.rec = rec;
+  vm.sess = sess;
+  try { rec.start(); vm.bargeFails = 0; }
+  catch (err) {
+    vm.rec = null; vm.sess = null;
+    if (mode === 'turn') vmNoteListenFailure();
+    else vm.bargeFails = (vm.bargeFails || 0) + 1;
+  }
+  return rec;
+}
+
+function vmNoteListenFailure() {
+  vm.failStreak++;
+  if (vm.failStreak >= 2) { vmEnterTapMode(); return; }
+  setTimeout(() => {
+    if (vm.active && !vm.muted && !vm.busy && !vm.rec) vmStartListening('turn');
+  }, 350);
+}
+
+function vmEnterTapMode() {
+  // Auto-listen is blocked on this device/browser — degrade to
+  // one big "Tap to talk" instead of failing or looping errors.
+  vm.tapMode = true;
+  vmEl('vm-taptalk').classList.add('show');
+}
+function vmShowTap() { vmEl('vm-taptalk').classList.add('show'); }
+
+function vmOnRecEnd(rec, sess) {
+  if (vm.rec === rec) { vm.rec = null; vm.sess = null; }
+  if (!vm.active || vm.muted) return;
+  if (sess.mode === 'barge') return; // the speech watcher drives the next step
+  const text = (sess.finalText || sess.interimText).trim();
+  if (text) {
+    vm.failStreak = 0;
+    if (vm.busy) { vm.queued = { text, sess }; return; }
+    vmDispatch(text, sess);
+    return;
+  }
+  // Nothing heard.
+  if (sess.errored === 'audio-capture' && vm.meter && !vm.meterOff) {
+    // The level meter is holding the mic — drop it and retry once.
+    vm.meterOff = true;
+    vmStopMeter();
+    vmStartListening('turn');
+    return;
+  }
+  if (sess.errored === 'not-allowed' || sess.errored === 'service-not-allowed') {
+    vmEnterTapMode();
+    return;
+  }
+  vm.failStreak++;
+  if (vm.failStreak >= 2) { vmEnterTapMode(); return; }
+  if (!vm.busy) vmStartListening('turn');
+}
+
+// The measured voice turn, in the exact shape the rehearsal
+// pipeline has always sent (typed lines send null instead).
+function vmVoiceTurn(text, sess) {
+  return {
+    text: text,
+    speak_ms: rhVoiceDurationMs({
+      captureStartAt: sess.captureStartAt, speechStartAt: sess.speechStartAt,
+      firstResultAt: sess.firstAt, lastResultAt: sess.lastEvtAt,
+      endAt: sess.speechEndAt || performance.now(),
+    }),
+    pause_before_ms: Math.round(sess.pauseBefore || 0),
+    longest_pause_ms: Math.round(sess.longestGap || 0),
+    pauses: sess.pauses || [],
+  };
+}
+
+// Solace speaking in the reflection chat: sentence chunks so a
+// long reply starts fast; tracked so the loop knows when she is
+// done. (Rehearsal speech rides rhSpeakChunk, tracked the same
+// way via spkTrack.)
+function vmSpeakText(text) {
+  if (!('speechSynthesis' in window)) return;
+  const clean = (text || '').replace(/\*\*/g, '').replace(/\*/g, '').trim();
+  if (!clean) return;
+  const lang = vm.lang === 'he' ? 'he' : 'en';
+  const v = pickVoiceFor(lang);
+  if (!v) return; // no voice for this language — the text carries it
+  const parts = clean.match(/[^.!?…]+[.!?…]*\s*/g) || [clean];
+  parts.forEach(p => {
+    const t = p.trim();
+    if (!t) return;
+    const u = new SpeechSynthesisUtterance(t);
+    u.voice = v;
+    u.lang = lang === 'he' ? 'he-IL' : 'en-US';
+    u.rate = 0.98;
+    spkTrack(u);
+    try { speechSynthesis.speak(u); } catch (e) {}
+  });
+}
+
+// After Solace's reply: wait for her voice to finish, then hand
+// the floor back — automatically, no tap (hands-free loop).
+async function vmAfterSpeech(gen) {
+  await spkIdle();
+  if (!vm.active || gen !== vm.gen) return;
+  if (vm.muted) { vmSetStatus(vmT().muted); return; }
+  vm.lastReplyEndAt = performance.now();
+  if (vm.queued) return; // vmDispatch's tail takes the queued line
+  if (vm.rec && vm.sess && vm.sess.mode === 'turn') {
+    // The user barged in and is mid-sentence in that session.
+    vmSetStatus(vmT().listening);
+    return;
+  }
+  if (vm.rec) { try { vm.rec.abort(); } catch (e) {} vm.rec = null; vm.sess = null; }
+  vmSetStatus(vmT().listening);
+  if (vm.tapMode) { vmShowTap(); return; }
+  vmStartListening('turn');
+}
+
+async function vmDispatch(text, sess) {
+  if (!vm.active) return;
+  if (vm.busy) { vm.queued = { text, sess }; return; }
+  const gen = vm.gen;
+  vm.busy = true;
+  vmEl('vm-taptalk').classList.remove('show');
+  vmSetStatus(vmT().thinking);
+  vmSetCaption('');
+  try {
+    if (vm.ctx === 'chat') {
+      lastChatReplyText = '';
+      const savedVoiceOn = voiceOn;
+      voiceOn = false; // voice mode does its own speaking
+      addMsg(text, 'user');
+      const payload = await sendChat(text);
+      voiceOn = savedVoiceOn;
+      if (!vm.active || gen !== vm.gen) return;
+      if (payload && payload.crisis) { vmClose(); return; }
+      if (lastChatReplyText) {
+        vmSetStatus(vmT().speaking);
+        vmSpeakText(lastChatReplyText);
+      }
+      await vmAfterSpeech(gen);
+    } else {
+      const vt = sess ? vmVoiceTurn(text, sess) : null;
+      await rhUserLine(text, vt);
+      if (!vm.active || gen !== vm.gen) return;
+      if (!rhState) { vmClose(); return; } // crisis exit closed the rehearsal
+      if (spkPending > 0) vmSetStatus(vmT().speaking);
+      await vmAfterSpeech(gen);
+    }
+  } finally {
+    if (gen === vm.gen) {
+      vm.busy = false;
+      if (vm.active && vm.queued && !vm.muted) {
+        const q = vm.queued;
+        vm.queued = null;
+        vmDispatch(q.text, q.sess);
+      }
+    }
+  }
+}
+
+// While Solace is speaking, keep a barge-in listener armed.
+function vmBargeWatch() {
+  if (!vm.active || vm.muted || vm.rec) return;
+  if ((vm.bargeFails || 0) >= 3) return; // this device won't listen over speech
+  if (spkPending > 0 && vm.busy) vmStartListening('barge');
+}
+
+function vmOpen(ctx) {
+  if (!RH_SR) {
+    if (ctx === 'rehearse') rhVoiceNote(rhT().voiceUnsupported);
+    return;
+  }
+  if (ctx === 'chat' && !userId) return;
+  if (ctx === 'rehearse' && (!rhState || !rhState.id || rhState.busy)) return;
+  vm.ctx = ctx;
+  vm.lang = vmLangFor(ctx);
+  vm.active = true;
+  vm.gen++;
+  vm.muted = false;
+  vm.tapMode = false;
+  vm.failStreak = 0;
+  vm.queued = null;
+  vm.busy = false;
+  vm.bargeFails = 0;
+  const t = vmT();
+  vmEl('voice-mode').setAttribute('dir', vm.lang === 'he' ? 'rtl' : 'ltr');
+  // First use of voice mode: the mic line, verbatim, before
+  // anything is heard.
+  const pv = vmEl('vm-privacy');
+  let seen = false;
+  try { seen = !!localStorage.getItem('solace_vm_seen'); } catch (e) {}
+  if (!seen) {
+    pv.textContent = (vm.lang === 'he' ? RH.he.voicePrivacy : RH.en.voicePrivacy);
+    pv.style.display = '';
+    try { localStorage.setItem('solace_vm_seen', '1'); } catch (e) {}
+  } else {
+    pv.style.display = 'none';
+  }
+  vmEl('vm-input').placeholder = t.typePh;
+  vmEl('vm-input').value = '';
+  vmEl('vm-taptalk').textContent = t.tapTalk;
+  vmEl('vm-taptalk').classList.remove('show');
+  const muteBtn = vmEl('vm-mute');
+  muteBtn.classList.remove('off');
+  muteBtn.textContent = '🎤';
+  vmEl('voice-mode').classList.add('open');
+  // Entering voice mode is the user gesture that unlocks audio on
+  // iOS — prime synthesis now, before anything needs to speak.
+  rhUnlockAudio();
+  if (ctx === 'rehearse') {
+    rhStopListening(); // end any composer dictation session
+    if (!rhState.partnerVoice) rhSetPartnerVoice(true); // the partner speaks here
+  }
+  vmStartMeter();
+  vmSetStatus(t.listening);
+  vmSetCaption('');
+  requestAnimationFrame(vmOrbLoop);
+  clearInterval(vm.bargeTimer);
+  vm.bargeTimer = setInterval(vmBargeWatch, 300);
+  vmStartListening('turn');
+}
+
+function vmClose() {
+  vm.active = false;
+  vm.gen++;
+  vm.busy = false;
+  vm.queued = null;
+  clearInterval(vm.bargeTimer);
+  if (vm.rec) { try { vm.rec.abort(); } catch (e) {} vm.rec = null; vm.sess = null; }
+  if ('speechSynthesis' in window) { try { speechSynthesis.cancel(); } catch (e) {} }
+  vmStopMeter();
+  vmEl('voice-mode').classList.remove('open');
+  vmEl('vm-taptalk').classList.remove('show');
+}
+
+function vmToggleMute() {
+  if (!vm.active) return;
+  vm.muted = !vm.muted;
+  const b = vmEl('vm-mute');
+  b.classList.toggle('off', vm.muted);
+  b.textContent = vm.muted ? '🔇' : '🎤';
+  if (vm.muted) {
+    if (vm.rec) { try { vm.rec.abort(); } catch (e) {} vm.rec = null; vm.sess = null; }
+    vmSetStatus(vmT().muted);
+    vmSetCaption('');
+  } else {
+    vmSetStatus(vmT().listening);
+    if (!vm.busy && !vm.rec) {
+      if (vm.tapMode) vmShowTap();
+      else vmStartListening('turn');
+    }
+  }
+}
+
+function vmDoType() {
+  const inp = vmEl('vm-input');
+  const text = inp.value.trim();
+  if (!text || !vm.active) return;
+  inp.value = '';
+  // A typed line pre-empts the current mic cycle.
+  if (vm.rec) { try { vm.rec.abort(); } catch (e) {} vm.rec = null; vm.sess = null; }
+  if ('speechSynthesis' in window) { try { speechSynthesis.cancel(); } catch (e) {} }
+  vmDispatch(text, null);
+}
+
+document.getElementById('chat-mic').addEventListener('click', () => vmOpen('chat'));
+document.getElementById('vm-exit').addEventListener('click', vmClose);
+document.getElementById('vm-mute').addEventListener('click', vmToggleMute);
+document.getElementById('vm-send').addEventListener('click', vmDoType);
+document.getElementById('vm-taptalk').addEventListener('click', () => {
+  if (!vm.active || vm.muted || vm.busy) return;
+  vm.failStreak = 0;
+  vmEl('vm-taptalk').classList.remove('show');
+  vmStartListening('turn');
+});
+vmEl('vm-input').addEventListener('keydown', e => { if (e.key === 'Enter') vmDoType(); });
 
 // Returning user: skip intake, restore history
 (async function init() {
