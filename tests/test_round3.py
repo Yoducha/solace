@@ -63,6 +63,17 @@ if "We count usage anonymously — never what you write." not in html:
 if html.count("Not therapy") != 1:
     failures.append("HOME 'Not therapy' instances != 1: %d"
                     % html.count("Not therapy"))
+# Tab fix: the care line appears exactly once on the first screen
+# (the tagline carries it; the disclaimer bar no longer repeats it).
+if html.count("not a substitute for professional care") != 1:
+    failures.append("HOME care-line instances != 1: %d"
+                    % html.count("not a substitute for professional care"))
+# Tab fix: Practice is the bright primary button, reflection the
+# secondary one.
+if '<button class="btn" id="begin-rehearse"' not in html:
+    failures.append("HOME Practice door is not the primary button")
+if '<button class="btn secondary" id="begin"' not in html:
+    failures.append("HOME reflection door is not the secondary button")
 i_practice = html.find("Practice a hard conversation")
 i_reflect = html.find('id="begin"')
 if not (0 <= i_practice < i_reflect):

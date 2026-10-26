@@ -140,7 +140,9 @@
   .tiny { font-size: 12px; color: var(--muted); text-align: center; line-height: 1.5; }
 
   /* The two doors, side by side at the TOP of the welcome screen —
-     no scrolling to find Rehearse (Tab fix). */
+     no scrolling to find Rehearse (Tab fix). Practice, the first
+     door, carries the bright primary .btn; reflection is the
+     sage .btn.secondary (Tab round 3 fix). */
   .cta-row { display: flex; gap: 10px; }
   .cta-row .btn { flex: 1 1 0; width: auto; padding: 16px 8px; font-size: 16px; }
   /* Round 3: the first screen is one line + the two doors; the
@@ -304,7 +306,7 @@
 </div>
 
 <div class="disclaimer" id="disclaimer">
-  <span class="disc-full">Solace is an AI self-help companion — not a substitute for professional care, and not for emergencies.</span><span class="disc-short">Solace is an AI self-help companion, not a substitute for professional care.</span>
+  <span class="disc-full">Solace is an AI self-help companion — not for emergencies.</span><span class="disc-short">Solace is an AI self-help companion.</span>
   <button class="x" id="disclaimer-x" title="Make this smaller" aria-label="Collapse disclaimer">×</button>
 </div>
 
@@ -315,8 +317,8 @@
     <p class="tagline">A private AI companion for reflection and self-help. Not therapy, not a substitute for professional care.</p>
 
     <div class="cta-row">
-      <button class="btn secondary" id="begin-rehearse" type="button">Practice a hard conversation</button>
-      <button class="btn" id="begin">Start a reflection</button>
+      <button class="btn" id="begin-rehearse" type="button">Practice a hard conversation</button>
+      <button class="btn secondary" id="begin">Start a reflection</button>
     </div>
     <p class="privacy-line">We count usage anonymously — never what you write.</p>
 
@@ -1232,6 +1234,16 @@ function rhVoiceDurationMs(t) {
   const start = t.speechStartAt || t.captureStartAt || t.firstResultAt || end;
   return Math.max(0, Math.round(end - start));
 }
+
+// The last word of a transcript snapshot, punctuation-trimmed —
+// the location marker for a pause that begins right after it, so
+// coaching can say "You paused 2.5s after 'workload'".
+function rhLastWord(text) {
+  const toks = (text || '').trim().split(/\s+/).filter(Boolean);
+  if (!toks.length) return '';
+  return toks[toks.length - 1].replace(
+    /^[^A-Za-zÀ-ÿ\u0590-\u05FF0-9']+|[^A-Za-zÀ-ÿ\u0590-\u05FF0-9']+$/g, '');
+}
 let rhRec = null;
 
 function rhVoiceNote(text) {
@@ -1340,12 +1352,26 @@ function rhMicTap() {
   let firstAt = 0, lastEvtAt = 0, longestGap = 0;
   let captureStartAt = 0, speechStartAt = 0, speechEndAt = 0;
   let finalText = '', interimText = '', finished = false;
+  // Located pauses (Tab fix): every gap of ~2 s or more between
+  // recognition results is a pause; prevText is the transcript as
+  // of the previous result, so its last word is where the pause
+  // fell. The server coaches only these located events.
+  let pauses = [], prevText = '';
   rec.onspeechstart = () => { speechStartAt = performance.now(); };
   rec.onspeechend = () => { speechEndAt = performance.now(); };
   rec.onresult = e => {
     const now = performance.now();
     if (!firstAt) firstAt = now;
-    if (lastEvtAt && now - lastEvtAt > longestGap) longestGap = now - lastEvtAt;
+    if (lastEvtAt) {
+      const gap = now - lastEvtAt;
+      if (gap > longestGap) longestGap = gap;
+      if (gap >= 2000 && prevText) {
+        const w = rhLastWord(prevText);
+        if (w && pauses.length < 6) {
+          pauses.push({ms: Math.round(gap), after: w});
+        }
+      }
+    }
     lastEvtAt = now;
     interimText = '';
     for (let i = e.resultIndex; i < e.results.length; i++) {
@@ -1354,6 +1380,7 @@ function rhMicTap() {
       else interimText += r[0].transcript;
     }
     inp.value = (finalText + interimText).trim();
+    prevText = (finalText + interimText).trim();
   };
   const finish = () => {
     if (finished) return;
@@ -1375,6 +1402,7 @@ function rhMicTap() {
       }),
       pause_before_ms: Math.round(pauseBefore),
       longest_pause_ms: Math.round(longestGap),
+      pauses: pauses,
     };
     rhUserLine(text, vt);
   };
