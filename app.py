@@ -3502,6 +3502,13 @@ def health():
     return {"ok": True}
 
 
+@app.get("/health")
+def health_alias():
+    """Keep-alive target for an external pinger (Tab ruling): 200,
+    instant, no model call, no DB work."""
+    return {"ok": True}
+
+
 # --------------------------------------- Anonymous usage stats ----
 # Counts only — never content. Visitors are recorded under a
 # one-way SHA-256 of their browser id with a stats-only salt that is

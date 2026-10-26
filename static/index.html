@@ -420,25 +420,25 @@
   <!-- First screen: one line + two doors (Tab round 3). The
        reflection intake opens only when its door is chosen. -->
   <section id="welcome">
-    <p class="tagline">A private AI companion for reflection and self-help. Not therapy, not a substitute for professional care.</p>
+    <p class="tagline" id="tagline">A private AI companion for reflection and self-help. Not therapy, not a substitute for professional care.</p>
 
     <div class="cta-row">
       <button class="btn" id="begin-rehearse" type="button">Practice a hard conversation</button>
       <button class="btn secondary" id="begin">Start a reflection</button>
     </div>
-    <p class="privacy-line">We count usage anonymously — never what you write.</p>
+    <p class="privacy-line" id="privacy-line">We count usage anonymously — never what you write.</p>
 
     <div id="intake-fields" style="display:none">
-      <p class="audience">For anyone carrying stress, anxiety, or a heavy mind who wants a private place to sort out their thoughts — day or night, no judgment. Solace remembers key themes so you can pick up where you left off. See or delete them anytime.</p>
-      <p class="lead">This is a quiet space to talk through what's on your mind, at your own pace. Your chats are processed by an AI provider to generate replies. We never sell them, and you can delete everything anytime with Delete my data. Your chats aren't shared with other people or used to advertise to you. See the privacy page for details.</p>
+      <p class="audience" id="audience-line">For anyone carrying stress, anxiety, or a heavy mind — a private place to sort out your thoughts, day or night, no judgment.</p>
+      <p class="lead" id="lead-line">A quiet space to talk through what's on your mind, at your own pace. Your chats aren't shared with other people or used to advertise to you. See the privacy page for details.</p>
 
       <div>
-        <label class="q" for="name">What should I call you? <span style="color:var(--muted);font-weight:400">(optional)</span></label>
+        <label class="q" for="name" id="name-label">What should I call you? <span style="color:var(--muted);font-weight:400">(optional)</span></label>
         <input type="text" id="name" placeholder="Your first name" autocomplete="off">
       </div>
 
       <div>
-        <label class="q">How are you feeling right now?</label>
+        <label class="q" id="mood-label">How are you feeling right now?</label>
         <div class="chips" id="moods">
           <button class="chip" data-m="Really struggling">Really struggling</button>
           <button class="chip" data-m="Low">Low</button>
@@ -449,11 +449,20 @@
       </div>
 
       <div>
-        <label class="q" for="concern">What's weighing on you most?</label>
+        <label class="q" id="starters-label">Not sure where to start? Tap one:</label>
+        <div class="chips" id="starters">
+          <button class="chip starter-chip">I can't sleep — my mind won't stop racing.</button>
+          <button class="chip starter-chip">Work has been overwhelming lately.</button>
+          <button class="chip starter-chip">I had a fight with someone I love.</button>
+        </div>
+      </div>
+
+      <div>
+        <label class="q" for="concern" id="concern-label">What's weighing on you most?</label>
         <textarea id="concern" placeholder="Whatever comes to mind — there's no wrong answer."></textarea>
       </div>
 
-      <p class="tiny">By continuing you agree to the <a href="/terms" target="_blank">Terms</a> and <a href="/privacy" target="_blank">Privacy Policy</a>, and you understand Solace is an AI self-help companion, not professional care.<br>If you're ever in crisis, call or text 988.</p>
+      <p class="tiny" id="tiny-line">By continuing you agree to the <a href="/terms" target="_blank">Terms</a> and <a href="/privacy" target="_blank">Privacy Policy</a>, and you understand Solace is an AI self-help companion, not professional care.<br>If you're ever in crisis, call or text 988.</p>
     </div>
   </section>
 
@@ -659,7 +668,7 @@ document.getElementById('new-chat').addEventListener('click', () => {
   document.querySelectorAll('#moods .chip').forEach(x => x.classList.remove('on'));
   const beginBtn = document.getElementById('begin');
   beginBtn.disabled = false;
-  beginBtn.textContent = 'Start a reflection';
+  beginBtn.textContent = BTXT.begin;
   intakeShown = false;
   document.getElementById('intake-fields').style.display = 'none';
   document.getElementById('chat').style.display = 'none';
@@ -820,6 +829,13 @@ function castChatVote(vote) {
     if (row) row.style.display = 'none';
   }, 2500);
 }
+function hideChatVote() {
+  // The vote row must never sit under a crisis reply (Tab ruling):
+  // it can be on screen from an earlier exchange when a crisis turn
+  // lands, so a crisis payload hides it explicitly.
+  const row = document.getElementById('help-vote');
+  if (row) row.style.display = 'none';
+}
 
 function crisisBannerHTML(hotline, lang) {
   if (lang === 'he') {
@@ -888,6 +904,7 @@ async function sendChat(text) {
   const typing = addTyping('messages');
   const applyPayload = (payload, bubble, acc) => {
     if (payload.banner_lang) bannerLang = payload.banner_lang;
+    if (payload.crisis) hideChatVote();
     if (payload.crisis || payload.banner) {
       // In crisis, and also after stepping down: the banner stays
       // for the rest of the session.
@@ -976,7 +993,7 @@ document.getElementById('begin').addEventListener('click', async () => {
     // itself starts on the next tap, once the person has seen it.
     intakeShown = true;
     document.getElementById('intake-fields').style.display = 'flex';
-    document.getElementById('begin').textContent = 'Begin reflection';
+    document.getElementById('begin').textContent = BTXT.beginOpen;
     document.getElementById('name').focus();
     return;
   }
@@ -984,7 +1001,7 @@ document.getElementById('begin').addEventListener('click', async () => {
   const concern = document.getElementById('concern').value.trim();
   const btn = document.getElementById('begin');
   btn.disabled = true;
-  btn.textContent = 'Starting…';
+  btn.textContent = BTXT.starting;
   try {
     const notes = 'Feeling right now: ' + (mood || 'not specified') + '.'
       + (concern ? ' What is weighing on them: ' + concern : '');
@@ -998,7 +1015,7 @@ document.getElementById('begin').addEventListener('click', async () => {
     await sendChat(concern ? concern : "Hi, I'd like to talk.");
   } catch (e) {
     btn.disabled = false;
-    btn.textContent = intakeShown ? 'Begin reflection' : 'Start a reflection';
+    btn.textContent = intakeShown ? BTXT.beginOpen : BTXT.begin;
     alert('Could not start your session — please check your connection and try again.');
   }
 });
@@ -1040,7 +1057,7 @@ async function doDeleteData() {
     document.querySelectorAll('#moods .chip').forEach(x => x.classList.remove('on'));
     const beginBtn = document.getElementById('begin');
     beginBtn.disabled = false;
-    beginBtn.textContent = 'Start a reflection';
+    beginBtn.textContent = BTXT.begin;
     intakeShown = false;
     document.getElementById('intake-fields').style.display = 'none';
     document.getElementById('chat').style.display = 'none';
@@ -1321,6 +1338,7 @@ function closeRehearse() {
 function rhCrisisExit(payload) {
   rhStopSpeak();
   rhStopListening();
+  hideChatVote();
   document.getElementById('rehearse').style.display = 'none';
   rhExitWasCrisis = true;
   rhState = null;
@@ -2572,6 +2590,59 @@ document.getElementById('vm-taptalk').addEventListener('click', () => {
   if (vmStartListening('turn')) vmSetStatus(vmT().tapDone);
 });
 vmEl('vm-input').addEventListener('keydown', e => { if (e.key === 'Enter') vmDoType(); });
+
+// ---- First screen: example starters + Hebrew intake ----
+// The 3 starter chips fill the concern box — one tap past the
+// blank page (Tab ruling).
+document.querySelectorAll('.starter-chip').forEach(ch => {
+  ch.addEventListener('click', () => {
+    const box = document.getElementById('concern');
+    box.value = ch.textContent.trim();
+    box.focus();
+  });
+});
+// A Hebrew phone/browser gets the whole intake in Hebrew (Tab
+// ruling) — strings swap in place, values (mood data-m) stay as-is.
+const UI_HE = /^he/i.test(navigator.language || '');
+const BTXT = UI_HE
+  ? { begin: 'להתחיל התבוננות', beginOpen: 'מתחילים', starting: 'מתחיל…' }
+  : { begin: 'Start a reflection', beginOpen: 'Begin reflection', starting: 'Starting…' };
+if (UI_HE) {
+  const set = (id, txt) => {
+    const el = document.getElementById(id);
+    if (el) el.textContent = txt;
+  };
+  document.getElementById('welcome').setAttribute('dir', 'rtl');
+  set('tagline', 'מלווה AI פרטי להתבוננות ולעזרה עצמית. לא טיפול, ולא תחליף לליווי מקצועי.');
+  set('begin-rehearse', 'לתרגל שיחה קשה');
+  set('begin', BTXT.begin);
+  set('privacy-line', 'אנחנו סופרים שימוש באופן אנונימי — לעולם לא את מה שכותבים.');
+  set('audience-line', 'לכל מי שנושא מתח, חרדה או ראש כבד — מקום פרטי ורגוע לסדר את המחשבות, ביום ובלילה, בלי שיפוט.');
+  set('lead-line', 'מרחב שקט לדבר על מה שעובר עליך, בקצב שלך. השיחות שלך לא משותפות עם אנשים אחרים ולא משמשות כדי לפרסם לך. לפרטים נוספים, ראו את עמוד הפרטיות.');
+  set('name-label', 'איך לקרוא לך? (לא חובה)');
+  document.getElementById('name').placeholder = 'השם הפרטי שלך';
+  set('mood-label', 'איך אתה מרגיש עכשיו?');
+  const MOOD_HE = {
+    'Really struggling': 'ממש קשה לי', 'Low': 'נמוך', 'Okay': 'בסדר',
+    'Good': 'טוב', 'Great': 'מצוין',
+  };
+  document.querySelectorAll('#moods .chip').forEach(ch => {
+    if (MOOD_HE[ch.dataset.m]) ch.textContent = MOOD_HE[ch.dataset.m];
+  });
+  set('starters-label', 'לא בטוח מאיפה להתחיל? הקש על אחד:');
+  const STARTERS_HE = [
+    'אני לא מצליח לישון — הראש לא מפסיק לרוץ.',
+    'העבודה ממש מכבידה עליי בזמן האחרון.',
+    'רבתי עם מישהו שאני אוהב.',
+  ];
+  document.querySelectorAll('.starter-chip').forEach((ch, i) => {
+    if (STARTERS_HE[i]) ch.textContent = STARTERS_HE[i];
+  });
+  set('concern-label', 'מה הכי מכביד עליך?');
+  document.getElementById('concern').placeholder = 'כל מה שעולה בראש — אין תשובה לא נכונה.';
+  document.getElementById('tiny-line').innerHTML =
+    'בהמשך אתה מסכים ל<a href="/terms" target="_blank">תנאים</a> ול<a href="/privacy" target="_blank">מדיניות הפרטיות</a>, ומבין ש-Solace היא מלווה AI לעזרה עצמית, לא ליווי מקצועי.<br>במשבר בישראל אפשר להתקשר לער״ן במספר 1201 בכל שעה.';
+}
 
 // Returning user: skip intake, restore history
 (async function init() {
