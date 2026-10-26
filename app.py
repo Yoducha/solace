@@ -2604,7 +2604,11 @@ def _rehearse_stream_events(uid, rid, message):
                 rec, message, _rehearsal_hebrew(rec, message))
             transcript.append({"role": "user", "content": message})
             _save_transcript(rid, transcript, state="ended")
-            yield _sse({"type": "delta", "text": payload["reply"]})
+            # NO delta for a crisis exit (Tab ruling): the client
+            # pumps streamed deltas into speech as they arrive, and
+            # a crisis line must NEVER play as audio. The done
+            # payload carries the full reply and the client renders
+            # it as text via rhCrisisExit.
             yield _sse({"type": "done", **payload})
             return
         transcript.append({"role": "user", "content": message})

@@ -902,7 +902,7 @@ async function sendChat(text) {
     } else {
       addMsg(reply, 'ai');
     }
-    if (voiceOn) speak(reply);
+    if (voiceOn && !payload.crisis) speak(reply); // a crisis line is never read aloud
     if (!payload.crisis) { chatExchangeDone = true; maybeShowChatVote(); }
   };
   let acc = '', bubble = null;
@@ -2022,16 +2022,26 @@ document.getElementById('rh-done').addEventListener('click', () => {
 // phone's, handled by its own recognition service.
 const VM_STR = {
   en: { listening: 'Listening…', thinking: 'Thinking…', speaking: 'Speaking…',
-        muted: 'Muted', tapTalk: 'Tap to talk', typePh: 'Type instead…' },
+        muted: 'Muted', tapTalk: 'Tap to talk', tapDone: 'Tap when done',
+        typePh: 'Type instead…' },
   he: { listening: 'מקשיב…', thinking: 'חושבת…', speaking: 'מדברת…',
-        muted: 'מושתק', tapTalk: 'הקישו כדי לדבר', typePh: 'אפשר גם לכתוב…' },
+        muted: 'מושתק', tapTalk: 'הקישו כדי לדבר', tapDone: 'הקישו לסיום',
+        typePh: 'אפשר גם לכתוב…' },
 };
+// iPhone/iPad (Tab ruling): speech recognition must NEVER run while
+// Solace is speaking — she hears her own voice through the speaker
+// and cuts herself off — and the getUserMedia level meter is
+// skipped there too (it fights recognition for the mic).
+const VM_IOS = /iP(hone|ad|od)/.test(navigator.userAgent || '') ||
+  ((navigator.platform || '') === 'MacIntel' &&
+   (navigator.maxTouchPoints || 0) > 1);
 const vm = {
   active: false, ctx: null, lang: 'en', gen: 0,
   muted: false, tapMode: false, failStreak: 0,
   rec: null, sess: null, busy: false, queued: null,
   act: 0, lvl: 0, meter: null, meterOff: false,
   lastReplyEndAt: 0, bargeTimer: null,
+  silenceStart: 0, resumeTimer: null,
 };
 // Debug hook (real-iPhone bug hunt): every recognition restart,
 // degrade to Tap-to-talk, and close attempt is logged here and to
@@ -2112,6 +2122,7 @@ function vmOrbLoop() {
 }
 
 async function vmStartMeter() {
+  if (VM_IOS) { vm.meterOff = true; return; } // skipped on iPhone (Tab)
   if (vm.meterOff || vm.meter) return;
   try {
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return;
@@ -2143,6 +2154,10 @@ function vmStopMeter() {
 // nothing the user said is lost.
 function vmStartListening(mode) {
   if (!vm.active || !RH_SR || vm.rec) return vm.rec;
+  // iPhone: never listen while Solace is speaking (she would hear
+  // herself and cut off). Listening resumes in vmAfterSpeech, once
+  // her voice has fully finished.
+  if (VM_IOS && spkPending > 0) return null;
   const sess = {
     mode, finalText: '', interimText: '',
     captureStartAt: performance.now(), speechStartAt: 0, speechEndAt: 0,
@@ -2179,6 +2194,7 @@ function vmStartListening(mode) {
     }
     const heard = (sess.finalText + sess.interimText).trim();
     sess.prevText = heard;
+    if (heard) vm.silenceStart = 0; // real speech resets the silence clock
     vm.act = Math.min(1, Math.max(vm.act, 0.35));
     if (sess.mode === 'barge') {
       if (heard.replace(/\s/g, '').length >= 3) {
@@ -2219,6 +2235,7 @@ function vmEnterTapMode(reason) {
   // The view stays OPEN either way.
   if (!vm.tapMode) vmLog('degrade to Tap to talk', reason || '');
   vm.tapMode = true;
+  vmSetStatus(vmT().tapTalk); // push-to-talk idle never says "Listening…"
   vmEl('vm-taptalk').classList.add('show');
 }
 function vmShowTap() { vmEl('vm-taptalk').classList.add('show'); }
@@ -2226,18 +2243,19 @@ function vmShowTap() { vmEl('vm-taptalk').classList.add('show'); }
 function vmOnRecEnd(rec, sess) {
   if (vm.rec === rec) { vm.rec = null; vm.sess = null; }
   if (!vm.active || vm.muted) return;
+  if (sess.cancelled) return; // deliberate pre-emption (typing / mute / close)
   if (sess.mode === 'barge') return; // the speech watcher drives the next step
   const text = (sess.finalText || sess.interimText).trim();
   if (text) {
     vm.failStreak = 0;
+    vm.silenceStart = 0;
     if (vm.busy) { vm.queued = { text, sess }; return; }
     vmDispatch(text, sess);
     return;
   }
   // Nothing heard — no-speech, a timeout, or a recognition error.
-  // Voice Mode stays open: restart listening, or degrade to
-  // Tap to talk after repeated failures. Log the reason either
-  // way (real-iPhone bug: the view used to vanish around here).
+  // Voice Mode stays open throughout. Log the reason either way
+  // (real-iPhone bug: the view used to vanish around here).
   vmLog('recognition ended, nothing heard',
         'error=' + (sess.errored || 'no-speech'));
   if (sess.errored === 'audio-capture' && vm.meter && !vm.meterOff) {
@@ -2252,15 +2270,40 @@ function vmOnRecEnd(rec, sess) {
     vmEnterTapMode('mic blocked: ' + sess.errored);
     return;
   }
-  vm.failStreak++;
-  if (vm.failStreak >= 2) {
-    vmEnterTapMode('repeated ' + (sess.errored || 'no-speech'));
+  if (vm.tapMode) {
+    // A tap-initiated listen that heard nothing returns to the
+    // push-to-talk idle — the status is the tap prompt itself,
+    // never "Listening…" (Tab ruling).
+    vmSetStatus(vmT().tapTalk);
+    vmShowTap();
     return;
   }
-  if (!vm.busy) {
-    vmLog('restart listening', sess.errored || 'no-speech');
-    vmStartListening('turn');
+  // Silence budget (Tab ruling): hands-free keeps listening
+  // through ~50 s of silence (individual recognition sessions end
+  // far sooner) before pausing to Tap to talk — and even then it
+  // COMES BACK on its own instead of dying.
+  const now = performance.now();
+  if (!vm.silenceStart) vm.silenceStart = sess.captureStartAt || now;
+  if (now - vm.silenceStart < 50000) {
+    if (!vm.busy) {
+      vmLog('restart listening', 'silence ' +
+        Math.round((now - vm.silenceStart) / 1000) + 's');
+      vmStartListening('turn');
+    }
+    return;
   }
+  vmEnterTapMode('silence over 50s');
+  vmSetStatus(vmT().tapTalk);
+  clearTimeout(vm.resumeTimer);
+  vm.resumeTimer = setTimeout(() => {
+    if (!vm.active || vm.muted || vm.busy || !vm.tapMode) return;
+    vm.tapMode = false;
+    vm.silenceStart = 0;
+    vmEl('vm-taptalk').classList.remove('show');
+    vmSetStatus(vmT().listening);
+    vmLog('hands-free resumed after the silence pause');
+    vmStartListening('turn');
+  }, 20000);
 }
 
 // The measured voice turn, in the exact shape the rehearsal
@@ -2316,9 +2359,14 @@ async function vmAfterSpeech(gen) {
     vmSetStatus(vmT().listening);
     return;
   }
-  if (vm.rec) { try { vm.rec.abort(); } catch (e) {} vm.rec = null; vm.sess = null; }
+  if (vm.rec) {
+    if (vm.sess) vm.sess.cancelled = true;
+    try { vm.rec.abort(); } catch (e) {}
+    vm.rec = null; vm.sess = null;
+  }
+  // Push-to-talk idle never says "Listening…" (Tab ruling).
+  if (vm.tapMode) { vmSetStatus(vmT().tapTalk); vmShowTap(); return; }
   vmSetStatus(vmT().listening);
-  if (vm.tapMode) { vmShowTap(); return; }
   vmStartListening('turn');
 }
 
@@ -2327,6 +2375,8 @@ async function vmDispatch(text, sess) {
   if (vm.busy) { vm.queued = { text, sess }; return; }
   const gen = vm.gen;
   vm.busy = true;
+  vm.silenceStart = 0;
+  clearTimeout(vm.resumeTimer);
   vmEl('vm-taptalk').classList.remove('show');
   vmSetStatus(vmT().thinking);
   vmSetCaption('');
@@ -2375,6 +2425,7 @@ async function vmDispatch(text, sess) {
 
 // While Solace is speaking, keep a barge-in listener armed.
 function vmBargeWatch() {
+  if (VM_IOS) return; // iPhone: no listening over speech at all (Tab)
   if (!vm.active || vm.muted || vm.rec) return;
   if ((vm.bargeFails || 0) >= 3) return; // this device won't listen over speech
   if (spkPending > 0 && vm.busy) vmStartListening('barge');
@@ -2400,6 +2451,8 @@ function vmOpen(ctx) {
   vm.queued = null;
   vm.busy = false;
   vm.bargeFails = 0;
+  vm.silenceStart = 0;
+  clearTimeout(vm.resumeTimer);
   const t = vmT();
   vmEl('voice-mode').setAttribute('dir', vm.lang === 'he' ? 'rtl' : 'ltr');
   // First use of voice mode: the mic line, verbatim, before
@@ -2458,6 +2511,7 @@ function vmClose(reason) {
   vm.busy = false;
   vm.queued = null;
   clearInterval(vm.bargeTimer);
+  clearTimeout(vm.resumeTimer);
   if (vm.rec) { try { vm.rec.abort(); } catch (e) {} vm.rec = null; vm.sess = null; }
   if ('speechSynthesis' in window) { try { speechSynthesis.cancel(); } catch (e) {} }
   vmStopMeter();
@@ -2490,8 +2544,15 @@ function vmDoType() {
   const text = inp.value.trim();
   if (!text || !vm.active) return;
   inp.value = '';
-  // A typed line pre-empts the current mic cycle.
-  if (vm.rec) { try { vm.rec.abort(); } catch (e) {} vm.rec = null; vm.sess = null; }
+  // A typed line pre-empts the current mic cycle — marked cancelled
+  // so the aborted session is NOT counted as a listening failure:
+  // typing must never switch hands-free off (Tab ruling). After the
+  // reply, vmAfterSpeech restarts the hands-free loop as usual.
+  if (vm.rec) {
+    if (vm.sess) vm.sess.cancelled = true;
+    try { vm.rec.abort(); } catch (e) {}
+    vm.rec = null; vm.sess = null;
+  }
   if ('speechSynthesis' in window) { try { speechSynthesis.cancel(); } catch (e) {} }
   vmDispatch(text, null);
 }
@@ -2503,8 +2564,12 @@ document.getElementById('vm-send').addEventListener('click', vmDoType);
 document.getElementById('vm-taptalk').addEventListener('click', () => {
   if (!vm.active || vm.muted || vm.busy) return;
   vm.failStreak = 0;
+  vm.silenceStart = 0;
+  clearTimeout(vm.resumeTimer);
   vmEl('vm-taptalk').classList.remove('show');
-  vmStartListening('turn');
+  // Push-to-talk status while capturing: "Tap when done", never
+  // "Listening…" (Tab ruling).
+  if (vmStartListening('turn')) vmSetStatus(vmT().tapDone);
 });
 vmEl('vm-input').addEventListener('keydown', e => { if (e.key === 'Enter') vmDoType(); });
 

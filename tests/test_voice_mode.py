@@ -121,6 +121,50 @@ if "vmOpen('chat')" not in html or "vmOpen('rehearse')" not in html:
 
 print("client: same send paths, measured turns, crisis exits, barge-in")
 
+# ---------- Tab fresh-user voice fixes (Oct 26) -------------------------
+# iPhone: no recognition while Solace speaks + no mic meter; tap-to-
+# talk status wording; typing never kills hands-free (cancelled
+# sessions); ~50 s silence budget with hands-free coming back.
+for needle in ("VM_IOS",                       # iPhone detection
+               "spkPending > 0",               # never listen over speech
+               "tapDone",                      # 'Tap when done' status
+               "sess.cancelled",               # typing pre-empts safely
+               "silenceStart",                 # silence budget clock
+               "hands-free resumed",           # hands-free comes back
+               "vmT().tapTalk"):               # tap idle status string
+    if needle not in vm_block:
+        failures.append("VM Tab-fix marker missing: %s" % needle)
+# The tap-to-talk idle must be set from the tapTalk string, not the
+# listening string, in vmAfterSpeech.
+tail = vm_block[vm_block.find("async function vmAfterSpeech"):]
+tail = tail[:tail.find("async function vmDispatch")]
+if "vm.tapMode) { vmSetStatus(vmT().tapTalk)" not in tail:
+    failures.append("VM tap idle still says Listening…")
+# Rehearse crisis: the stream must carry NO delta (the client speaks
+# deltas aloud — a crisis line must never play as audio).
+uid = "test-" + uuid.uuid4().hex[:12]
+client.post("/api/profile", json={"user_id": uid, "name": "",
+                                  "notes": ""})
+r = client.post("/api/rehearse/start", json={
+    "user_id": uid, "person_type": "boss", "person_name": "Dave",
+    "relationship": "my manager", "topic": "a raise",
+    "reactions": [], "context": ""}).json()
+if not r.get("ok"):
+    failures.append("VM rehearse start failed: %r" % r)
+else:
+    body = client.post("/api/rehearse/stream", json={
+        "user_id": uid, "rehearsal_id": r["rehearsal_id"],
+        "message": "I want to kill myself"}).text
+    if '"type": "delta"' in body or '"type":"delta"' in body:
+        failures.append("VM rehearse crisis streamed a delta "
+                        "(would be spoken): %r" % body[:200])
+    if '"crisis": true' not in body and '"crisis":true' not in body:
+        failures.append("VM rehearse crisis lost its payload: %r"
+                        % body[:200])
+
+print("client: iPhone guards, tap status, silence budget, "
+      "rehearse crisis never streams (never spoken)")
+
 # ---------- E2E: spoken crisis through the voice chat path -------------
 # This is byte-for-byte what a spoken line sends from voice mode:
 # the transcript as the message of /api/chat/stream (via sendChat).
