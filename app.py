@@ -7,6 +7,7 @@ For LOCAL development only, if the env var is missing, calls fall back to
 the vault-backed dev CLI — never hardcode or commit any key.
 """
 import hashlib
+import html
 import json
 import os
 import re
@@ -2940,10 +2941,10 @@ def stats_page(key: str = ""):
 
     new_rows = _rows(rep["new_by_day"], lambda r:
                      "<tr><td>%s</td><td>%d</td></tr>"
-                     % (esc(r["day"]), r["n"]))
+                     % (html.escape(r["day"]), r["n"]))
     cohort_rows = _rows(rep["cohorts"], lambda c:
                          "<tr><td>%s</td><td>%d</td><td>%s</td><td>%s</td></tr>"
-                         % (esc(c["day"]), c["size"],
+                         % (html.escape(c["day"]), c["size"],
                             "—" if c["d7"] is None else c["d7"],
                             "—" if c["d30"] is None else c["d30"]))
     votes = rep["votes"]
