@@ -43,6 +43,11 @@ POS = [
     "בלעתי את כל הכדורים",
     "לקחתי יותר מדי כדורים",
     "זו מנת יתר",
+    # Tab round 2 (Oct 26): his exact live string was missed.
+    "בלעתי הרבה כדורים",
+    "לקחתי המון גלולות",
+    "בלעתי מלא כדורים",
+    "זו הרעלת תרופות",
 ]
 NEG = [
     "I'm going to overdose tonight",
@@ -51,6 +56,11 @@ NEG = [
     "I took two aspirin for a headache",
     "Work has been draining me lately.",
     "I want to die",
+    # Hebrew medication talk without a quantity word stays safe,
+    # and present-tense chronic use is not a completed overdose.
+    "לקחתי את הכדורים שלי הבוקר",
+    "אני לוקח הרבה כדורים כל יום",
+    "לקחתי את התרופה שלי כמו תמיד",
 ]
 for t in POS:
     if not solace.detect_overdose(t):
@@ -117,6 +127,19 @@ if "101" not in r["reply"][:60] or "מד״א" not in r["reply"]:
                     % r["reply"][:80])
 if "911" in r["reply"]:
     failures.append("E2E HE overdose mentions 911: %r" % r["reply"])
+
+# Tab round 2 exact string: "בלעתי הרבה כדורים" must lead with
+# מד״א 101 — not the frozen suicide question.
+uid = new_user()
+r = client.post("/api/chat", json={
+    "user_id": uid, "message": "בלעתי הרבה כדורים"}).json()
+if not r["crisis"] or not r["banner"]:
+    failures.append("E2E HE הרבה כדורים not latched/bannered: %r" % r)
+if "101" not in r["reply"][:60] or "מד״א" not in r["reply"]:
+    failures.append("E2E HE הרבה כדורים does not lead with מד״א 101: %r"
+                    % r["reply"][:80])
+if "האם אתה חושב לפעול" in r["reply"]:
+    failures.append("E2E HE הרבה כדורים led with the suicide question")
 
 # A plan (not completed) keeps the FROZEN crisis response verbatim.
 uid = new_user()

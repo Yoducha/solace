@@ -185,8 +185,19 @@ OVERDOSE_RE = [
     )
 ] + [
     re.compile(p) for p in (
-        r"(?:בלעתי|לקחתי)[^.!?\n]{0,20}?(?:כל הכדורים|יותר מדי|בקבוק)",
+        # Completed ingestion, Hebrew: a past-tense swallowing verb
+        # + a quantity word + pills. "הרבה כדורים" (Tab's exact live
+        # case, Oct 26) was missed by the first version, which only
+        # knew כל הכדורים / יותר מדי / בקבוק. Ordinary medication
+        # talk stays safe: it needs the quantity word — "לקחתי את
+        # הכדורים שלי הבוקר" has none, and present-tense "אני לוקח
+        # הרבה כדורים כל יום" uses לוקח, not a past-tense verb.
+        r"(?:בלעתי|לקחתי|אכלתי)[^.!?\n]{0,20}?"
+        r"(?:כל הכדורים|כל הגלולות|הרבה כדורים|הרבה גלולות|"
+        r"המון כדורים|המון גלולות|מלא כדורים|מלא גלולות|"
+        r"יותר מדי|בקבוק|חופן)",
         r"מנת\s+יתר",
+        r"הרעלת\s+תרופות",
     )
 ]
 
