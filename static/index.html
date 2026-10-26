@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<meta name="description" content="A private AI companion for reflection and self-help. Not therapy, not a substitute for professional care.">
+<meta name="description" content="A private AI companion for reflection and self-help.">
 <title>Solace — A private AI companion for reflection and self-help</title>
 <style>
   :root {
@@ -143,6 +143,18 @@
      no scrolling to find Rehearse (Tab fix). */
   .cta-row { display: flex; gap: 10px; }
   .cta-row .btn { flex: 1 1 0; width: auto; padding: 16px 8px; font-size: 16px; }
+  /* Round 3: the first screen is one line + the two doors; the
+     reflection intake opens only after its door is chosen. */
+  #intake-fields { flex-direction: column; gap: 18px; }
+  #welcome .privacy-line { color: var(--muted); font-size: 13px; text-align: center; margin: -4px 0 0; }
+  .mic-cta { flex-basis: 100%; font-weight: 700; color: var(--ink); font-size: 13.5px; }
+  .rh-followup input[type="datetime-local"] {
+    width: 100%; border: 1px solid var(--line); border-radius: 12px;
+    padding: 12px; font-size: 16px; font-family: inherit;
+    background: var(--card); color: var(--ink); margin: 8px 0 10px;
+  }
+  .rh-followup .fu-row { display: flex; gap: 8px; }
+  .rh-followup .fu-row .btn { flex: 1 1 0; width: auto; padding: 12px 8px; font-size: 15px; }
   /* In chat, Rehearse is a real button, not a grey footer link. */
   .chat-actions { padding: 10px 14px 0; }
   .chat-actions .btn { padding: 13px; font-size: 16px; }
@@ -276,7 +288,7 @@
 
 <div id="topbar">
 <header>
-  <div class="brand">Solace<small>A private AI companion for reflection and self-help. Not therapy, not a substitute for professional care.</small></div>
+  <div class="brand">Solace<small>A private AI companion for reflection and self-help.</small></div>
   <div class="hdr-actions">
     <button id="new-chat" class="hdr-btn" title="Start a new conversation">↺ <span class="btn-label">New chat</span></button>
     <button id="voice-toggle" class="hdr-btn" title="Voice on/off">🔇 <span class="btn-label">Voice off</span></button>
@@ -297,40 +309,44 @@
 </div>
 
 <main>
-  <!-- First-session intake -->
+  <!-- First screen: one line + two doors (Tab round 3). The
+       reflection intake opens only when its door is chosen. -->
   <section id="welcome">
-    <h1>Welcome. I'm glad you're here.</h1>
     <p class="tagline">A private AI companion for reflection and self-help. Not therapy, not a substitute for professional care.</p>
-    <p class="audience">For anyone carrying stress, anxiety, or a heavy mind who wants a private place to sort out their thoughts — day or night, no judgment. Solace remembers key themes so you can pick up where you left off. See or delete them anytime.</p>
-    <p class="lead">This is a quiet space to talk through what's on your mind, at your own pace. Your chats are processed by an AI provider to generate replies. We never sell them, and you can delete everything anytime with Delete my data.</p>
 
     <div class="cta-row">
+      <button class="btn secondary" id="begin-rehearse" type="button">Practice a hard conversation</button>
       <button class="btn" id="begin">Start a reflection</button>
-      <button class="btn secondary" id="begin-rehearse" type="button">Rehearse a hard talk</button>
     </div>
+    <p class="privacy-line">We count usage anonymously — never what you write.</p>
 
-    <div>
-      <label class="q" for="name">What should I call you? <span style="color:var(--muted);font-weight:400">(optional)</span></label>
-      <input type="text" id="name" placeholder="Your first name" autocomplete="off">
-    </div>
+    <div id="intake-fields" style="display:none">
+      <p class="audience">For anyone carrying stress, anxiety, or a heavy mind who wants a private place to sort out their thoughts — day or night, no judgment. Solace remembers key themes so you can pick up where you left off. See or delete them anytime.</p>
+      <p class="lead">This is a quiet space to talk through what's on your mind, at your own pace. Your chats are processed by an AI provider to generate replies. We never sell them, and you can delete everything anytime with Delete my data.</p>
 
-    <div>
-      <label class="q">How are you feeling right now?</label>
-      <div class="chips" id="moods">
-        <button class="chip" data-m="Really struggling">Really struggling</button>
-        <button class="chip" data-m="Low">Low</button>
-        <button class="chip" data-m="Okay">Okay</button>
-        <button class="chip" data-m="Good">Good</button>
-        <button class="chip" data-m="Great">Great</button>
+      <div>
+        <label class="q" for="name">What should I call you? <span style="color:var(--muted);font-weight:400">(optional)</span></label>
+        <input type="text" id="name" placeholder="Your first name" autocomplete="off">
       </div>
-    </div>
 
-    <div>
-      <label class="q" for="concern">What's weighing on you most?</label>
-      <textarea id="concern" placeholder="Whatever comes to mind — there's no wrong answer."></textarea>
-    </div>
+      <div>
+        <label class="q">How are you feeling right now?</label>
+        <div class="chips" id="moods">
+          <button class="chip" data-m="Really struggling">Really struggling</button>
+          <button class="chip" data-m="Low">Low</button>
+          <button class="chip" data-m="Okay">Okay</button>
+          <button class="chip" data-m="Good">Good</button>
+          <button class="chip" data-m="Great">Great</button>
+        </div>
+      </div>
 
-    <p class="tiny">By continuing you agree to the <a href="/terms" target="_blank">Terms</a> and <a href="/privacy" target="_blank">Privacy Policy</a>, and you understand Solace is an AI self-help companion, not professional care.<br>If you're ever in crisis, call or text 988.</p>
+      <div>
+        <label class="q" for="concern">What's weighing on you most?</label>
+        <textarea id="concern" placeholder="Whatever comes to mind — there's no wrong answer."></textarea>
+      </div>
+
+      <p class="tiny">By continuing you agree to the <a href="/terms" target="_blank">Terms</a> and <a href="/privacy" target="_blank">Privacy Policy</a>, and you understand Solace is an AI self-help companion, not professional care.<br>If you're ever in crisis, call or text 988.</p>
+    </div>
   </section>
 
   <!-- Chat -->
@@ -404,6 +420,7 @@
         <button id="rh-send" type="button" data-rh="send">Send</button>
       </div>
       <div id="rh-voicebar">
+        <span id="rh-mic-cta" class="mic-cta"></span>
         <span id="rh-voice-privacy"></span>
         <button id="rh-voice-toggle" type="button" class="pv"></button>
         <span id="rh-voice-note" style="display:none"></span>
@@ -453,6 +470,7 @@ if (userId) {
   setUidCookie(userId);
 }
 let mood = '';
+let intakeShown = false;
 let voiceOn = false;
 // Language of the session's crisis ('en'/'he'), carried from the
 // server's chat/history state so the banner renders in the
@@ -514,6 +532,8 @@ document.getElementById('new-chat').addEventListener('click', () => {
   const beginBtn = document.getElementById('begin');
   beginBtn.disabled = false;
   beginBtn.textContent = 'Start a reflection';
+  intakeShown = false;
+  document.getElementById('intake-fields').style.display = 'none';
   document.getElementById('chat').style.display = 'none';
   document.getElementById('rehearse').style.display = 'none';
   rhState = null;
@@ -812,6 +832,15 @@ function showChat() {
 }
 
 document.getElementById('begin').addEventListener('click', async () => {
+  if (!intakeShown) {
+    // First tap on the door only opens the intake — the session
+    // itself starts on the next tap, once the person has seen it.
+    intakeShown = true;
+    document.getElementById('intake-fields').style.display = 'flex';
+    document.getElementById('begin').textContent = 'Begin reflection';
+    document.getElementById('name').focus();
+    return;
+  }
   const name = document.getElementById('name').value.trim();
   const concern = document.getElementById('concern').value.trim();
   const btn = document.getElementById('begin');
@@ -830,7 +859,7 @@ document.getElementById('begin').addEventListener('click', async () => {
     await sendChat(concern ? concern : "Hi, I'd like to talk.");
   } catch (e) {
     btn.disabled = false;
-    btn.textContent = 'Start a reflection';
+    btn.textContent = intakeShown ? 'Begin reflection' : 'Start a reflection';
     alert('Could not start your session — please check your connection and try again.');
   }
 });
@@ -873,6 +902,8 @@ async function doDeleteData() {
     const beginBtn = document.getElementById('begin');
     beginBtn.disabled = false;
     beginBtn.textContent = 'Start a reflection';
+    intakeShown = false;
+    document.getElementById('intake-fields').style.display = 'none';
     document.getElementById('chat').style.display = 'none';
     document.getElementById('rehearse').style.display = 'none';
     rhState = null;
@@ -972,7 +1003,11 @@ const RH = {
     youSaid: 'You said:', instead: 'Try saying this instead',
     delivery: 'How you said it',
     micTitle: 'Speak your line', listening: 'Listening…',
-    voicePrivacy: '🎙️ Voice practice: your speech is turned into text on your device. The audio itself is never sent or stored.',
+    micCta: 'Tap 🎤 and say it out loud.',
+    realTalkQ: "When's the real talk?", realTalkSave: 'Save', realTalkSkip: 'Skip',
+    realTalkSaved: "Got it — next time you're here after then, I'll ask how it went.",
+    realTalkPick: 'Pick a date and time, or tap Skip.',
+    voicePrivacy: 'Solace never receives or stores your audio — only the text of what you say.',
     voiceUnsupported: "Voice isn't available in this browser — typing works as always.",
     voiceNoHe: 'No Hebrew voice on this device — replies will show as text.',
     pvOn: '🔊 Partner voice on', pvOff: '🔇 Partner voice off',
@@ -1002,7 +1037,11 @@ const RH = {
     youSaid: 'אמרת:', instead: 'אפשר לנסות להגיד ככה',
     delivery: 'איך אמרת את זה',
     micTitle: 'אמור את המשפט', listening: 'מקשיב…',
-    voicePrivacy: '🎙️ תרגול בקול: הדיבור שלך הופך לטקסט במכשיר שלך. ההקלטה עצמה לעולם לא נשלחת ולא נשמרת.',
+    micCta: 'הקישו על 🎤 ואמרו את זה בקול.',
+    realTalkQ: 'מתי השיחה האמיתית?', realTalkSave: 'שמור', realTalkSkip: 'דלג',
+    realTalkSaved: 'קיבלתי — בפעם הבאה שתהיו כאן אחרי המועד, אשאל איך היה.',
+    realTalkPick: 'בחרו תאריך ושעה, או הקישו על דלג.',
+    voicePrivacy: 'Solace אף פעם לא מקבלת או שומרת את האודיו שלך — רק את הטקסט של מה שאתה אומר.',
     voiceUnsupported: 'הקול לא זמין בדפדפן הזה — הכתיבה עובדת כרגיל.',
     voiceNoHe: 'אין קול בעברית במכשיר הזה — התשובות יוצגו כטקסט.',
     pvOn: '🔊 קול הצד השני פעיל', pvOff: '🔇 קול הצד השני כבוי',
@@ -1102,7 +1141,11 @@ async function openRehearse() {
     setup: {person_name: '', relationship: '', topic: '', reactions: [], context: ''},
     returnTo: document.getElementById('chat').style.display === 'flex' ? 'chat' : 'welcome',
     // Voice Rehearse: measured spoken turns + partner-voice state.
-    voiceTurns: [], lastTurnEndAt: 0, partnerVoice: false,
+    // Partner voice is ON by default where speech synthesis exists
+    // (Tab round 3) — the toggle still turns it off, and nothing
+    // can sound before a user gesture unlocks audio.
+    voiceTurns: [], lastTurnEndAt: 0,
+    partnerVoice: ('speechSynthesis' in window),
   };
   document.getElementById('rh-cname').value = '';
   document.getElementById('rh-crel').value = '';
@@ -1171,13 +1214,24 @@ function rhBubble() {
 }
 
 // ---- Voice Rehearse ----
-// Speech in: the browser's own recognition (webkitSpeechRecognition
-// on iPhone Safari) turns the user's voice into text ON the device;
-// only the text is ever sent, through the exact same send path as a
-// typed line — so the pre-model crisis check sees every spoken line
-// identically. Speech out: speechSynthesis speaks the partner's
-// replies. No audio is uploaded or stored anywhere.
+// Speech in: the browser's speech recognition (webkitSpeechRecognition
+// on iPhone Safari) turns the user's voice into text. The phone's own
+// recognition service may process the audio — but Solace itself only
+// ever receives the transcript text, through the exact same send path
+// as a typed line, so the pre-model crisis check sees every spoken
+// line identically; Solace never receives or stores audio. Speech
+// out: speechSynthesis speaks the partner's replies.
 const RH_SR = window.SpeechRecognition || window.webkitSpeechRecognition || null;
+
+// Pace basis (Tab round 3): the speaking interval runs from speech
+// start (or recognition start when no speech-start event fires)
+// through speech end — NOT from the first recognized word, which
+// understated the interval and produced impossible speeds (388 wpm).
+function rhVoiceDurationMs(t) {
+  const end = Math.max(t.endAt || 0, t.lastResultAt || 0);
+  const start = t.speechStartAt || t.captureStartAt || t.firstResultAt || end;
+  return Math.max(0, Math.round(end - start));
+}
 let rhRec = null;
 
 function rhVoiceNote(text) {
@@ -1252,14 +1306,18 @@ function rhSetPartnerVoice(on) {
 function rhInitVoicebar() {
   const t = rhT();
   document.getElementById('rh-voice-privacy').textContent = t.voicePrivacy;
+  document.getElementById('rh-mic-cta').textContent = t.micCta;
   document.getElementById('rh-mic').title = t.micTitle;
   rhVoiceNote('');
   if (!RH_SR) {
     document.getElementById('rh-mic').style.display = 'none';
+    document.getElementById('rh-mic-cta').style.display = 'none';
     rhVoiceNote(t.voiceUnsupported);
   } else {
     document.getElementById('rh-mic').style.display = '';
+    document.getElementById('rh-mic-cta').style.display = '';
   }
+  if (rhState && !('speechSynthesis' in window)) rhState.partnerVoice = false;
   rhSetPartnerVoice(rhState ? rhState.partnerVoice : false);
 }
 
@@ -1280,7 +1338,10 @@ function rhMicTap() {
   const pauseBefore = rhState.lastTurnEndAt
     ? performance.now() - rhState.lastTurnEndAt : 0;
   let firstAt = 0, lastEvtAt = 0, longestGap = 0;
+  let captureStartAt = 0, speechStartAt = 0, speechEndAt = 0;
   let finalText = '', interimText = '', finished = false;
+  rec.onspeechstart = () => { speechStartAt = performance.now(); };
+  rec.onspeechend = () => { speechEndAt = performance.now(); };
   rec.onresult = e => {
     const now = performance.now();
     if (!firstAt) firstAt = now;
@@ -1305,7 +1366,13 @@ function rhMicTap() {
     if (!text || !rhState) return;
     const vt = {
       text: text,
-      speak_ms: Math.max(0, Math.round((lastEvtAt || firstAt) - (firstAt || lastEvtAt))),
+      // The speech/capture interval (speech start -> speech end),
+      // never the first-to-last-result span that read as 388 wpm.
+      speak_ms: rhVoiceDurationMs({
+        captureStartAt, speechStartAt,
+        firstResultAt: firstAt, lastResultAt: lastEvtAt,
+        endAt: speechEndAt || performance.now(),
+      }),
       pause_before_ms: Math.round(pauseBefore),
       longest_pause_ms: Math.round(longestGap),
     };
@@ -1316,6 +1383,7 @@ function rhMicTap() {
   rhRec = rec;
   mic.classList.add('listening');
   inp.placeholder = rhT().listening;
+  captureStartAt = performance.now();
   try { rec.start(); } catch (e) { rhRec = null; mic.classList.remove('listening'); }
 }
 
@@ -1434,6 +1502,9 @@ async function rhLaunch() {
 
 async function rhBegin() {
   if (!rhState || rhState.busy) return;
+  // The Start tap is the user gesture that may unlock partner-voice
+  // audio on iOS — prime it here, before the async launch.
+  if (rhState.partnerVoice) rhUnlockAudio();
   rhState.setup.topic = document.getElementById('rh-topic').value.trim();
   rhState.setup.context = document.getElementById('rh-context').value.trim();
   if (/[\u0590-\u05FF]/.test(rhState.setup.topic + ' ' + rhState.setup.context)) {
@@ -1465,6 +1536,57 @@ async function rhDoSend() {
   if (!text) return;
   inp.value = '';
   await rhUserLine(text, null);
+}
+
+// Real-talk follow-up (Tab round 3): after the coaching, ask when
+// the real talk is. Save stores only the person + the time server-
+// side; Skip stores nothing, and no follow-up is ever invented.
+function rhRenderFollowup(body) {
+  if (!rhState || !rhState.id) return;
+  const t = rhT();
+  const wrap = document.createElement('div');
+  wrap.className = 'debrief-block rh-followup';
+  const q = document.createElement('p');
+  q.textContent = t.realTalkQ;
+  wrap.appendChild(q);
+  const input = document.createElement('input');
+  input.type = 'datetime-local';
+  input.setAttribute('aria-label', t.realTalkQ);
+  wrap.appendChild(input);
+  const row = document.createElement('div');
+  row.className = 'fu-row';
+  const save = document.createElement('button');
+  save.type = 'button';
+  save.className = 'btn';
+  save.textContent = t.realTalkSave;
+  save.addEventListener('click', async () => {
+    if (!input.value) { alert(t.realTalkPick); return; }
+    save.disabled = true;
+    try {
+      const res = await api('/api/rehearse/followup', {
+        user_id: userId, rehearsal_id: rhState.id,
+        due_at: new Date(input.value).toISOString(),
+        person_display: rhState.display, lang: rhState.lang,
+      });
+      if (!res.ok) throw new Error('followup failed');
+      wrap.innerHTML = '';
+      const done = document.createElement('p');
+      done.textContent = t.realTalkSaved;
+      wrap.appendChild(done);
+    } catch (e) {
+      save.disabled = false;
+      alert(t.errConn);
+    }
+  });
+  const skip = document.createElement('button');
+  skip.type = 'button';
+  skip.className = 'btn ghost';
+  skip.textContent = t.realTalkSkip;
+  skip.addEventListener('click', () => wrap.remove());
+  row.appendChild(save);
+  row.appendChild(skip);
+  wrap.appendChild(row);
+  body.appendChild(wrap);
 }
 
 function rhRenderDebrief(d) {
@@ -1508,7 +1630,19 @@ function rhRenderDebrief(d) {
   }
   if (d.say_instead && d.say_instead.length) listBlock(t.instead, d.say_instead);
   if (d.delivery && d.delivery.length) listBlock(t.delivery, d.delivery);
+  if (d.readiness) {
+    const p = document.createElement('p');
+    p.className = 'lead';
+    p.style.color = 'var(--muted)';
+    p.style.lineHeight = '1.6';
+    p.textContent = d.readiness;
+    body.appendChild(p);
+  }
+  // After the coaching: "When's the real talk?" (Save or Skip).
+  rhRenderFollowup(body);
   // "Did this help?" — one vote per session, counted anonymously.
+  // Round 3: this row is the VERY BOTTOM of the coaching output,
+  // appended after readiness and the follow-up prompt.
   try {
     if (!sessionStorage.getItem('solace_voted_rh')) {
       const row = document.createElement('div');
@@ -1533,14 +1667,6 @@ function rhRenderDebrief(d) {
       body.appendChild(row);
     }
   } catch (e) { /* votes are optional garnish — never break the debrief */ }
-  if (d.readiness) {
-    const p = document.createElement('p');
-    p.className = 'lead';
-    p.style.color = 'var(--muted)';
-    p.style.lineHeight = '1.6';
-    p.textContent = d.readiness;
-    body.appendChild(p);
-  }
 }
 
 async function rhEnd() {
@@ -1686,12 +1812,22 @@ document.getElementById('rh-done').addEventListener('click', () => {
         else renderRehearsalCard(e.rec);
       });
       if (h.crisis || h.banner) showBanner();
+      // Real-talk follow-up first: a saved "when's the real talk?"
+      // that has now passed gets its one opener, ahead of the
+      // generic continuity greeting (the server marks it asked).
+      let followupShown = false;
+      if (!h.crisis) {
+        try {
+          const f = await api('/api/rehearse/followup/due', {user_id: userId});
+          if (f && f.greeting) { addMsg(f.greeting, 'ai'); followupShown = true; }
+        } catch (e) { /* no follow-up — normal flow */ }
+      }
       // Continuity opener: if the last message is hours old, Solace
       // speaks first with one line about last time (the server
       // decides — never in crisis mode, never twice per return).
       const msgs = h.messages || [];
       const lastMsg = msgs[msgs.length - 1];
-      if (lastMsg && lastMsg.created_at && !h.crisis) {
+      if (!followupShown && lastMsg && lastMsg.created_at && !h.crisis) {
         const lastTs = Date.parse(lastMsg.created_at.replace(' ', 'T') + 'Z');
         if (!isNaN(lastTs) && Date.now() - lastTs >= 3 * 3600 * 1000) {
           try {

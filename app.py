@@ -371,6 +371,14 @@ def init_db():
                 created_at TEXT DEFAULT (datetime('now')),
                 updated_at TEXT DEFAULT (datetime('now'))
             );
+            CREATE TABLE IF NOT EXISTS real_talk_followups (
+                user_id TEXT PRIMARY KEY,
+                person_display TEXT NOT NULL DEFAULT '',
+                lang TEXT NOT NULL DEFAULT 'en',
+                due_at TEXT NOT NULL,
+                asked INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT DEFAULT (datetime('now'))
+            );
             """
         )
         # Migration: persistent crisis-mode latch per user (Solace Fix #1).
@@ -561,6 +569,14 @@ def conversation_is_hebrew(hist_rows, msg):
         return True
     user_msgs = [r["content"] for r in hist_rows if r["role"] == "user"]
     return any(has_hebrew(c) for c in user_msgs[-3:])
+
+
+def message_is_hebrew(msg):
+    """Language of THIS message only. Crisis routing uses this —
+    never conversation history — so an English crisis message right
+    after a Hebrew one gets the English fixed reply, banner and 988,
+    and vice versa (Tab round 3)."""
+    return has_hebrew(msg)
 
 
 def crisis_resource_line(hebrew, reply):
@@ -1141,7 +1157,13 @@ async def lifespan(app):
     yield
 
 
-app = FastAPI(title="Solace", lifespan=lifespan)
+app = FastAPI(
+    title="Solace",
+    lifespan=lifespan,
+    docs_url=None,
+    redoc_url=None,
+    openapi_url=None,
+)
 
 
 @app.post("/api/profile")
@@ -1258,6 +1280,12 @@ def _prepare_turn(uid, msg):
     # keyword layer first, then the classifier fail-safe.
     hebrew = conversation_is_hebrew(hist, msg)
     hotline = "1201" if hebrew else "988"
+    # Crisis safety language is per-message, independent of history:
+    # the fixed reply, the banner and latched follow-up safety text
+    # all follow the language of the message that triggered them.
+    safety_hebrew = message_is_hebrew(msg)
+    safety_lang = "he" if safety_hebrew else "en"
+    safety_hotline = "1201" if safety_hebrew else "988"
     kw_risk = detect_crisis_keywords(msg)
     info_q = (not kw_risk) and is_informational_word_question(msg)
     if kw_risk:
@@ -1271,10 +1299,12 @@ def _prepare_turn(uid, msg):
     in_crisis_mode = bool(profile.get("crisis_mode"))
     stepdown = bool(profile.get("crisis_stepdown"))
     banner = bool(profile.get("crisis_banner"))
-    # Language of the session's crisis, for the banner. Recorded at
-    # latch time; a fresh risk signal in a new language updates it,
-    # but follow-ups and retractions keep the crisis's own language.
+    # Banner language follows the current message whenever a crisis
+    # is active or a fresh signal arrives; the stored value is only
+    # the fallback for ordinary turns with the banner still up.
     banner_lang = profile.get("crisis_lang") or "en"
+    if in_crisis_mode or banner:
+        banner_lang = safety_lang
     # Explicit retraction with no active risk signal is the ONLY exit
     # path from crisis mode — and it is a two-step step-down now
     # (gentle check-in first, one calm exchange after), never an
@@ -1299,6 +1329,8 @@ def _prepare_turn(uid, msg):
         "uid": uid, "profile": profile, "summary": summary,
         "summary_date": summary_date,
         "messages": messages, "hebrew": hebrew, "hotline": hotline,
+        "safety_hebrew": safety_hebrew, "safety_lang": safety_lang,
+        "safety_hotline": safety_hotline,
         "banner": banner, "banner_lang": banner_lang,
         "user_count": user_count, "retracted": retracted,
         "returning": returning, "fallback_text": "",
@@ -1308,14 +1340,15 @@ def _prepare_turn(uid, msg):
     # on, step-down reset, banner on for the rest of the session. Fully
     # Hebrew for Hebrew conversations (re-test fix #8).
     if risk:
-        banner_lang = "he" if hebrew else "en"
+        banner_lang = safety_lang
         _set_user_state(uid, crisis_mode=True, stepdown_v=False,
                         banner_v=True, lang_v=banner_lang)
-        base = FIXED_CRISIS_RESPONSE_HE if hebrew else FIXED_CRISIS_RESPONSE
-        reply = base + crisis_resource_line(hebrew, base)
+        base = (FIXED_CRISIS_RESPONSE_HE if safety_hebrew
+                else FIXED_CRISIS_RESPONSE)
+        reply = base + crisis_resource_line(safety_hebrew, base)
         _save_assistant_msg(uid, reply)
         return ctx, ("final", {"reply": reply, "crisis": True,
-                               "hotline": hotline, "banner": True,
+                               "hotline": safety_hotline, "banner": True,
                                "banner_lang": banner_lang})
 
     # Clearly informational word question (and not in crisis mode):
@@ -1333,22 +1366,30 @@ def _prepare_turn(uid, msg):
             # exchange completes the step-down: normal conversation
             # resumes, but the banner flag stays on for the rest of
             # the session.
-            _set_user_state(uid, crisis_mode=False, stepdown_v=False)
+            _set_user_state(uid, crisis_mode=False, stepdown_v=False,
+                            lang_v=safety_lang)
+            ctx["banner_lang"] = safety_lang
             # fall through to the normal flow below
         elif retracted:
             # First walk-back: do NOT unlatch. One gentle check-in,
-            # no relief tone, still in crisis mode, banner stays.
-            _set_user_state(uid, stepdown_v=True)
+            # no relief tone, still in crisis mode, banner stays —
+            # all in THIS message's language.
+            _set_user_state(uid, stepdown_v=True, lang_v=safety_lang)
             reply = (
-                RETRACTION_CHECKIN_RESPONSE_HE if hebrew
+                RETRACTION_CHECKIN_RESPONSE_HE if safety_hebrew
                 else RETRACTION_CHECKIN_RESPONSE
             )
-            reply += crisis_resource_line(hebrew, reply)
+            reply += crisis_resource_line(safety_hebrew, reply)
             _save_assistant_msg(uid, reply)
             return ctx, ("final", {"reply": reply, "crisis": True,
-                                   "hotline": hotline, "banner": True,
-                                   "banner_lang": banner_lang})
+                                   "hotline": safety_hotline,
+                                   "banner": True,
+                                   "banner_lang": safety_lang})
         else:
+            # Latched follow-up: the safety framing follows this
+            # message's language, not the original crisis's.
+            _set_user_state(uid, lang_v=safety_lang)
+            ctx["banner_lang"] = safety_lang
             system = CRISIS_SYSTEM_PROMPT
             if profile.get("name"):
                 system += "\n\nThe person's name is %s." % profile["name"]
@@ -1356,7 +1397,7 @@ def _prepare_turn(uid, msg):
                 "אני עדיין כאן איתך. אתה בטוח עכשיו? בישראל אפשר "
                 "להתקשר לער״ן במספר 1201 בכל שעה. בארה״ב אפשר "
                 "להתקשר או לשלוח הודעה ל־988, או לשלוח HOME ל־741741."
-                if hebrew else
+                if safety_hebrew else
                 "I'm still here with you. Are you safe right now? "
                 "Please reach out — call or text 988 any time, or text "
                 "HOME to 741741."
@@ -1381,6 +1422,11 @@ def _finish_model_turn(ctx, mode, reply, background):
     hotline = ctx["hotline"]
     banner = ctx["banner"]
     banner_lang = ctx["banner_lang"]
+    # Safety framing (resource line, banner, hotline) always follows
+    # the language of the message that prompted this turn.
+    safety_hebrew = ctx.get("safety_hebrew", hebrew)
+    safety_lang = ctx.get("safety_lang", banner_lang)
+    safety_hotline = ctx.get("safety_hotline", hotline)
 
     if mode == "info":
         if reply.startswith("[CRISIS]"):
@@ -1392,10 +1438,11 @@ def _finish_model_turn(ctx, mode, reply, background):
     if mode == "crisis":
         if reply.startswith("[CRISIS]"):
             reply = reply[len("[CRISIS]"):].strip()
-        reply += crisis_resource_line(hebrew, reply)
+        reply += crisis_resource_line(safety_hebrew, reply)
         _save_assistant_msg(uid, reply)
-        return {"reply": reply, "crisis": True, "hotline": hotline,
-                "banner": True, "banner_lang": banner_lang}
+        return {"reply": reply, "crisis": True,
+                "hotline": safety_hotline,
+                "banner": True, "banner_lang": safety_lang}
 
     # normal
     crisis = False
@@ -1404,7 +1451,7 @@ def _finish_model_turn(ctx, mode, reply, background):
         if not ctx["retracted"]:
             crisis = True
             banner = True
-            banner_lang = "he" if hebrew else "en"
+            banner_lang = safety_lang
             _set_user_state(uid, crisis_mode=True, stepdown_v=False,
                             banner_v=True, lang_v=banner_lang)
     # Never end two replies in a row with the same closing line
@@ -1420,7 +1467,7 @@ def _finish_model_turn(ctx, mode, reply, background):
     if prow:
         reply = _drop_repeated_closer(reply, prow["content"])
     if crisis:
-        reply += crisis_resource_line(hebrew, reply)
+        reply += crisis_resource_line(safety_hebrew, reply)
     _save_assistant_msg(uid, reply)
     # Memory note + reviewable items: build one early (3rd user
     # message) so a returning visitor is actually remembered, then
@@ -1428,7 +1475,8 @@ def _finish_model_turn(ctx, mode, reply, background):
     # which short trial conversations never reached.)
     if ctx["user_count"] == 3 or ctx["user_count"] % 5 == 0:
         background.add_task(update_summary, uid)
-    return {"reply": reply, "crisis": crisis, "hotline": hotline,
+    return {"reply": reply, "crisis": crisis,
+            "hotline": safety_hotline if crisis else hotline,
             "banner": banner, "banner_lang": banner_lang}
 
 
@@ -1720,7 +1768,7 @@ Rules:
     - "full": you may say they are ready for the real talk.
     - "partial": name the ground they won and the one thing still left to get.
     - "none": NEVER say the user is ready or prepared, and never imply it went well — they won no concession. Close with what they DID hold on to (they stayed calm, they said the hard sentence out loud) plus ONE concrete target for next time, in this shape: "<what they held>; next time get one concrete yes."
-- DELIVERY (only when the request includes a "DELIVERY (measured)" block): add one more key, "delivery": an array of 2-3 short strings about HOW the user said it — pace, pauses, filler words, steadiness — using ONLY the measured facts in that block. Never invent a number or a quote; where the block gives an example line, quote it exactly. If there is no DELIVERY block in the request, do not include a "delivery" key at all.
+- DELIVERY (only when the request includes a "DELIVERY (measured)" block): add one more key, "delivery": an array of 2-3 short strings about HOW the user said it — pace, pauses, filler words, steadiness — using ONLY the measured facts in that block. Never invent a number or a quote; where the block gives an example line, quote it exactly. If the block reports long pauses (over 2 seconds), you MUST mention them, with the measured count. If there is no DELIVERY block in the request, do not include a "delivery" key at all.
 - Match the user's language: if the conversation is in Hebrew, every string in the JSON is in Hebrew."""
 
 
@@ -1954,20 +2002,10 @@ def _persona_model_messages(rec, new_user_msg=None):
 
 
 def _rehearsal_hebrew(rec, msg):
-    if has_hebrew(msg):
-        return True
-    users = [t.get("content", "") for t in _load_transcript(rec)
-             if t.get("role") == "user"]
-    if any(has_hebrew(c) for c in users[-3:]):
-        return True
-    with db_lock:
-        c = _conn()
-        rows = c.execute(
-            "SELECT role, content FROM messages WHERE user_id=? ORDER BY id DESC LIMIT 20",
-            (rec["user_id"],),
-        ).fetchall()
-        c.close()
-    return conversation_is_hebrew(rows, msg)
+    """Crisis-exit language for a rehearsal line: the language of
+    THIS line only, never the rehearsal's or chat's history — the
+    same per-message rule as normal chat (Tab round 3)."""
+    return message_is_hebrew(msg)
 
 
 def _rehearsal_crisis_exit(rec, saved_user_text, hebrew):
@@ -2025,8 +2063,10 @@ class RehearseDebriefIn(BaseModel):
     user_id: str
     rehearsal_id: int
     # Voice Rehearse: client-measured spoken turns ({text, speak_ms,
-    # pause_before_ms, longest_pause_ms}). Text only — audio never
-    # leaves the device. Empty for typed-only rehearsals.
+    # pause_before_ms, longest_pause_ms}). Solace receives only the
+    # transcript text and timings — never audio. (The phone's own
+    # speech-recognition service may process the audio separately.)
+    # Empty for typed-only rehearsals.
     voice_turns: list = []
 
 
@@ -2189,8 +2229,10 @@ def _fallback_debrief(rec, user_lines):
 # Delivery coaching (Tab spec): HOW the user said it, measured in
 # code from the spoken turns — never invented by the model. The
 # browser's speech recognition produces each spoken line's transcript
-# plus timings (speaking span, pause before it, longest mid-line
-# pause); the client sends those with the debrief request and the
+# plus timings (the speech/capture interval from recognition or
+# speech start through speech end — not just first-to-last result —
+# pause before it, longest mid-line pause); the client sends those
+# with the debrief request and the
 # numbers below are computed here. Typed-only rehearsals send no
 # voice turns and get no delivery section — no fake data.
 
@@ -2315,6 +2357,19 @@ def _delivery_facts(voice_turns, user_lines):
         band = "slow" if wpm < 110 else ("fast" if wpm > 170 else "natural")
     long_before = [m for m in matched if m["pause_before_ms"] >= 3000]
     mid_pauses = [m for m in matched if m["longest_pause_ms"] >= 2000]
+    # Combined over-~2s pauses (before a line or mid-line): the
+    # coaching must name these explicitly when they happened.
+    long_pause_events = 0
+    longest_pause_over_2_s = 0.0
+    long_pause_examples = []
+    for m in matched:
+        for key in ("pause_before_ms", "longest_pause_ms"):
+            if m[key] >= 2000:
+                long_pause_events += 1
+                longest_pause_over_2_s = max(
+                    longest_pause_over_2_s, m[key] / 1000.0)
+                if m["line"] not in long_pause_examples:
+                    long_pause_examples.append(m["line"])
     fillers_total = 0
     filler_detail = {}
     filler_line = ""
@@ -2347,6 +2402,9 @@ def _delivery_facts(voice_turns, user_lines):
         "longest_mid_pause_s": (
             round(max(m["longest_pause_ms"] for m in mid_pauses) / 1000.0, 1)
             if mid_pauses else 0),
+        "long_pause_events": long_pause_events,
+        "longest_pause_over_2_s": round(longest_pause_over_2_s, 1),
+        "long_pause_examples": long_pause_examples[:2],
         "fillers_total": fillers_total,
         "fillers_detail": detail_top,
         "filler_line": filler_line if filler_line_n else "",
@@ -2368,16 +2426,14 @@ def _delivery_facts_block(f):
             % (f["wpm"], {"slow": "on the slower side",
                           "natural": "a natural, conversational pace",
                           "fast": "fast"}[f["pace_band"]]))
-    if f["long_pauses_before"]:
+    if f.get("long_pause_events"):
         lines.append(
-            "- Long pauses (3 seconds or more) before starting a "
-            "line: %d; the longest was about %s seconds."
-            % (f["long_pauses_before"], f["longest_pause_before_s"]))
-    if f["mid_pauses"]:
-        lines.append(
-            "- Long pauses mid-line (2 seconds or more): %d; the "
-            "longest was about %s seconds."
-            % (f["mid_pauses"], f["longest_mid_pause_s"]))
+            "- Long pauses (over 2 seconds, before or during a "
+            "line): %d; the longest was about %s seconds."
+            % (f["long_pause_events"], f["longest_pause_over_2_s"]))
+        for q in f.get("long_pause_examples", []):
+            lines.append(
+                '- A line with a long pause, exactly: "%s"' % q)
     if f["fillers_total"]:
         det = ", ".join("%s ×%d" % kv for kv in f["fillers_detail"])
         lines.append("- Filler words: %d total (%s)." % (f["fillers_total"], det))
@@ -2413,6 +2469,11 @@ def _delivery_notes_code(f, hebrew):
                         f["pace_band"]]
             notes.append("הקצב שלך היה בערך %d מילים לדקה — %s."
                          % (f["wpm"], band))
+        if f.get("long_pause_events"):
+            notes.append(
+                "היו %d הפסקות של יותר מ־2 שניות (הארוכה בערך %s שניות). "
+                "הפסקה יכולה להישמע כמו איסוף מחשבות, לא כמו חולשה."
+                % (f["long_pause_events"], f["longest_pause_over_2_s"]))
         if f["fillers_total"]:
             notes.append(
                 "מילות מילוי: %d בסך הכול. הן לא הורסות כלום — אבל משפט "
@@ -2434,6 +2495,12 @@ def _delivery_notes_code(f, hebrew):
                     f["pace_band"]]
         notes.append("Your pace averaged about %d words per minute — %s."
                      % (f["wpm"], band))
+    if f.get("long_pause_events"):
+        notes.append("There were %d pauses over 2 seconds (longest "
+                     "about %s seconds). A pause can read as "
+                     "collecting your thoughts, not weakness."
+                     % (f["long_pause_events"],
+                        f["longest_pause_over_2_s"]))
     if f["fillers_total"]:
         det = ", ".join("%s ×%d" % kv for kv in f["fillers_detail"])
         notes.append("Filler words: %d total (%s). One clean sentence "
@@ -2591,6 +2658,145 @@ def rehearse_debrief(body: RehearseDebriefIn, background: BackgroundTasks):
             "person_label": label, "person_display": _persona_display(rec)}
 
 
+# ------------------------------------------ Real-talk follow-up ----
+# After a debrief, the user may say when the REAL talk is. Only the
+# minimal context is kept — who it is with (a display phrase) and
+# when — never the topic or any transcript text. On the next visit
+# after that time, Solace opens by asking how it went, once.
+
+class RehearseFollowupIn(BaseModel):
+    user_id: str
+    rehearsal_id: int
+    due_at: str
+    person_display: str = ""
+    lang: str = "en"
+
+
+class FollowupDueIn(BaseModel):
+    user_id: str
+
+
+def _followup_person_display(rec, lang, requested=""):
+    ptype = rec["person_type"]
+    if lang == "he":
+        known = {
+            "boss": "הבוס שלך", "partner": "בן/בת הזוג שלך",
+            "dad": "אבא", "mom": "אמא", "friend": "החבר/ה שלך",
+        }
+    else:
+        known = {
+            "boss": "your boss", "partner": "your partner",
+            "dad": "Dad", "mom": "Mom", "friend": "your friend",
+        }
+    if ptype in known:
+        return known[ptype]
+    req = re.sub(r"\s+", " ", (requested or "")).strip()[:80]
+    if req:
+        return req
+    name = (rec["person_name"] or "").strip()
+    if name:
+        return name
+    rel = (rec["relationship"] or "").strip()
+    if rel:
+        return ("their %s" % rel) if lang != "he" else rel
+    return "them" if lang != "he" else "הם"
+
+
+def _parse_due_at(value):
+    """Parse an ISO date/time into the DB's UTC-naive convention.
+    Naive values are read as UTC (the client sends UTC ISO)."""
+    raw = (value or "").strip()
+    if raw.endswith("Z"):
+        raw = raw[:-1] + "+00:00"
+    dt = datetime.fromisoformat(raw)
+    if dt.tzinfo is not None:
+        dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
+    return dt
+
+
+@app.post("/api/rehearse/followup")
+def rehearse_followup(body: RehearseFollowupIn):
+    """Save when the real talk is, for one debriefed rehearsal.
+    Skipping is a client-side no-call — nothing is stored, and no
+    follow-up is ever fabricated without a person AND a time."""
+    uid = (body.user_id or "").strip()
+    rec = _get_rehearsal(uid, body.rehearsal_id) if uid else None
+    if not rec or rec["state"] != "debriefed":
+        return {"ok": False, "error": "not_debriefed"}
+    try:
+        due = _parse_due_at(body.due_at)
+    except Exception:
+        return {"ok": False, "error": "bad_time"}
+    lang = "he" if (body.lang or "").lower().startswith("he") else "en"
+    display = _followup_person_display(rec, lang, body.person_display)
+    if not display:
+        return {"ok": False, "error": "no_person"}
+    with db_lock:
+        conn = _conn()
+        conn.execute(
+            "INSERT INTO real_talk_followups (user_id, person_display,"
+            " lang, due_at, asked) VALUES (?,?,?,?,0)"
+            " ON CONFLICT(user_id) DO UPDATE SET"
+            " person_display=excluded.person_display,"
+            " lang=excluded.lang, due_at=excluded.due_at, asked=0,"
+            " created_at=datetime('now')",
+            (uid, display, lang, due.strftime("%Y-%m-%d %H:%M:%S")),
+        )
+        conn.commit()
+        conn.close()
+    return {"ok": True, "due_at": due.strftime("%Y-%m-%d %H:%M:%S"),
+            "person_display": display}
+
+
+@app.post("/api/rehearse/followup/due")
+def rehearse_followup_due(body: FollowupDueIn):
+    """The next-visit opener: if a saved real-talk time has passed,
+    ask how it went — exactly once (marked asked as it is returned).
+    Never while crisis mode is latched."""
+    uid = (body.user_id or "").strip()
+    if not uid:
+        return {"greeting": None}
+    with db_lock:
+        conn = _conn()
+        u = conn.execute(
+            "SELECT crisis_mode FROM users WHERE id=?", (uid,)).fetchone()
+        if not u or u["crisis_mode"]:
+            conn.close()
+            return {"greeting": None}
+        row = conn.execute(
+            "SELECT person_display, lang, due_at FROM"
+            " real_talk_followups WHERE user_id=? AND asked=0",
+            (uid,),
+        ).fetchone()
+        if not row:
+            conn.close()
+            return {"greeting": None}
+        try:
+            due = _parse_due_at(row["due_at"])
+        except Exception:
+            conn.close()
+            return {"greeting": None}
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        if due > now:
+            conn.close()
+            return {"greeting": None}
+        cur = conn.execute(
+            "UPDATE real_talk_followups SET asked=1"
+            " WHERE user_id=? AND asked=0", (uid,))
+        conn.commit()
+        changed = cur.rowcount
+        conn.close()
+    if not changed:
+        return {"greeting": None}
+    person = row["person_display"]
+    if row["lang"] == "he":
+        line = "איך הייתה השיחה עם %s?" % person
+    else:
+        line = "How did it go with %s?" % person
+    _save_assistant_msg(uid, line)
+    return {"greeting": line, "person_display": person}
+
+
 @app.post("/api/delete")
 def delete_data(body: DeleteIn, response: Response):
     """Delete ALL data stored for a user_id (re-test fix #3): profile,
@@ -2607,6 +2813,8 @@ def delete_data(body: DeleteIn, response: Response):
         conn.execute("DELETE FROM memory_items WHERE user_id=?", (uid,))
         conn.execute("DELETE FROM memory_tombstones WHERE user_id=?", (uid,))
         conn.execute("DELETE FROM rehearsals WHERE user_id=?", (uid,))
+        conn.execute(
+            "DELETE FROM real_talk_followups WHERE user_id=?", (uid,))
         conn.execute("DELETE FROM users WHERE id=?", (uid,))
         conn.commit()
         conn.close()
