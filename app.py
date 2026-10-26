@@ -293,6 +293,61 @@ def spouse_crisis_response(spouse, hebrew):
         "I'm here with you." % (who, pronoun)
     )
 
+# Identity questions (Tab ruling, Oct 26): "Is this therapy?" and
+# "Are you a psychologist?" must get a PLAIN "No" — deterministically,
+# not a model essay that then has to survive the word filter. The
+# patterns are anchored to a message that IS the identity question
+# (a risk-bearing message that merely mentions these words keeps
+# the classifier/crisis paths, which run before this one), and the
+# route is disabled while crisis mode is latched.
+_IDENTITY_Q_RES = [
+    ("therapy", re.compile(
+        r"^\s*(?:is|isn'?t)\s+(?:this|that|solace)\s+"
+        r"(?:just\s+|really\s+|real\s+)?"
+        r"(?:therapy|counseling|counselling)\b", re.I)),
+    ("therapy", re.compile(
+        r"^\s*(?:האם\s+)?(?:זה|זו)\s+(?:באמת\s+)?טיפול\b")),
+    ("professional", re.compile(
+        r"^\s*are\s+you\s+(?:a\s+|an\s+|my\s+)?"
+        r"(?:real\s+|licensed\s+)?"
+        r"(?:therapist|psychologist|counselor|counsellor|"
+        r"psychiatrist|shrink)\b", re.I)),
+    ("professional", re.compile(
+        r"^\s*(?:האם\s+)?(?:אתה|את|אתם)\s+"
+        r"(?:פסיכולוג|פסיכולוגית|פסיכולוגים|מטפל|מטפלת)\b")),
+]
+
+IDENTITY_ANSWERS = {
+    ("therapy", False): (
+        "No. Not therapy — I'm Solace, an AI companion for "
+        "reflection and self-help, here to talk things through "
+        "with you."
+    ),
+    ("therapy", True): (
+        "לא — זה לא טיפול. אני סולאס, מלווה בינה מלאכותית "
+        "להרהור ולתמיכה עצמית, כאן כדי לדבר איתך על מה שעובר עליך."
+    ),
+    ("professional", False): (
+        "No. I'm Solace — an AI companion for reflection and "
+        "self-help, not a licensed professional."
+    ),
+    ("professional", True): (
+        "לא. אני סולאס — מלווה בינה מלאכותית להרהור ולתמיכה "
+        "עצמית, לא איש מקצוע מורשה."
+    ),
+}
+
+
+def detect_identity_question(text):
+    """'therapy' / 'professional' / None — the message IS a direct
+    question about what Solace is (see _IDENTITY_Q_RES)."""
+    t = text or ""
+    for kind, rx in _IDENTITY_Q_RES:
+        if rx.search(t):
+            return kind
+    return None
+
+
 # Gentle check-in sent ONCE when a person walks back a crisis statement
 # while crisis mode is latched (re-test fix #2). A retraction no longer
 # switches safety mode off instantly: this check-in goes out, crisis
@@ -462,10 +517,11 @@ SYSTEM_PROMPT = """You are Solace, a warm and skilled AI self-help companion for
 HARD LIMITS (never break these):
 - Never tell someone what condition they have. Never say or imply "you have depression / anxiety / PTSD / etc." Use describing language only, never labels: "a working understanding," "it sounds like," "what I'm hearing is."
 - Never claim to be a licensed professional or a human being.
-- IDENTITY LANGUAGE (Tab persona test): never describe yourself, or what happens in this conversation, as therapy, treatment, or counseling, and never as the work of a therapist, psychologist, or counselor — in English, Hebrew, or any language. You are an AI self-help companion for reflection and support. Never say you diagnose, heal, or cure. (Encouraging the person to see a real professional is different, and is fine.)
+- IDENTITY LANGUAGE (Tab persona test): never describe yourself, or what happens in this conversation, as therapy, treatment, or counseling, and never as the work of a therapist, psychologist, or counselor — in English, Hebrew, or any language. You are an AI self-help companion for reflection and support. Never say you diagnose, heal, or cure.
+- REFERRAL WORDING (Tab ruling): encouraging outside support is welcome, but ALWAYS write it with exactly this phrasing — "a doctor or a licensed mental health professional" (in Hebrew: "רופא או איש מקצוע מורשה בתחום בריאות הנפש"). Never use any other label for them; other wordings are removed from your replies before they are shown.
 - PRIVACY REASSURANCE (Tab ruling): if the person worries about who might find out what they share, reassure them with exactly this and nothing stronger: "Your chats aren't shared with other people or used to advertise to you. See the privacy page for details." Never promise that no one will ever see or read what they share.
 - This is not emergency care. If the person is in crisis, follow the crisis protocol below.
-- Gently encourage real professional help for serious or persistent struggles.
+- Gently encourage real help beyond Solace for serious or persistent struggles — a doctor or a licensed mental health professional (Hebrew: רופא או איש מקצוע מורשה בתחום בריאות הנפש).
 
 FIRST-CONVERSATION INTAKE (when this is a new person — no summary of earlier conversations exists):
 You have been given their name, current mood, and what's weighing on them (see "About this person"). Do NOT re-ask what you already know.
@@ -1751,6 +1807,18 @@ def _prepare_turn(uid, msg):
         _save_assistant_msg(uid, reply)
         return ctx, ("final", {"reply": reply, "crisis": True,
                                "hotline": safety_hotline, "banner": True,
+                               "banner_lang": banner_lang})
+
+    # Direct identity question ("Is this therapy?" / "Are you a
+    # psychologist?" / Hebrew equivalents) and not in crisis mode:
+    # a plain deterministic "No" (Tab ruling) — no model call, so
+    # nothing for the word filter to mangle.
+    identity_q = detect_identity_question(msg)
+    if identity_q and not in_crisis_mode:
+        reply = IDENTITY_ANSWERS[(identity_q, safety_hebrew)]
+        _save_assistant_msg(uid, reply)
+        return ctx, ("final", {"reply": reply, "crisis": False,
+                               "hotline": hotline, "banner": banner,
                                "banner_lang": banner_lang})
 
     # Clearly informational word question (and not in crisis mode):
