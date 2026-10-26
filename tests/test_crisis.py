@@ -4,6 +4,7 @@ Run: CRISIS_CLASSIFIER=off .venv/bin/python tests/test_crisis.py
 (Classifier disabled for the deterministic keyword-layer tests; the
 end-to-end section stubs the model call.)
 """
+import hashlib
 import os
 import sys
 import uuid
@@ -201,6 +202,52 @@ if r["crisis"] is not False or r.get("banner") is not True:
     failures.append("E2E Hebrew step-down failed: %r" % r)
 
 print("end-to-end: Hebrew crisis (1201 first, fully Hebrew) -> Hebrew check-in -> step-down")
+
+# ---- Round 3: crisis language = language of THAT message ---------
+# Frozen strings must be byte-identical (hashes pinned 2026-10-25).
+for name, want in (
+    ("FIXED_CRISIS_RESPONSE",
+     "718f7c98131223578dd68c441f90cad7f72404d9abf3de5952bef39581aa5250"),
+    ("FIXED_CRISIS_RESPONSE_HE",
+     "d9306c9af9205559b745bfbbf0b9b1ad26df027dc2376cd8325aa569d2c1365d"),
+):
+    got = hashlib.sha256(getattr(solace, name).encode()).hexdigest()
+    if got != want:
+        failures.append("Frozen %s changed: %s" % (name, got))
+
+uid4 = "test-" + uuid.uuid4().hex[:12]
+r = client.post("/api/chat", json={"user_id": uid4, "message": "אני רוצה למות"}).json()
+if not (r["crisis"] is True and r["reply"].startswith(solace.FIXED_CRISIS_RESPONSE_HE)
+        and r.get("banner_lang") == "he" and r.get("hotline") == "1201"):
+    failures.append("R3 Hebrew crisis wrong: %r" % r)
+# English crisis IMMEDIATELY after the Hebrew one: English fixed
+# reply + English banner + 988 — not the Hebrew set (Tab's case).
+r = client.post("/api/chat", json={"user_id": uid4, "message": "I want to kill myself"}).json()
+if not (r["crisis"] is True and r["reply"].startswith(solace.FIXED_CRISIS_RESPONSE)
+        and r.get("banner_lang") == "en" and r.get("hotline") == "988"):
+    failures.append("R3 English crisis after Hebrew got wrong language: %r" % r)
+if "ער״ן" in r["reply"] or "1201" in r["reply"]:
+    failures.append("R3 English crisis reply leaked Hebrew resources: %r" % r["reply"])
+# And back to Hebrew again.
+r = client.post("/api/chat", json={"user_id": uid4, "message": "אני רוצה למות"}).json()
+if not (r["crisis"] is True and r["reply"].startswith(solace.FIXED_CRISIS_RESPONSE_HE)
+        and r.get("banner_lang") == "he" and r.get("hotline") == "1201"):
+    failures.append("R3 Hebrew crisis after English wrong: %r" % r)
+# Latched follow-ups follow the follow-up's own language too.
+r = client.post("/api/chat", json={"user_id": uid4, "message": "I don't know what to do"}).json()
+if not (r["crisis"] is True and r.get("banner_lang") == "en"
+        and r.get("hotline") == "988" and "988" in r["reply"]):
+    failures.append("R3 English latched follow-up wrong: %r" % r)
+r = client.post("/api/chat", json={"user_id": uid4, "message": "אני לא יודע מה לעשות"}).json()
+if not (r["crisis"] is True and r.get("banner_lang") == "he"
+        and r.get("hotline") == "1201" and "1201" in r["reply"]):
+    failures.append("R3 Hebrew latched follow-up wrong: %r" % r)
+h = client.get("/api/history", params={"user_id": uid4}).json()
+if h["banner_lang"] != "he":
+    failures.append("R3 history banner_lang not updated per message: %r" % h)
+
+print("end-to-end: mixed Hebrew -> English -> Hebrew crises each get "
+      "their own language's reply/banner/hotline; frozen hashes pinned")
 
 # ---- Re-test fix #3: delete endpoint wipes everything ----
 r = client.post("/api/delete", json={"user_id": uid}).json()

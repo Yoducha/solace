@@ -49,6 +49,12 @@ else:
         failures.append("UNIT pause-before wrong: %r" % f)
     if f["mid_pauses"] != 1 or f["longest_mid_pause_s"] != 2.6:
         failures.append("UNIT mid-pause wrong: %r" % f)
+    # Combined over-2s pauses: LINE2 has one before (6.5 s) and one
+    # mid-line (2.6 s) — the coaching must be able to name both.
+    if f["long_pause_events"] != 2 or f["longest_pause_over_2_s"] != 6.5:
+        failures.append("UNIT combined long pauses wrong: %r" % f)
+    if LINE2 not in f["long_pause_examples"]:
+        failures.append("UNIT long-pause example not the exact line: %r" % f)
     if f["fillers_total"] != 2:
         failures.append("UNIT fillers != 2: %r" % f)
     if f["filler_line"] != LINE2:
@@ -58,9 +64,27 @@ else:
     block = solace._delivery_facts_block(f)
     if "109 words per minute" not in block or LINE2 not in block:
         failures.append("UNIT facts block missing numbers/quote")
+    if "Long pauses (over 2 seconds" not in block or "6.5" not in block:
+        failures.append("UNIT facts block must name long pauses: %r" % block)
     notes = solace._delivery_notes_code(f, hebrew=False)
     if not (1 <= len(notes) <= 3) or not any("109" in n for n in notes):
         failures.append("UNIT code notes wrong: %r" % notes)
+    if not any("pauses over 2 seconds" in n for n in notes):
+        failures.append("UNIT code notes must mention long pauses: %r" % notes)
+
+# Round 3 timing basis: pace uses the full speech/capture interval
+# the client now sends (speech start -> speech end). A normal
+# 24-word passage over a 12 s interval is 120 wpm — natural — where
+# the old first-recognized-word span (~3.7 s) read as ~388 wpm.
+NORMAL_LINE = ("I need to move our meeting because my daughter has "
+               "a school event and I promised her I would be there "
+               "on time today")
+assert len(NORMAL_LINE.split()) == 24
+nf = solace._delivery_facts(
+    [{"text": NORMAL_LINE, "speak_ms": 12000, "pause_before_ms": 0,
+      "longest_pause_ms": 0}], [NORMAL_LINE])
+if not nf or nf["wpm"] != 120 or nf["pace_band"] != "natural":
+    failures.append("UNIT capture-interval pace wrong: %r" % nf)
 
 # Typed-only (no voice turns) -> no facts, no section, no fake data.
 if solace._delivery_facts([], user_lines) is not None:
@@ -198,10 +222,20 @@ print("e2e: spoken-path crisis exits pre-model with the frozen response")
 # --- served page: mic + wiring + privacy line ------------------------
 html = client.get("/").text
 for marker in ('id="rh-mic"', 'webkitSpeechRecognition', 'voice_turns',
-               'never sent or stored', 'rh-voice-toggle',
-               'SpeechRecognition'):
+               'Solace never receives or stores your audio — only '
+               'the text of what you say.',
+               'rh-voice-toggle', 'SpeechRecognition',
+               'rhVoiceDurationMs', 'onspeechstart', 'onspeechend',
+               'captureStartAt',
+               'Tap 🎤 and say it out loud.',
+               "partnerVoice: ('speechSynthesis' in window)"):
     if marker not in html:
         failures.append("PAGE missing marker: %s" % marker)
+for gone in ('never sent or stored', 'ON the device',
+             'No audio is uploaded or stored anywhere',
+             'turned into text on your device'):
+    if gone in html:
+        failures.append("PAGE still carries inaccurate voice claim: %s" % gone)
 
 print("page: mic button, recognition wiring, privacy line served")
 
