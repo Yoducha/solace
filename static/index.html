@@ -238,6 +238,20 @@
   }
   [dir="rtl"] #rh-voicebar .pv { margin-left: 0; margin-right: auto; }
   #rh-voice-note { flex-basis: 100%; color: var(--clay); }
+  /* "Did this help?" — one vote per session, counted anonymously. */
+  #help-vote {
+    display: flex; align-items: center; justify-content: center; gap: 10px;
+    padding: 8px 14px; background: var(--card); border-top: 1px solid var(--line);
+    font-size: 14px; color: var(--muted);
+  }
+  #help-vote button, .rh-vote button {
+    background: none; border: 1px solid var(--line); border-radius: 999px;
+    font-size: 16px; padding: 4px 13px; cursor: pointer;
+  }
+  .rh-vote {
+    display: flex; align-items: center; gap: 10px; margin-top: 16px;
+    font-size: 15px; color: var(--ink);
+  }
   .debrief-block h3 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 0 0 8px; }
   .debrief-block { background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 14px 16px; }
   .debrief-block ul { margin: 0; padding-left: 20px; font-size: 15px; line-height: 1.6; }
@@ -322,6 +336,11 @@
   <!-- Chat -->
   <section id="chat">
     <div id="messages"></div>
+    <div id="help-vote" style="display:none">
+      <span id="help-vote-q">Did this help?</span>
+      <button type="button" id="help-up" aria-label="Yes, it helped">👍</button>
+      <button type="button" id="help-down" aria-label="Not really">👎</button>
+    </div>
     <div id="composer">
       <input type="text" id="input" placeholder="Share what's on your mind…" autocomplete="off">
       <button id="send">Send</button>
@@ -612,6 +631,48 @@ async function api(path, body) {
   return r.json();
 }
 
+// ---- Anonymous usage stats (counts only) ----
+// A visit ping once per browser session; the server stores it
+// under a one-way hash — never the id itself, never any content.
+function statVisit() {
+  try {
+    if (!userId || sessionStorage.getItem('solace_stat_visit')) return;
+    sessionStorage.setItem('solace_stat_visit', '1');
+    fetch('/api/stats/event', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({user_id: userId, event: 'visit'}),
+    }).catch(() => {});
+  } catch (e) { /* stats must never break the app */ }
+}
+
+function statVote(surface, vote) {
+  try {
+    fetch('/api/stats/vote', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({surface, vote}),
+    }).catch(() => {});
+  } catch (e) { /* fire-and-forget */ }
+}
+
+let chatExchangeDone = false;
+function maybeShowChatVote() {
+  const row = document.getElementById('help-vote');
+  if (!row || !chatExchangeDone) return;
+  try { if (sessionStorage.getItem('solace_voted_chat')) return; } catch (e) {}
+  row.style.display = 'flex';
+}
+function castChatVote(vote) {
+  statVote('chat', vote);
+  try { sessionStorage.setItem('solace_voted_chat', '1'); } catch (e) {}
+  document.getElementById('help-vote-q').textContent = 'Thanks for telling us.';
+  document.getElementById('help-up').style.display = 'none';
+  document.getElementById('help-down').style.display = 'none';
+  setTimeout(() => {
+    const row = document.getElementById('help-vote');
+    if (row) row.style.display = 'none';
+  }, 2500);
+}
+
 function crisisBannerHTML(hotline, lang) {
   if (lang === 'he') {
     return '<strong>אם אתם מרגישים שאתם עלולים לפעול לפי המחשבות האלה, אנא פנו לעזרה ממש עכשיו.</strong>'
@@ -688,6 +749,7 @@ async function sendChat(text) {
       addMsg(reply, 'ai');
     }
     if (voiceOn) speak(reply);
+    if (!payload.crisis) { chatExchangeDone = true; maybeShowChatVote(); }
   };
   let acc = '', bubble = null;
   try {
@@ -762,6 +824,7 @@ document.getElementById('begin').addEventListener('click', async () => {
     userId = res.user_id;
     localStorage.setItem('solace_uid', userId);
     setUidCookie(userId);
+    statVisit();
     showChat();
     addMsg(concern ? concern : "Hi, I'd like to talk.", 'user');
     await sendChat(concern ? concern : "Hi, I'd like to talk.");
@@ -913,6 +976,7 @@ const RH = {
     voiceUnsupported: "Voice isn't available in this browser — typing works as always.",
     voiceNoHe: 'No Hebrew voice on this device — replies will show as text.',
     pvOn: '🔊 Partner voice on', pvOff: '🔇 Partner voice off',
+    helpQ: 'Did this help?', voteThanks: 'Thanks for telling us.',
     again: 'Rehearse again', done: 'Done',
     people: {boss: 'Boss', partner: 'Partner', dad: 'Dad', mom: 'Mom', friend: 'Friend', custom: 'Someone else'},
     display: {boss: 'your boss', partner: 'your partner', dad: 'Dad', mom: 'Mom', friend: 'your friend'},
@@ -942,6 +1006,7 @@ const RH = {
     voiceUnsupported: 'הקול לא זמין בדפדפן הזה — הכתיבה עובדת כרגיל.',
     voiceNoHe: 'אין קול בעברית במכשיר הזה — התשובות יוצגו כטקסט.',
     pvOn: '🔊 קול הצד השני פעיל', pvOff: '🔇 קול הצד השני כבוי',
+    helpQ: 'זה עזר לך?', voteThanks: 'תודה שסיפרת לנו.',
     again: 'לתרגל שוב', done: 'סיימתי',
     people: {boss: 'הבוס', partner: 'בן/בת הזוג', dad: 'אבא', mom: 'אמא', friend: 'חבר/ה', custom: 'מישהו אחר'},
     display: {boss: 'הבוס שלך', partner: 'בן/בת הזוג שלך', dad: 'אבא', mom: 'אמא', friend: 'החבר/ה שלך'},
@@ -1443,6 +1508,31 @@ function rhRenderDebrief(d) {
   }
   if (d.say_instead && d.say_instead.length) listBlock(t.instead, d.say_instead);
   if (d.delivery && d.delivery.length) listBlock(t.delivery, d.delivery);
+  // "Did this help?" — one vote per session, counted anonymously.
+  try {
+    if (!sessionStorage.getItem('solace_voted_rh')) {
+      const row = document.createElement('div');
+      row.className = 'rh-vote';
+      const q = document.createElement('span');
+      q.textContent = t.helpQ;
+      row.appendChild(q);
+      [['👍', 1], ['👎', -1]].forEach(([emoji, v]) => {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.textContent = emoji;
+        b.addEventListener('click', () => {
+          statVote('rehearse', v);
+          try { sessionStorage.setItem('solace_voted_rh', '1'); } catch (e) {}
+          row.innerHTML = '';
+          const th = document.createElement('span');
+          th.textContent = t.voteThanks;
+          row.appendChild(th);
+        });
+        row.appendChild(b);
+      });
+      body.appendChild(row);
+    }
+  } catch (e) { /* votes are optional garnish — never break the debrief */ }
   if (d.readiness) {
     const p = document.createElement('p');
     p.className = 'lead';
@@ -1538,6 +1628,8 @@ document.getElementById('rh-to-setup').addEventListener('click', () => {
 });
 document.getElementById('rh-start').addEventListener('click', rhBegin);
 document.getElementById('rh-start-skip').addEventListener('click', rhBegin);
+document.getElementById('help-up').addEventListener('click', () => castChatVote(1));
+document.getElementById('help-down').addEventListener('click', () => castChatVote(-1));
 document.getElementById('rh-mic').addEventListener('click', rhMicTap);
 document.getElementById('rh-voice-toggle').addEventListener('click', () => {
   if (rhState) rhSetPartnerVoice(!rhState.partnerVoice);
@@ -1571,6 +1663,7 @@ document.getElementById('rh-done').addEventListener('click', () => {
 // Returning user: skip intake, restore history
 (async function init() {
   if (!userId) return;
+  statVisit();
   try {
     const r = await fetch('/api/history?user_id=' + encodeURIComponent(userId));
     const h = await r.json();
