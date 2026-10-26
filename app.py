@@ -1717,6 +1717,7 @@ Rules:
     - "full": you may say they are ready for the real talk.
     - "partial": name the ground they won and the one thing still left to get.
     - "none": NEVER say the user is ready or prepared, and never imply it went well — they won no concession. Close with what they DID hold on to (they stayed calm, they said the hard sentence out loud) plus ONE concrete target for next time, in this shape: "<what they held>; next time get one concrete yes."
+- DELIVERY (only when the request includes a "DELIVERY (measured)" block): add one more key, "delivery": an array of 2-3 short strings about HOW the user said it — pace, pauses, filler words, steadiness — using ONLY the measured facts in that block. Never invent a number or a quote; where the block gives an example line, quote it exactly. If there is no DELIVERY block in the request, do not include a "delivery" key at all.
 - Match the user's language: if the conversation is in Hebrew, every string in the JSON is in Hebrew."""
 
 
@@ -2020,6 +2021,10 @@ class RehearseTurnIn(BaseModel):
 class RehearseDebriefIn(BaseModel):
     user_id: str
     rehearsal_id: int
+    # Voice Rehearse: client-measured spoken turns ({text, speak_ms,
+    # pause_before_ms, longest_pause_ms}). Text only — audio never
+    # leaves the device. Empty for typed-only rehearsals.
+    voice_turns: list = []
 
 
 @app.post("/api/rehearse/start")
@@ -2176,6 +2181,270 @@ def _fallback_debrief(rec, user_lines):
     }
 
 
+# ------------------------------------------------ Voice Rehearse ----
+# Delivery coaching (Tab spec): HOW the user said it, measured in
+# code from the spoken turns — never invented by the model. The
+# browser's speech recognition produces each spoken line's transcript
+# plus timings (speaking span, pause before it, longest mid-line
+# pause); the client sends those with the debrief request and the
+# numbers below are computed here. Typed-only rehearsals send no
+# voice turns and get no delivery section — no fake data.
+
+_FILLER_PHRASES_EN = ("you know", "i mean")
+_FILLER_RE_EN = re.compile(r"\b(?:um+|uh+|erm?)\b", re.I)
+_LIKE_PREV_EXCLUDE = {
+    "would", "could", "feel", "feels", "felt", "look", "looks",
+    "looked", "seem", "seems", "seemed", "is", "was", "be", "been",
+    "it", "that", "this", "don't", "didn't", "i'd", "you'd",
+}
+_FILLER_HE = ("אממ", "אהה", "כאילו", "יעני")
+_HEDGE_RES_EN = [
+    re.compile(p, re.I) for p in (
+        r"i'?m sorry", r"\bsorry\b", r"\bjust\b", r"\bmaybe\b",
+        r"\bi guess\b", r"\bkind of\b", r"\bsort of\b", r"\bi think\b",
+        r"\bif that'?s (okay|ok)\b", r"\bi don'?t know\b",
+        r"\bwhatever you think\b", r"\bno worries if\b", r"\bprobably\b",
+    )
+]
+_HEDGE_HE = ("סליחה", "אולי", "נראה לי", "לא יודע", "לא יודעת",
+             "אם זה בסדר", "כזה")
+
+
+def _count_fillers(text):
+    """Filler-word count + per-word detail for one line of speech."""
+    low = " %s " % (text or "").lower()
+    total = 0
+    detail = {}
+    for m in _FILLER_RE_EN.finditer(low):
+        total += 1
+        detail["um/uh"] = detail.get("um/uh", 0) + 1
+    for ph in _FILLER_PHRASES_EN:
+        n = low.count(" %s " % ph) + (1 if low.strip().startswith(ph) else 0)
+        if n:
+            total += n
+            detail[ph] = detail.get(ph, 0) + n
+    # "like" as a filler: a standalone token that is not the verb /
+    # comparison sense (guarded by the previous word).
+    toks = re.findall(r"[a-z']+", (text or "").lower())
+    like_n = 0
+    for i, tok in enumerate(toks):
+        if tok == "like" and (i == 0 or toks[i - 1] not in _LIKE_PREV_EXCLUDE):
+            like_n += 1
+    if like_n:
+        total += like_n
+        detail["like"] = like_n
+    for f in _FILLER_HE:
+        n = (text or "").count(f)
+        if n:
+            total += n
+            detail[f] = detail.get(f, 0) + n
+    return total, detail
+
+
+def _count_hedges(text):
+    n = 0
+    for rx in _HEDGE_RES_EN:
+        n += len(rx.findall(text or ""))
+    for h in _HEDGE_HE:
+        n += (text or "").count(h)
+    return n
+
+
+def _norm_line(text):
+    return re.sub(r"\s+", " ", (text or "").strip()).casefold()
+
+
+def _delivery_facts(voice_turns, user_lines):
+    """Measured delivery facts for the spoken turns of a rehearsal,
+    or None when nothing usable was spoken. voice_turns entries are
+    client-measured: {text, speak_ms, pause_before_ms,
+    longest_pause_ms}; each is matched to its transcript line by
+    exact (normalized) text, in order, so quotes stay the user's
+    exact words from the transcript itself."""
+    if not voice_turns or not user_lines:
+        return None
+    remaining = list(range(len(user_lines)))
+    matched = []
+    for vt in voice_turns[:40]:
+        if not isinstance(vt, dict):
+            continue
+        text = str(vt.get("text") or "").strip()
+        if not text:
+            continue
+
+        def _ms(key):
+            try:
+                return max(0, min(int(vt.get(key) or 0), 600000))
+            except (TypeError, ValueError):
+                return 0
+
+        hit = None
+        for i in remaining:
+            if _norm_line(user_lines[i]) == _norm_line(text):
+                hit = i
+                break
+        if hit is None:
+            continue
+        remaining.remove(hit)
+        matched.append({
+            "line": user_lines[hit],
+            "speak_ms": _ms("speak_ms"),
+            "pause_before_ms": _ms("pause_before_ms"),
+            "longest_pause_ms": _ms("longest_pause_ms"),
+        })
+    if not matched:
+        return None
+    words = 0
+    speak_ms = 0
+    for m in matched:
+        w = len(re.findall(r"\S+", m["line"]))
+        m["words"] = w
+        if m["speak_ms"] >= 400:
+            words += w
+            speak_ms += m["speak_ms"]
+    wpm = None
+    band = None
+    if speak_ms > 0 and words > 0:
+        wpm = int(round(words / (speak_ms / 60000.0)))
+        band = "slow" if wpm < 110 else ("fast" if wpm > 170 else "natural")
+    long_before = [m for m in matched if m["pause_before_ms"] >= 3000]
+    mid_pauses = [m for m in matched if m["longest_pause_ms"] >= 2000]
+    fillers_total = 0
+    filler_detail = {}
+    filler_line = ""
+    filler_line_n = 0
+    hedge_total = 0
+    hedge_lines = []
+    for m in matched:
+        n, det = _count_fillers(m["line"])
+        fillers_total += n
+        for k, v in det.items():
+            filler_detail[k] = filler_detail.get(k, 0) + v
+        if n > filler_line_n:
+            filler_line_n = n
+            filler_line = m["line"]
+        h = _count_hedges(m["line"])
+        hedge_total += h
+        if h and len(hedge_lines) < 2:
+            hedge_lines.append(m["line"])
+    detail_top = sorted(filler_detail.items(), key=lambda kv: -kv[1])[:3]
+    return {
+        "turns": len(matched),
+        "words": words,
+        "wpm": wpm,
+        "pace_band": band,
+        "long_pauses_before": len(long_before),
+        "longest_pause_before_s": (
+            round(max(m["pause_before_ms"] for m in long_before) / 1000.0, 1)
+            if long_before else 0),
+        "mid_pauses": len(mid_pauses),
+        "longest_mid_pause_s": (
+            round(max(m["longest_pause_ms"] for m in mid_pauses) / 1000.0, 1)
+            if mid_pauses else 0),
+        "fillers_total": fillers_total,
+        "fillers_detail": detail_top,
+        "filler_line": filler_line if filler_line_n else "",
+        "hedge_total": hedge_total,
+        "hedge_lines": hedge_lines,
+    }
+
+
+def _delivery_facts_block(f):
+    """The measured facts as plain sentences for the coach prompt."""
+    lines = [
+        "DELIVERY (measured in code from the user's spoken turns — "
+        "facts, not impressions):",
+        "- Spoken lines measured: %d." % f["turns"],
+    ]
+    if f["wpm"]:
+        lines.append(
+            "- Overall pace: about %d words per minute (%s)."
+            % (f["wpm"], {"slow": "on the slower side",
+                          "natural": "a natural, conversational pace",
+                          "fast": "fast"}[f["pace_band"]]))
+    if f["long_pauses_before"]:
+        lines.append(
+            "- Long pauses (3 seconds or more) before starting a "
+            "line: %d; the longest was about %s seconds."
+            % (f["long_pauses_before"], f["longest_pause_before_s"]))
+    if f["mid_pauses"]:
+        lines.append(
+            "- Long pauses mid-line (2 seconds or more): %d; the "
+            "longest was about %s seconds."
+            % (f["mid_pauses"], f["longest_mid_pause_s"]))
+    if f["fillers_total"]:
+        det = ", ".join("%s ×%d" % kv for kv in f["fillers_detail"])
+        lines.append("- Filler words: %d total (%s)." % (f["fillers_total"], det))
+        if f["filler_line"]:
+            lines.append(
+                '- The line where fillers clustered, exactly: "%s"'
+                % f["filler_line"])
+    else:
+        lines.append("- Filler words: none counted.")
+    if f["hedge_total"]:
+        lines.append(
+            "- Hedging / unsure phrasing (sorry, just, maybe, "
+            "I guess…): %d times." % f["hedge_total"])
+        for q in f["hedge_lines"]:
+            lines.append('- A line with hedging, exactly: "%s"' % q)
+    else:
+        lines.append("- Hedging phrases: none counted — the wording "
+                     "was direct.")
+    return "\n".join(lines)
+
+
+def _delivery_notes_code(f, hebrew):
+    """Deterministic delivery notes built only from the measured
+    facts — the fallback when the coach's reply has no usable
+    delivery section, so the numbers the user sees are always the
+    measured ones."""
+    notes = []
+    if hebrew:
+        if f["wpm"]:
+            band = {"slow": "בצד האיטי והמדוד",
+                    "natural": "קצב טבעי של שיחה",
+                    "fast": "מהר — הילוך קצת יותר איטי יכול לעזור לדברים להישמע"}[
+                        f["pace_band"]]
+            notes.append("הקצב שלך היה בערך %d מילים לדקה — %s."
+                         % (f["wpm"], band))
+        if f["fillers_total"]:
+            notes.append(
+                "מילות מילוי: %d בסך הכול. הן לא הורסות כלום — אבל משפט "
+                "אחד נקי, בלי עצירות מילוי, נשמע הרבה יותר בטוח." % f["fillers_total"])
+        if f["hedge_lines"]:
+            notes.append(
+                "במשפט \u201c%s\u201d היו ריכוכים (סליחה / אולי / נראה לי) — "
+                "אותו משפט בלי הריכוך נשמע תקיף יותר." % f["hedge_lines"][0])
+        if f["long_pauses_before"]:
+            notes.append(
+                "לפני %d מהמשפטים הייתה הפסקה של 3 שניות או יותר (הארוכה "
+                "בערך %s שניות). הפסקה זה בסדר — היא נשמעת כמו מחשבה, לא "
+                "כמו חולשה." % (f["long_pauses_before"], f["longest_pause_before_s"]))
+        return notes[:3]
+    if f["wpm"]:
+        band = {"slow": "on the slower, measured side",
+                "natural": "a natural, conversational pace",
+                "fast": "fast — easing off a touch can help the ask land"}[
+                    f["pace_band"]]
+        notes.append("Your pace averaged about %d words per minute — %s."
+                     % (f["wpm"], band))
+    if f["fillers_total"]:
+        det = ", ".join("%s ×%d" % kv for kv in f["fillers_detail"])
+        notes.append("Filler words: %d total (%s). One clean sentence "
+                     "without them sounds noticeably firmer."
+                     % (f["fillers_total"], det))
+    if f["hedge_lines"]:
+        notes.append("Hedging showed up in \u201c%s\u201d — the same line "
+                     "without the softener makes the same ask sound "
+                     "steadier." % f["hedge_lines"][0])
+    if f["long_pauses_before"]:
+        notes.append("Before %d of your lines there was a pause of 3 "
+                     "seconds or more (longest about %s seconds). A "
+                     "pause reads as thinking, not weakness."
+                     % (f["long_pauses_before"], f["longest_pause_before_s"]))
+    return notes[:3]
+
+
 @app.post("/api/rehearse/debrief")
 def rehearse_debrief(body: RehearseDebriefIn, background: BackgroundTasks):
     uid = (body.user_id or "").strip()
@@ -2193,6 +2462,12 @@ def rehearse_debrief(body: RehearseDebriefIn, background: BackgroundTasks):
     user_lines = [t.get("content", "") for t in transcript
                   if t.get("role") == "user" and t.get("content", "").strip()]
     label = _rehearsal_person_label(rec)
+    # Voice Rehearse: delivery facts measured in code from the
+    # spoken turns (None for typed-only — no delivery section then).
+    try:
+        delivery_facts = _delivery_facts(body.voice_turns, user_lines)
+    except Exception:
+        delivery_facts = None
     if not user_lines:
         debrief = {
             "worked": ["You took the first step and set the talk up — "
@@ -2221,6 +2496,8 @@ def rehearse_debrief(body: RehearseDebriefIn, background: BackgroundTasks):
                 (rec["topic"] or "").strip() or "(not specified)",
                 script, numbered)
         )
+        if delivery_facts:
+            ask += "\n\n" + _delivery_facts_block(delivery_facts)
         debrief = None
         try:
             out = call_anthropic(
@@ -2268,10 +2545,26 @@ def rehearse_debrief(body: RehearseDebriefIn, background: BackgroundTasks):
                     "readiness": readiness,
                     "outcome": outcome,
                 }
+                if delivery_facts:
+                    notes = [str(x).strip() for x in
+                             data.get("delivery", [])
+                             if str(x).strip()][:3]
+                    if not notes:
+                        notes = _delivery_notes_code(
+                            delivery_facts,
+                            any(has_hebrew(x) for x in user_lines))
+                    if notes:
+                        debrief["delivery"] = notes
         except Exception:
             debrief = None
         if debrief is None:
             debrief = _fallback_debrief(rec, user_lines)
+            if delivery_facts:
+                notes = _delivery_notes_code(
+                    delivery_facts,
+                    any(has_hebrew(x) for x in user_lines))
+                if notes:
+                    debrief["delivery"] = notes
     with db_lock:
         c = _conn()
         c.execute(
