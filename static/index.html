@@ -214,6 +214,30 @@
     background: var(--sage); color: #fff; border: none; border-radius: 999px;
     padding: 0 22px; font-size: 16px; font-weight: 700; cursor: pointer;
   }
+  /* Voice Rehearse: mic button + the privacy/voice bar under the
+     rehearsal composer. */
+  #rh-composer button#rh-mic {
+    background: var(--card); border: 1px solid var(--line); color: var(--ink);
+    padding: 0 15px; font-size: 19px; font-weight: 400;
+  }
+  #rh-composer button#rh-mic.listening {
+    background: #b3402e; border-color: #b3402e; color: #fff;
+    animation: micpulse 1.1s ease-in-out infinite;
+  }
+  @keyframes micpulse { 0%, 100% { opacity: 1; } 50% { opacity: .5; } }
+  #rh-voicebar {
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    padding: 8px 14px calc(8px + env(safe-area-inset-bottom));
+    background: var(--card); border-top: 1px solid var(--line);
+    font-size: 12.5px; color: var(--muted); line-height: 1.45;
+  }
+  #rh-voicebar .pv {
+    margin-left: auto; background: none; border: 1px solid var(--line);
+    color: var(--ink); border-radius: 999px; padding: 5px 12px;
+    font-size: 12.5px; cursor: pointer; font-family: inherit;
+  }
+  [dir="rtl"] #rh-voicebar .pv { margin-left: 0; margin-right: auto; }
+  #rh-voice-note { flex-basis: 100%; color: var(--clay); }
   .debrief-block h3 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 0 0 8px; }
   .debrief-block { background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 14px 16px; }
   .debrief-block ul { margin: 0; padding-left: 20px; font-size: 15px; line-height: 1.6; }
@@ -356,8 +380,14 @@
       </div>
       <div id="rh-messages"></div>
       <div id="rh-composer">
+        <button id="rh-mic" type="button" title="Speak your line">🎤</button>
         <input type="text" id="rh-input" autocomplete="off">
         <button id="rh-send" type="button" data-rh="send">Send</button>
+      </div>
+      <div id="rh-voicebar">
+        <span id="rh-voice-privacy"></span>
+        <button id="rh-voice-toggle" type="button" class="pv"></button>
+        <span id="rh-voice-note" style="display:none"></span>
       </div>
     </div>
 
@@ -877,6 +907,12 @@ const RH = {
     coachTitle: 'Your coaching', writing: 'Writing your coaching…',
     worked: 'What worked', sideways: 'Where it got hard',
     youSaid: 'You said:', instead: 'Try saying this instead',
+    delivery: 'How you said it',
+    micTitle: 'Speak your line', listening: 'Listening…',
+    voicePrivacy: '🎙️ Voice practice: your speech is turned into text on your device. The audio itself is never sent or stored.',
+    voiceUnsupported: "Voice isn't available in this browser — typing works as always.",
+    voiceNoHe: 'No Hebrew voice on this device — replies will show as text.',
+    pvOn: '🔊 Partner voice on', pvOff: '🔇 Partner voice off',
     again: 'Rehearse again', done: 'Done',
     people: {boss: 'Boss', partner: 'Partner', dad: 'Dad', mom: 'Mom', friend: 'Friend', custom: 'Someone else'},
     display: {boss: 'your boss', partner: 'your partner', dad: 'Dad', mom: 'Mom', friend: 'your friend'},
@@ -900,6 +936,12 @@ const RH = {
     coachTitle: 'ההדרכה שלך', writing: 'כותב את ההדרכה שלך…',
     worked: 'מה עבד', sideways: 'איפה זה נתקע',
     youSaid: 'אמרת:', instead: 'אפשר לנסות להגיד ככה',
+    delivery: 'איך אמרת את זה',
+    micTitle: 'אמור את המשפט', listening: 'מקשיב…',
+    voicePrivacy: '🎙️ תרגול בקול: הדיבור שלך הופך לטקסט במכשיר שלך. ההקלטה עצמה לעולם לא נשלחת ולא נשמרת.',
+    voiceUnsupported: 'הקול לא זמין בדפדפן הזה — הכתיבה עובדת כרגיל.',
+    voiceNoHe: 'אין קול בעברית במכשיר הזה — התשובות יוצגו כטקסט.',
+    pvOn: '🔊 קול הצד השני פעיל', pvOff: '🔇 קול הצד השני כבוי',
     again: 'לתרגל שוב', done: 'סיימתי',
     people: {boss: 'הבוס', partner: 'בן/בת הזוג', dad: 'אבא', mom: 'אמא', friend: 'חבר/ה', custom: 'מישהו אחר'},
     display: {boss: 'הבוס שלך', partner: 'בן/בת הזוג שלך', dad: 'אבא', mom: 'אמא', friend: 'החבר/ה שלך'},
@@ -994,6 +1036,8 @@ async function openRehearse() {
     lang: rhLang(),
     setup: {person_name: '', relationship: '', topic: '', reactions: [], context: ''},
     returnTo: document.getElementById('chat').style.display === 'flex' ? 'chat' : 'welcome',
+    // Voice Rehearse: measured spoken turns + partner-voice state.
+    voiceTurns: [], lastTurnEndAt: 0, partnerVoice: false,
   };
   document.getElementById('rh-cname').value = '';
   document.getElementById('rh-crel').value = '';
@@ -1010,6 +1054,8 @@ async function openRehearse() {
 }
 
 function closeRehearse() {
+  rhStopSpeak();
+  rhStopListening();
   document.getElementById('rehearse').style.display = 'none';
   if (rhState && rhState.returnTo === 'welcome' &&
       !document.querySelectorAll('#messages .msg, #messages .rhcard').length) {
@@ -1022,6 +1068,8 @@ function closeRehearse() {
 }
 
 function rhCrisisExit(payload) {
+  rhStopSpeak();
+  rhStopListening();
   document.getElementById('rehearse').style.display = 'none';
   rhState = null;
   showChat();
@@ -1057,9 +1105,176 @@ function rhBubble() {
   return {box: d, span};
 }
 
+// ---- Voice Rehearse ----
+// Speech in: the browser's own recognition (webkitSpeechRecognition
+// on iPhone Safari) turns the user's voice into text ON the device;
+// only the text is ever sent, through the exact same send path as a
+// typed line — so the pre-model crisis check sees every spoken line
+// identically. Speech out: speechSynthesis speaks the partner's
+// replies. No audio is uploaded or stored anywhere.
+const RH_SR = window.SpeechRecognition || window.webkitSpeechRecognition || null;
+let rhRec = null;
+
+function rhVoiceNote(text) {
+  const n = document.getElementById('rh-voice-note');
+  if (!n) return;
+  n.textContent = text || '';
+  n.style.display = text ? '' : 'none';
+}
+
+function rhStopSpeak() {
+  try { if ('speechSynthesis' in window) speechSynthesis.cancel(); } catch (e) {}
+}
+
+function rhStopListening() {
+  if (rhRec) { try { rhRec.abort(); } catch (e) {} rhRec = null; }
+  const mic = document.getElementById('rh-mic');
+  if (mic) mic.classList.remove('listening');
+}
+
+function rhUnlockAudio() {
+  // iOS only allows speech after a user gesture — the mic tap IS
+  // the gesture; a silent utterance unlocks the audio session.
+  try {
+    if ('speechSynthesis' in window) {
+      const u = new SpeechSynthesisUtterance('');
+      u.volume = 0;
+      speechSynthesis.speak(u);
+      if (speechSynthesis.resume) speechSynthesis.resume();
+    }
+  } catch (e) {}
+}
+
+function pickVoiceFor(lang) {
+  if (!('speechSynthesis' in window)) return null;
+  const vs = speechSynthesis.getVoices();
+  if (lang === 'he') return vs.find(v => /^he/i.test(v.lang)) || null;
+  return pickVoice();
+}
+
+function rhSpeakable(text) {
+  // Stage directions (*…*) are seen, never spoken.
+  return (text || '').replace(/\*[^*\n]+\*/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+function rhSpeakChunk(text) {
+  if (!rhState || !rhState.partnerVoice) return;
+  const clean = rhSpeakable(text);
+  if (!clean) return;
+  try {
+    const lang = rhState.lang === 'he' ? 'he' : 'en';
+    const v = pickVoiceFor(lang);
+    if (!v) {
+      if (lang === 'he') rhVoiceNote(rhT().voiceNoHe);
+      return;
+    }
+    const u = new SpeechSynthesisUtterance(clean);
+    u.voice = v;
+    u.lang = lang === 'he' ? 'he-IL' : 'en-US';
+    u.rate = 1.0;
+    speechSynthesis.speak(u);
+  } catch (e) { /* no voice on this device — text carries it */ }
+}
+
+function rhSetPartnerVoice(on) {
+  if (!rhState) return;
+  rhState.partnerVoice = !!on;
+  const b = document.getElementById('rh-voice-toggle');
+  if (b) b.textContent = on ? rhT().pvOn : rhT().pvOff;
+  if (!on) rhStopSpeak();
+}
+
+function rhInitVoicebar() {
+  const t = rhT();
+  document.getElementById('rh-voice-privacy').textContent = t.voicePrivacy;
+  document.getElementById('rh-mic').title = t.micTitle;
+  rhVoiceNote('');
+  if (!RH_SR) {
+    document.getElementById('rh-mic').style.display = 'none';
+    rhVoiceNote(t.voiceUnsupported);
+  } else {
+    document.getElementById('rh-mic').style.display = '';
+  }
+  rhSetPartnerVoice(rhState ? rhState.partnerVoice : false);
+}
+
+function rhMicTap() {
+  if (!rhState || rhState.busy || !rhState.id) return;
+  if (rhRec) { try { rhRec.stop(); } catch (e) {} return; }
+  if (!RH_SR) { rhVoiceNote(rhT().voiceUnsupported); return; }
+  rhUnlockAudio();
+  if (!rhState.partnerVoice) rhSetPartnerVoice(true);
+  rhStopSpeak();
+  const inp = document.getElementById('rh-input');
+  const mic = document.getElementById('rh-mic');
+  const rec = new RH_SR();
+  rec.lang = rhState.lang === 'he' ? 'he-IL' : 'en-US';
+  rec.interimResults = true;
+  rec.continuous = false;
+  rec.maxAlternatives = 1;
+  const pauseBefore = rhState.lastTurnEndAt
+    ? performance.now() - rhState.lastTurnEndAt : 0;
+  let firstAt = 0, lastEvtAt = 0, longestGap = 0;
+  let finalText = '', interimText = '', finished = false;
+  rec.onresult = e => {
+    const now = performance.now();
+    if (!firstAt) firstAt = now;
+    if (lastEvtAt && now - lastEvtAt > longestGap) longestGap = now - lastEvtAt;
+    lastEvtAt = now;
+    interimText = '';
+    for (let i = e.resultIndex; i < e.results.length; i++) {
+      const r = e.results[i];
+      if (r.isFinal) finalText += r[0].transcript;
+      else interimText += r[0].transcript;
+    }
+    inp.value = (finalText + interimText).trim();
+  };
+  const finish = () => {
+    if (finished) return;
+    finished = true;
+    rhRec = null;
+    mic.classList.remove('listening');
+    inp.placeholder = rhT().sayPh;
+    const text = (finalText || interimText).trim();
+    inp.value = '';
+    if (!text || !rhState) return;
+    const vt = {
+      text: text,
+      speak_ms: Math.max(0, Math.round((lastEvtAt || firstAt) - (firstAt || lastEvtAt))),
+      pause_before_ms: Math.round(pauseBefore),
+      longest_pause_ms: Math.round(longestGap),
+    };
+    rhUserLine(text, vt);
+  };
+  rec.onend = finish;
+  rec.onerror = () => { /* onend follows and finalizes */ };
+  rhRec = rec;
+  mic.classList.add('listening');
+  inp.placeholder = rhT().listening;
+  try { rec.start(); } catch (e) { rhRec = null; mic.classList.remove('listening'); }
+}
+
 async function rhStream(text) {
   const typing = addTyping('rh-messages');
   let acc = '', bubble = null, payload = null, errEvt = null;
+  // Voice Rehearse: speak the partner's reply sentence by sentence
+  // as it streams in, so the voice starts fast instead of waiting
+  // for the whole reply.
+  let spokenIdx = 0;
+  const speakPump = (source, flush) => {
+    if (!rhState || !rhState.partnerVoice || !source) return;
+    for (;;) {
+      const rest = source.slice(spokenIdx);
+      const m = rest.match(/[.!?…]\s/);
+      if (m) {
+        rhSpeakChunk(rest.slice(0, m.index + 1));
+        spokenIdx += m.index + 2;
+      } else if (flush && rest.trim()) {
+        rhSpeakChunk(rest);
+        spokenIdx = source.length;
+      } else break;
+    }
+  };
   try {
     const r = await fetch('/api/rehearse/stream', {
       method: 'POST',
@@ -1085,6 +1300,7 @@ async function rhStream(text) {
           if (!bubble) { typing.remove(); bubble = rhBubble(); }
           acc += evt.text;
           bubble.span.innerHTML = renderAI(acc);
+          speakPump(acc, false);
           scrollToLatest(bubble.box);
         } else if (evt.type === 'done') {
           payload = evt;
@@ -1112,6 +1328,8 @@ async function rhStream(text) {
   } else if (final) {
     rhAddMsg(final, 'ai');
   }
+  speakPump(final, true);
+  if (rhState) rhState.lastTurnEndAt = performance.now();
 }
 
 async function rhLaunch() {
@@ -1139,9 +1357,12 @@ async function rhLaunch() {
   }
   rhState.id = res.rehearsal_id;
   rhState.debrief = null;
+  rhState.voiceTurns = [];
+  rhState.lastTurnEndAt = 0;
   if (rhState.personType === 'custom' && res.person_display) rhState.display = res.person_display;
   document.getElementById('rh-with').textContent = rhT().withP(rhState.display);
   document.getElementById('rh-messages').innerHTML = '';
+  rhInitVoicebar();
   rhShowStep('live');
   await rhStream(null);
 }
@@ -1159,15 +1380,26 @@ async function rhBegin() {
   if (rhState) rhState.busy = false;
 }
 
-async function rhDoSend() {
-  const inp = document.getElementById('rh-input');
-  const text = inp.value.trim();
+// ONE send path for user lines, typed or spoken — a spoken line's
+// transcript goes through rhStream exactly like typed text, so the
+// server's pre-model crisis check treats them identically.
+async function rhUserLine(text, voiceTurn) {
   if (!text || !rhState || rhState.busy || !rhState.id) return;
-  inp.value = '';
+  rhStopSpeak();
   rhAddMsg(text, 'user');
+  if (voiceTurn) rhState.voiceTurns.push(voiceTurn);
   rhState.busy = true;
   await rhStream(text);
   if (rhState) rhState.busy = false;
+}
+
+async function rhDoSend() {
+  if (rhRec) return; // mid-dictation: the mic tap finishes the line
+  const inp = document.getElementById('rh-input');
+  const text = inp.value.trim();
+  if (!text) return;
+  inp.value = '';
+  await rhUserLine(text, null);
 }
 
 function rhRenderDebrief(d) {
@@ -1210,6 +1442,7 @@ function rhRenderDebrief(d) {
     });
   }
   if (d.say_instead && d.say_instead.length) listBlock(t.instead, d.say_instead);
+  if (d.delivery && d.delivery.length) listBlock(t.delivery, d.delivery);
   if (d.readiness) {
     const p = document.createElement('p');
     p.className = 'lead';
@@ -1222,6 +1455,8 @@ function rhRenderDebrief(d) {
 
 async function rhEnd() {
   if (!rhState || rhState.busy || !rhState.id) return;
+  rhStopSpeak();
+  rhStopListening();
   rhState.busy = true;
   const btn = document.getElementById('rh-end');
   btn.disabled = true;
@@ -1240,7 +1475,10 @@ async function rhEnd() {
   againBtn.style.display = 'none';
   doneBtn.style.display = 'none';
   try {
-    const res = await api('/api/rehearse/debrief', {user_id: userId, rehearsal_id: rhState.id});
+    const res = await api('/api/rehearse/debrief', {
+      user_id: userId, rehearsal_id: rhState.id,
+      voice_turns: rhState.voiceTurns || [],
+    });
     if (!res.ok) throw new Error('debrief failed');
     rhState.debrief = res.debrief;
     rhRenderDebrief(res.debrief);
@@ -1300,6 +1538,10 @@ document.getElementById('rh-to-setup').addEventListener('click', () => {
 });
 document.getElementById('rh-start').addEventListener('click', rhBegin);
 document.getElementById('rh-start-skip').addEventListener('click', rhBegin);
+document.getElementById('rh-mic').addEventListener('click', rhMicTap);
+document.getElementById('rh-voice-toggle').addEventListener('click', () => {
+  if (rhState) rhSetPartnerVoice(!rhState.partnerVoice);
+});
 document.getElementById('rh-send').addEventListener('click', rhDoSend);
 document.getElementById('rh-input').addEventListener('keydown', e => {
   if (e.key === 'Enter') rhDoSend();
@@ -1313,6 +1555,8 @@ document.getElementById('rh-again').addEventListener('click', async () => {
 });
 document.getElementById('rh-done').addEventListener('click', () => {
   if (!rhState) return;
+  rhStopSpeak();
+  rhStopListening();
   const rec = {
     person_display: rhState.display,
     topic: rhState.setup.topic,
