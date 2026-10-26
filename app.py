@@ -904,6 +904,96 @@ def _drop_repeated_closer(reply, prev_reply):
     return rest if rest else reply
 
 
+# ---------------- Output filter (Tab ruling, Oct 26) -----------------
+# Prompt instructions alone did NOT keep banned identity words out of
+# model replies, so this is enforced in CODE on every model reply —
+# reflection chat, rehearse partner, and debrief — before the text is
+# displayed or saved. Sentence-level: a sentence containing a banned
+# word is removed whole, so grammar is never left broken mid-sentence.
+# The one exception is the exact phrase "Not therapy" (the tagline's
+# own disclaimer shape): a sentence whose only therapy-word is inside
+# "not therapy" survives.
+_BANNED_CHECK_RES = [
+    re.compile(r"\bpsycholog\w*", re.I),
+    re.compile(r"\bcounsell?ors?\b", re.I),
+    re.compile(r"\bcounsell?ing\b", re.I),
+    re.compile(r"\btreatments?\b", re.I),
+    re.compile(r"\bdiagnos\w*", re.I),
+    re.compile(r"\bheal(?:s|ed|ing|er|ers)?\b", re.I),
+    re.compile(r"\bcur(?:e|es|ed|ing)\b", re.I),
+]
+_NOT_THERAPY_RE = re.compile(r"\bnot\s+therapy\b", re.I)
+_THERAP_RE = re.compile(r"therap\w*", re.I)
+_BANNED_HE = ("פסיכולוג", "טיפול", "מטפל")
+_SENT_SEP_RE = re.compile(r"(?<=[.!?…])(\s+)")
+_SCRUB_FALLBACK = "I'm here with you — tell me more about that."
+_SCRUB_FALLBACK_HE = "אני כאן איתך — ספר לי עוד על זה."
+
+
+def _sentence_banned(seg):
+    """True when one sentence carries a banned identity word."""
+    for w in _BANNED_HE:
+        if w in seg:
+            return True
+    # "Not therapy" is the single allowed therapy-word shape: judge
+    # the therap* family only after removing those occurrences.
+    if _THERAP_RE.search(_NOT_THERAPY_RE.sub("", seg)):
+        return True
+    return any(rx.search(seg) for rx in _BANNED_CHECK_RES)
+
+
+def _sentence_segments(text):
+    """Split into (sentence, separator-after) pairs, losslessly."""
+    parts = _SENT_SEP_RE.split(text or "")
+    segs = []
+    for i in range(0, len(parts), 2):
+        sep = parts[i + 1] if i + 1 < len(parts) else ""
+        segs.append((parts[i], sep))
+    return segs
+
+
+def _scrub_join(segs, include_last):
+    """Join the unbanned segments. With include_last=False the final
+    segment is held back unless it ends in sentence punctuation —
+    the streaming form, so a banned word can never flash on screen
+    inside a still-growing sentence."""
+    out = []
+    for idx, (seg, sep) in enumerate(segs):
+        last = idx == len(segs) - 1
+        if last and not include_last:
+            tail = seg.rstrip().rstrip("\"'”’)]")
+            if not tail or tail[-1] not in ".!?…":
+                break
+        if _sentence_banned(seg):
+            continue
+        out.append(seg + sep)
+    return "".join(out)
+
+
+def scrub_reply(text):
+    """The full-text filter applied to every finished model reply."""
+    out = _scrub_join(_sentence_segments(text), include_last=True)
+    out = out.strip()
+    if out:
+        return out
+    if has_hebrew(text or ""):
+        return _SCRUB_FALLBACK_HE
+    return _SCRUB_FALLBACK
+
+
+def scrub_prefix(text):
+    """Streaming form: the scrubbed text of all COMPLETE sentences
+    so far — safe to emit as a delta; the tail is still growing."""
+    return _scrub_join(_sentence_segments(text), include_last=False)
+
+
+def scrub_field(text):
+    """Debrief-field form: like scrub_reply but may return "" so the
+    caller can substitute its own neutral default."""
+    return _scrub_join(
+        _sentence_segments(text), include_last=True).strip()
+
+
 def _same_theme_judge(deleted_text, cand_text):
     """Gray-band arbiter for the tombstone guard: when a candidate
     shares some content words with a deleted item but not enough for
@@ -1550,6 +1640,7 @@ def _finish_model_turn(ctx, mode, reply, background):
     if mode == "info":
         if reply.startswith("[CRISIS]"):
             reply = reply[len("[CRISIS]"):].strip()
+        reply = scrub_reply(reply)
         _save_assistant_msg(uid, reply)
         return {"reply": reply, "crisis": False, "hotline": hotline,
                 "banner": banner, "banner_lang": banner_lang}
@@ -1566,7 +1657,7 @@ def _finish_model_turn(ctx, mode, reply, background):
         # the crisis flow.
         opening = (GRIEF_OPENING_HE if ctx.get("grief_hebrew")
                    else GRIEF_OPENING)
-        body = reply.strip()
+        body = scrub_field(reply.strip())
         if opening[:24] not in body[:80]:
             reply = opening + ("\n\n" + body if body else "")
         else:
@@ -1580,6 +1671,7 @@ def _finish_model_turn(ctx, mode, reply, background):
     if mode == "crisis":
         if reply.startswith("[CRISIS]"):
             reply = reply[len("[CRISIS]"):].strip()
+        reply = scrub_reply(reply)
         reply += crisis_resource_line(safety_hebrew, reply)
         _save_assistant_msg(uid, reply)
         return {"reply": reply, "crisis": True,
@@ -1596,6 +1688,7 @@ def _finish_model_turn(ctx, mode, reply, background):
             banner_lang = safety_lang
             _set_user_state(uid, crisis_mode=True, stepdown_v=False,
                             banner_v=True, lang_v=banner_lang)
+    reply = scrub_reply(reply)
     # Never end two replies in a row with the same closing line
     # (Tab fix) — compare against the previous stored reply.
     with db_lock:
@@ -1749,7 +1842,10 @@ def _chat_stream_events(uid, msg, background):
             # Leading whitespace is stripped once, in effect: raw only
             # grows at the end, so raw[skip:].lstrip() is a stable
             # prefix across chunks (the final text is stripped anyway).
-            visible = raw[skip:].lstrip()
+            # The output filter runs here too: only scrubbed COMPLETE
+            # sentences are emitted, so a banned word can never reach
+            # the screen even briefly inside a growing sentence.
+            visible = scrub_prefix(raw[skip:].lstrip())
             if len(visible) > len(emitted_visible):
                 new = visible[len(emitted_visible):]
                 emitted_visible = visible
@@ -1770,7 +1866,7 @@ def _chat_stream_events(uid, msg, background):
         skip = len("[CRISIS]") if raw.startswith("[CRISIS]") else 0
     payload = _finish_model_turn(ctx, mode, raw, background)
     final = payload["reply"]
-    visible = raw[skip:].lstrip()
+    visible = scrub_prefix(raw[skip:].lstrip())
     if final.startswith(visible) and len(final) > len(visible):
         yield _sse({"type": "delta", "text": final[len(visible):]})
     yield _sse({"type": "done", **payload})
@@ -1865,6 +1961,7 @@ def greeting(body: GreetingIn):
     except Exception:
         return {"greeting": None}
     line = " ".join(line.strip().strip('"').split())[:300]
+    line = scrub_field(line)
     if not line:
         return {"greeting": None}
     _save_assistant_msg(uid, line)
@@ -2312,17 +2409,20 @@ def _rehearse_stream_events(uid, rid, message):
     msgs = _persona_model_messages(rec, None if opener else message)
 
     raw = ""
-    emitted = 0
+    emitted = ""
     failed = False
     try:
         for chunk in _anthropic_stream_chunks(system, msgs):
             raw += chunk
             # Emit only the cleaned safe prefix, so a stage
-            # direction never flashes as plain dialogue mid-stream.
-            safe = _clean_persona_text(_persona_safe_prefix(raw))
-            if len(safe) > emitted:
-                yield _sse({"type": "delta", "text": safe[emitted:]})
-                emitted = len(safe)
+            # direction never flashes as plain dialogue mid-stream —
+            # and run it through the output filter's streaming form,
+            # so a banned word never flashes either.
+            safe = scrub_prefix(
+                _clean_persona_text(_persona_safe_prefix(raw)))
+            if safe.startswith(emitted) and len(safe) > len(emitted):
+                yield _sse({"type": "delta", "text": safe[len(emitted):]})
+                emitted = safe
     except Exception:
         failed = True
     if failed and not raw:
@@ -2333,9 +2433,9 @@ def _rehearse_stream_events(uid, rid, message):
             _save_transcript(rid, transcript)
         yield _sse({"type": "error", "error": "connection"})
         return
-    reply = _clean_persona_text(raw).strip()
-    if len(reply) > emitted:
-        yield _sse({"type": "delta", "text": reply[emitted:]})
+    reply = scrub_reply(_clean_persona_text(raw).strip())
+    if reply.startswith(emitted) and len(reply) > len(emitted):
+        yield _sse({"type": "delta", "text": reply[len(emitted):]})
     transcript.append({"role": "persona", "content": reply})
     _save_transcript(rid, transcript)
     yield _sse({"type": "done", "reply": reply, "crisis": False,
@@ -2373,6 +2473,33 @@ def _fallback_debrief(rec, user_lines):
                      "feel more familiar than you expect.",
         "outcome": "",
     }
+
+
+def _scrub_debrief(debrief):
+    """Run every model-written debrief field through the output
+    filter (Tab ruling): worked / say-instead / delivery items are
+    scrubbed sentence-by-sentence and dropped if they empty out;
+    sideways_note and readiness fall back to neutral lines. The
+    sideways QUOTE is the user's own exact words — never filtered."""
+    if not isinstance(debrief, dict):
+        return debrief
+    out = dict(debrief)
+    for key in ("worked", "say_instead", "delivery"):
+        if key not in out:
+            continue  # never invent a section the debrief didn't have
+        items = []
+        for x in out.get(key) or []:
+            s = scrub_field(str(x))
+            if s:
+                items.append(s)
+        out[key] = items
+    if not out.get("worked"):
+        out["worked"] = ["You showed up and practiced — that counts."]
+    note = scrub_field(str(out.get("sideways_note", "")))
+    out["sideways_note"] = note or "That moment is worth another look."
+    ready = scrub_field(str(out.get("readiness", "")))
+    out["readiness"] = ready or "You practiced it — you're readier than you were."
+    return out
 
 
 # ------------------------------------------------ Voice Rehearse ----
@@ -2760,7 +2887,8 @@ def rehearse_debrief(body: RehearseDebriefIn, background: BackgroundTasks):
         return {"ok": False, "error": "not_found"}
     if rec["state"] == "debriefed" and rec["debrief"]:
         try:
-            return {"ok": True, "debrief": json.loads(rec["debrief"])}
+            return {"ok": True,
+                    "debrief": _scrub_debrief(json.loads(rec["debrief"]))}
         except Exception:
             pass
     if rec["state"] != "rehearsing":
@@ -2875,6 +3003,7 @@ def rehearse_debrief(body: RehearseDebriefIn, background: BackgroundTasks):
                     any(has_hebrew(x) for x in user_lines))
                 if notes:
                     debrief["delivery"] = notes
+    debrief = _scrub_debrief(debrief)
     with db_lock:
         c = _conn()
         c.execute(
