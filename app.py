@@ -217,6 +217,44 @@ INFO_FALLBACK_HE = (
     "אי פעם מרגיש אישי, בישראל אפשר להתקשר לער\u05f4ן במספר 1201 בכל שעה."
 )
 
+# Grief path (Tab persona test): a bereavement disclosure gets a
+# FIXED warm opening line in front of the model's reply —
+# deterministic, like the other fixed paths, but deliberately NOT
+# the crisis flow: no latch, no banner, no hotline footer, and the
+# conversation continues normally underneath it. (If the same
+# message also carries risk, the crisis path runs first and grief
+# never fires.)
+GRIEF_OPENING = (
+    "I'm so sorry for your loss. Losing someone you love changes "
+    "everything, and there is no right way to grieve. I'm here with "
+    "you — take all the time you need. Whenever you're ready, I'd "
+    "love to hear about them."
+)
+GRIEF_OPENING_HE = (
+    "אני ממש מצטער על האובדן שלך. לאבד מישהו שאוהבים משנה הכול, "
+    "ואין דרך נכונה להתאבל. אני כאן איתך — קח את כל הזמן שאתה צריך. "
+    "כשתרצה, אשמח לשמוע עליו."
+)
+# Continuation used only if the model call fails on a grief turn.
+GRIEF_FALLBACK = (
+    "I'm here — we don't have to figure anything out right now. "
+    "We can just sit with this for a while."
+)
+GRIEF_FALLBACK_HE = (
+    "אני כאן — לא צריך להבין הכול עכשיו. אפשר פשוט להיות עם זה קצת."
+)
+GRIEF_NOTE = (
+    "\n\nGRIEF: This person has just told you that someone they "
+    "love has died. Their reply will BEGIN with a fixed condolence "
+    "line that is added for you — do not repeat it or rephrase it; "
+    "continue from it. Acknowledge the loss and the person who "
+    "died; invite them to share memories or feelings at their own "
+    "pace; stay with the grief. Do NOT offer a practical exercise, "
+    "techniques, or next steps in this reply, do not rush to "
+    "comfort or fix, and keep it short and human. If they express "
+    "any wish to harm themselves, follow the crisis protocol."
+)
+
 # System prompt used for follow-up turns while crisis mode is latched:
 # safety only — no techniques, no homework, no jargon.
 CRISIS_SYSTEM_PROMPT = """You are Solace, in CRISIS MODE with a person who has expressed thoughts of suicide or self-harm. Rules for every reply in this mode:
@@ -261,6 +299,8 @@ SYSTEM_PROMPT = """You are Solace, a warm and skilled AI self-help companion for
 HARD LIMITS (never break these):
 - Never tell someone what condition they have. Never say or imply "you have depression / anxiety / PTSD / etc." Use describing language only, never labels: "a working understanding," "it sounds like," "what I'm hearing is."
 - Never claim to be a licensed professional or a human being.
+- IDENTITY LANGUAGE (Tab persona test): never describe yourself, or what happens in this conversation, as therapy, treatment, or counseling, and never as the work of a therapist, psychologist, or counselor — in English, Hebrew, or any language. You are an AI self-help companion for reflection and support. Never say you diagnose, heal, or cure. (Encouraging the person to see a real professional is different, and is fine.)
+- PRIVACY REASSURANCE (Tab persona test): if the person worries about who might find out what they share here, reassure them plainly and warmly: you are not going to tell anyone what they share here.
 - This is not emergency care. If the person is in crisis, follow the crisis protocol below.
 - Gently encourage real professional help for serious or persistent struggles.
 
@@ -550,6 +590,68 @@ def assess_risk(text):
 def detect_retraction(text):
     """True when the user clearly walks back a crisis statement."""
     return bool(RETRACTION_RE.search(text.lower()))
+
+
+_KIN_EN = (
+    r"mom|mother|dad|father|brother|sister|son|daughter|wife|husband|"
+    r"grandma|grandmother|grandpa|grandfather|grandparent|friend|"
+    r"partner|baby|child|dog|cat"
+)
+_GAP = r"(?:[\w']+\s+){0,2}?"
+GRIEF_RE = [
+    # "my <kin> died / passed away / was killed" — the death word
+    # must be a real one, so "my dad passed his test" never fires,
+    # and "almost/nearly died" is a near-miss, not a loss.
+    re.compile(
+        r"\bmy\s+" + _GAP + r"(?:" + _KIN_EN + r")\b[^.!?\n]{0,40}?\b"
+        r"(?:(?<!almost )(?<!nearly )died|passed\s+away|was\s+killed|"
+        r"lost\s+(?:his|her|their)\s+life)\b",
+        re.I,
+    ),
+    # "<kin> (just) died / passed away" without the possessive.
+    re.compile(
+        r"\b(?:" + _KIN_EN + r")\s+(?:just\s+)?"
+        r"(?:(?<!almost )(?<!nearly )died|passed\s+away)\b",
+        re.I,
+    ),
+    # "I/we lost my/our <kin>" — but not "lost my friend's number"
+    # (the possessive means an object was lost, not the person).
+    re.compile(
+        r"\b(?:lost|losing)\s+(?:my|our)\s+" + _GAP +
+        r"(?:" + _KIN_EN + r")\b(?!\s*['’]s\b)",
+        re.I,
+    ),
+    # "my <kin>'s funeral" / "his funeral" / "burying my brother".
+    re.compile(
+        r"\b(?:my|our|his|her|their)\s+" + _GAP + r"funeral\b", re.I),
+    re.compile(
+        r"\b(?:burying|buried)\s+(?:my|our)\s+" + _GAP +
+        r"(?:" + _KIN_EN + r")\b",
+        re.I,
+    ),
+    # Hebrew: kinship term + a death word (נפטר/מת/נהרג/הלך לעולמו),
+    # the reversed "נפטרה לי אמא" shape, and "איבדתי את <kin>".
+    re.compile(
+        r"(?:ה)?(?:אמא|אבא|סבתא|סבא|אח שלי|אחות שלי|אחי|אחותי|בעלי|"
+        r"אשתי|הבן שלי|הבת שלי|חבר שלי|חברה שלי)"
+        r"[^.!?\n]{0,25}?"
+        r"(?:נפטר|נפטרה|נפטרו|מת|מתה|נהרג|נהרגה|הלך לעולמו|הלכה לעולמה)"
+    ),
+    re.compile(r"(?:נפטר|נפטרה)\s+(?:לי\s+)?(?:ה)?(?:אמא|אבא|סבתא|סבא)"),
+    re.compile(
+        r"איבדתי\s+את\s+(?:ה)?(?:אמא|אבא|סבתא|סבא|אחי|אחותי|בעלי|אשתי)"
+    ),
+]
+
+
+def detect_grief(text):
+    """Deterministic bereavement detection (Tab persona test): a
+    grief disclosure gets the fixed warm opening line above.
+    Deliberately narrow — a person plus a death word — so ordinary
+    talk ('I died laughing', 'my dad passed his test', 'נפטרתי
+    מהעבודה') never fires."""
+    t = text or ""
+    return any(rx.search(t) for rx in GRIEF_RE)
 
 
 HEBREW_RE = re.compile(r"[\u0590-\u05FF]")
@@ -1404,6 +1506,23 @@ def _prepare_turn(uid, msg):
             )
             return ctx, ("model", "crisis", system)
 
+    # Grief disclosure (Tab persona test): not risk, not latched
+    # crisis — the normal conversation, but the reply opens with
+    # the fixed condolence line (prepended in _finish_model_turn)
+    # and the model is told to stay with the grief.
+    if detect_grief(msg):
+        gsys = build_system(
+            profile, summary,
+            has_prior=user_count > 1, returning=returning,
+            summary_date=summary_date,
+        ) + GRIEF_NOTE
+        ctx["grief_hebrew"] = hebrew
+        ctx["fallback_text"] = (
+            (GRIEF_OPENING_HE + " " + GRIEF_FALLBACK_HE) if hebrew
+            else (GRIEF_OPENING + " " + GRIEF_FALLBACK)
+        )
+        return ctx, ("model", "grief", gsys)
+
     system = build_system(
         profile, summary,
         has_prior=user_count > 1, returning=returning,
@@ -1432,6 +1551,29 @@ def _finish_model_turn(ctx, mode, reply, background):
         if reply.startswith("[CRISIS]"):
             reply = reply[len("[CRISIS]"):].strip()
         _save_assistant_msg(uid, reply)
+        return {"reply": reply, "crisis": False, "hotline": hotline,
+                "banner": banner, "banner_lang": banner_lang}
+
+    if mode == "grief" and reply.startswith("[CRISIS]"):
+        # The model itself escalated a grief turn — hand it to the
+        # normal path below, whose marker handling latches crisis
+        # exactly as for any other turn.
+        mode = "normal"
+    if mode == "grief":
+        # Prepend the FIXED opening line (never trust the model to
+        # produce it, never let it be paraphrased away). No crisis
+        # latch, no banner change, no hotline footer — grief is not
+        # the crisis flow.
+        opening = (GRIEF_OPENING_HE if ctx.get("grief_hebrew")
+                   else GRIEF_OPENING)
+        body = reply.strip()
+        if opening[:24] not in body[:80]:
+            reply = opening + ("\n\n" + body if body else "")
+        else:
+            reply = body
+        _save_assistant_msg(uid, reply)
+        if ctx["user_count"] == 3 or ctx["user_count"] % 5 == 0:
+            background.add_task(update_summary, uid)
         return {"reply": reply, "crisis": False, "hotline": hotline,
                 "banner": banner, "banner_lang": banner_lang}
 
@@ -1581,6 +1723,14 @@ def _chat_stream_events(uid, msg, background):
         yield _sse({"type": "done", **payload})
         return
     _, mode, system = outcome
+
+    if mode == "grief":
+        # The fixed condolence opens the reply — send it at once,
+        # before the model's continuation streams. (The done
+        # payload stays authoritative, as everywhere else.)
+        opening = (GRIEF_OPENING_HE if ctx.get("grief_hebrew")
+                   else GRIEF_OPENING)
+        yield _sse({"type": "delta", "text": opening + "\n\n"})
 
     raw = ""
     skip = None  # None until the [CRISIS]-marker question is settled
