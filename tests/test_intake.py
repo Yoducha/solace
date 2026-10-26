@@ -44,6 +44,38 @@ if "Solace remembers key themes so you can pick up" in html:
 if 'id="lead-line"' not in html:
     failures.append("INTAKE lead id missing")
 
+# Tab round 2: the intake's explanatory prose (tagline, privacy
+# line, audience, lead, tiny print) must total <= ~70 words, with
+# the approved privacy sentence verbatim and "Not therapy" once.
+import re as _re
+
+
+def _elem_text(html_src, elem_id):
+    m = _re.search(
+        r'id="%s"[^>]*>(.*?)</p>' % elem_id, html_src, _re.S)
+    if not m:
+        return ""
+    return _re.sub(r"<[^>]+>", " ", m.group(1))
+
+
+_prose = " ".join(
+    _elem_text(html, i) for i in (
+        "tagline", "privacy-line", "audience-line", "lead-line",
+        "tiny-line"))
+_prose_words = len(_prose.split())
+if _prose_words > 70:
+    failures.append("INTAKE prose is %d words (want <= 70)"
+                    % _prose_words)
+if ("Your chats aren't shared with other people or used to "
+        "advertise to you. See the privacy page for details."
+        not in _elem_text(html, "lead-line")):
+    failures.append("INTAKE lead lost the approved privacy sentence")
+_welcome = html[html.find('<section id="welcome">'):
+                html.find('</section>')]
+if _welcome.count("Not therapy") != 1:
+    failures.append("INTAKE 'Not therapy' count != 1: %d"
+                    % _welcome.count("Not therapy"))
+
 # ---------- Hebrew intake -------------------------------------------------
 for marker in ("UI_HE", "BTXT", "applyIntakeHe".replace("applyIntakeHe", "UI_HE"),
                "להתחיל התבוננות", "מה הכי מכביד עליך?",

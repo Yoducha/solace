@@ -429,8 +429,8 @@
     <p class="privacy-line" id="privacy-line">We count usage anonymously — never what you write.</p>
 
     <div id="intake-fields" style="display:none">
-      <p class="audience" id="audience-line">For anyone carrying stress, anxiety, or a heavy mind — a private place to sort out your thoughts, day or night, no judgment.</p>
-      <p class="lead" id="lead-line">A quiet space to talk through what's on your mind, at your own pace. Your chats aren't shared with other people or used to advertise to you. See the privacy page for details.</p>
+      <p class="audience" id="audience-line">Heavy mind? Day or night, no judgment.</p>
+      <p class="lead" id="lead-line">Your chats aren't shared with other people or used to advertise to you. See the privacy page for details.</p>
 
       <div>
         <label class="q" for="name" id="name-label">What should I call you? <span style="color:var(--muted);font-weight:400">(optional)</span></label>
@@ -462,7 +462,7 @@
         <textarea id="concern" placeholder="Whatever comes to mind — there's no wrong answer."></textarea>
       </div>
 
-      <p class="tiny" id="tiny-line">By continuing you agree to the <a href="/terms" target="_blank">Terms</a> and <a href="/privacy" target="_blank">Privacy Policy</a>, and you understand Solace is an AI self-help companion, not professional care.<br>If you're ever in crisis, call or text 988.</p>
+      <p class="tiny" id="tiny-line">Continuing means you agree to the <a href="/terms" target="_blank">Terms</a> and <a href="/privacy" target="_blank">Privacy Policy</a>. In crisis, call or text 988.</p>
     </div>
   </section>
 
@@ -2617,8 +2617,8 @@ if (UI_HE) {
   set('begin-rehearse', 'לתרגל שיחה קשה');
   set('begin', BTXT.begin);
   set('privacy-line', 'אנחנו סופרים שימוש באופן אנונימי — לעולם לא את מה שכותבים.');
-  set('audience-line', 'לכל מי שנושא מתח, חרדה או ראש כבד — מקום פרטי ורגוע לסדר את המחשבות, ביום ובלילה, בלי שיפוט.');
-  set('lead-line', 'מרחב שקט לדבר על מה שעובר עליך, בקצב שלך. השיחות שלך לא משותפות עם אנשים אחרים ולא משמשות כדי לפרסם לך. לפרטים נוספים, ראו את עמוד הפרטיות.');
+  set('audience-line', 'לכל מי שהראש כבד עליו — ביום ובלילה, בלי שיפוט.');
+  set('lead-line', 'השיחות שלך לא משותפות עם אנשים אחרים ולא משמשות כדי לפרסם לך. לפרטים נוספים, ראו את עמוד הפרטיות.');
   set('name-label', 'איך לקרוא לך? (לא חובה)');
   document.getElementById('name').placeholder = 'השם הפרטי שלך';
   set('mood-label', 'איך אתה מרגיש עכשיו?');
@@ -2641,7 +2641,7 @@ if (UI_HE) {
   set('concern-label', 'מה הכי מכביד עליך?');
   document.getElementById('concern').placeholder = 'כל מה שעולה בראש — אין תשובה לא נכונה.';
   document.getElementById('tiny-line').innerHTML =
-    'בהמשך אתה מסכים ל<a href="/terms" target="_blank">תנאים</a> ול<a href="/privacy" target="_blank">מדיניות הפרטיות</a>, ומבין ש-Solace היא מלווה AI לעזרה עצמית, לא ליווי מקצועי.<br>במשבר בישראל אפשר להתקשר לער״ן במספר 1201 בכל שעה.';
+    'בהמשך אתה מסכים ל<a href="/terms" target="_blank">תנאים</a> ול<a href="/privacy" target="_blank">מדיניות הפרטיות</a>. במשבר: ער״ן <a href="tel:1201">1201</a>, בכל שעה.';
 }
 
 // Returning user: skip intake, restore history
