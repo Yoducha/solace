@@ -288,17 +288,19 @@
   #vm-orb {
     width: 168px; height: 168px; border-radius: 50%;
     /* Dimmed overall (real-iPhone test: the first version read as
-       a bright flash) — softer highlights, weaker inner white. */
+       a bright flash) — softer highlight, weaker inner white, and
+       a brightness cut across the whole orb. */
     background:
       radial-gradient(circle at 35% 30%, #dec39f 0%, rgba(222,195,159,0) 55%),
       radial-gradient(circle at 70% 78%, #9aa88c 0%, rgba(154,168,140,0) 58%),
-      radial-gradient(circle at 50% 50%, #b07e4e 0%, #a08e6f 58%, #6f7d60 100%);
+      radial-gradient(circle at 50% 50%, var(--clay) 0%, #a08e6f 58%, var(--sage) 100%);
     box-shadow: 0 0 46px 13px rgba(192,133,82,.17), 0 0 90px 38px rgba(125,139,111,.10),
       inset 0 0 44px rgba(250,247,241,.18);
+    filter: brightness(.88) saturate(.92);
     animation: vm-breathe 6.5s ease-in-out infinite;
     will-change: transform;
   }
-  @keyframes vm-breathe { 0%, 100% { filter: brightness(1); } 50% { filter: brightness(1.03); } }
+  @keyframes vm-breathe { 0%, 100% { filter: brightness(.88) saturate(.92); } 50% { filter: brightness(.905) saturate(.92); } }
   #vm-status { font-size: 19px; font-weight: 600; color: var(--ink); min-height: 26px; }
   #vm-caption {
     max-width: 440px; min-height: 24px; text-align: center;
@@ -2091,10 +2093,20 @@ function vmOrbLoop() {
   const lvl = vm.lvl;
   if (orb) {
     orb.style.transform = 'scale(' + (1 + breathe + lvl * 0.20).toFixed(3) + ')';
-    orb.style.boxShadow =
-      '0 0 ' + Math.round(46 + lvl * 34) + 'px ' + Math.round(13 + lvl * 13) +
-      'px rgba(192,133,82,' + (0.17 + lvl * 0.12).toFixed(2) +
-      '), 0 0 90px 38px rgba(125,139,111,.10), inset 0 0 44px rgba(250,247,241,.18)';
+    // Inline shadow follows the color scheme too, so dark mode
+    // keeps its dimmer glow (an inline style would otherwise win
+    // over the dark-mode stylesheet rule every frame).
+    if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
+      orb.style.boxShadow =
+        '0 0 ' + Math.round(40 + lvl * 26) + 'px ' + Math.round(11 + lvl * 10) +
+        'px rgba(176,126,78,' + (0.14 + lvl * 0.09).toFixed(2) +
+        '), 0 0 80px 32px rgba(111,125,96,.08), inset 0 0 44px rgba(0,0,0,.28)';
+    } else {
+      orb.style.boxShadow =
+        '0 0 ' + Math.round(46 + lvl * 34) + 'px ' + Math.round(13 + lvl * 13) +
+        'px rgba(192,133,82,' + (0.17 + lvl * 0.12).toFixed(2) +
+        '), 0 0 90px 38px rgba(125,139,111,.10), inset 0 0 44px rgba(250,247,241,.18)';
+    }
   }
   requestAnimationFrame(vmOrbLoop);
 }

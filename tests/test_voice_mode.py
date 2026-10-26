@@ -103,7 +103,7 @@ vm_block = html[html.find("// ---- Voice Mode"):html.find("// Returning user")]
 for needle in ("await sendChat(text)",          # reflection turns
                "await rhUserLine(text, vt)",    # rehearsal turns
                "vmVoiceTurn(text, sess)",       # measured voice turn
-               "payload.crisis", "vmClose()",   # crisis exits voice mode
+               "payload.crisis", "vmClose('crisis')",  # crisis exits voice mode
                "!rhState",                      # rehearsal crisis exit
                "vmStartListening('barge')",     # barge-in listener
                "vmEnterTapMode",                # graceful degradation
@@ -193,6 +193,52 @@ if stream_calls["n"] != before + 1:
     failures.append("E2E calm spoken line did not reach the model once")
 
 print("e2e: calm spoken line streams a normal reply")
+
+# ---------- Bug 1: soft orb — fade-in, dim, calm, dark/reduced ---------
+vm_css_all = html[html.find("/* ---- Voice Mode"):html.find("/* \"Did this help?\"")]
+for needle in ("#voice-mode.shown { opacity: 1; transition: opacity .55s ease; }",
+               "@media (prefers-color-scheme: dark)",
+               "@media (prefers-reduced-motion: reduce)",
+               "animation: none",
+               "brightness(.88)"):
+    if needle not in vm_css_all:
+        failures.append("BUG1 voice CSS missing: %s" % needle)
+if "brightness(1.07)" in vm_css_all:
+    failures.append("BUG1 old bright breathe keyframe still present")
+# The orb loop smooths the level (no per-frame jumps) and renders a
+# static orb under Reduce Motion.
+for needle in ("VM_REDUCED_MOTION", "* 0.055", "restart listening",
+               "window.__vmLog"):
+    if needle not in vm_block:
+        failures.append("BUG1/2 vm code missing: %s" % needle)
+# Fade-in is armed in vmOpen.
+if "classList.add('shown')" not in vm_block:
+    failures.append("BUG1 vmOpen never adds the .shown fade-in class")
+
+print("bug1: fade-in class, dim orb, smooth loop, dark + reduced motion")
+
+# ---------- Bug 2: Voice Mode never closes on its own -------------------
+# vmClose refuses every reason except the user's exit and crisis.
+for needle in ("function vmClose(reason)",
+               "reason !== 'user' && reason !== 'crisis'",
+               "close REFUSED",
+               "vmClose('user')",
+               "rhExitWasCrisis"):
+    if needle not in html:
+        failures.append("BUG2 close guard missing: %s" % needle)
+# No bare vmClose() / vmClose(<other>) call sites in the voice code.
+import re as _re
+for m in _re.finditer(r"vmClose\(([^)]*)\)", vm_block):
+    if m.group(1).strip() not in ("'user'", "'crisis'", "reason"):
+        failures.append("BUG2 unguarded vmClose call: vmClose(%s)" % m.group(1))
+# Recognition-end handling restarts or degrades — with logging —
+# instead of tearing the view down.
+for needle in ("recognition ended, nothing heard",
+               "degrade to Tap to talk"):
+    if needle not in vm_block:
+        failures.append("BUG2 restart logging missing: %s" % needle)
+
+print("bug2: close guard (user/crisis only), logged restarts, rh flag")
 
 if failures:
     print("\nFAILURES (%d):" % len(failures))
