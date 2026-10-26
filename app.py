@@ -2219,7 +2219,9 @@ def _count_fillers(text):
         total += 1
         detail["um/uh"] = detail.get("um/uh", 0) + 1
     for ph in _FILLER_PHRASES_EN:
-        n = low.count(" %s " % ph) + (1 if low.strip().startswith(ph) else 0)
+        # Word boundaries, so "you know," (comma attached) still
+        # counts — a padded-space search missed exactly that shape.
+        n = len(re.findall(r"\b%s\b" % re.escape(ph), low))
         if n:
             total += n
             detail[ph] = detail.get(ph, 0) + n
