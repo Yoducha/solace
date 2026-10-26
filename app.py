@@ -1768,7 +1768,7 @@ Rules:
     - "full": you may say they are ready for the real talk.
     - "partial": name the ground they won and the one thing still left to get.
     - "none": NEVER say the user is ready or prepared, and never imply it went well — they won no concession. Close with what they DID hold on to (they stayed calm, they said the hard sentence out loud) plus ONE concrete target for next time, in this shape: "<what they held>; next time get one concrete yes."
-- DELIVERY (only when the request includes a "DELIVERY (measured)" block): add one more key, "delivery": an array of 2-3 short strings about HOW the user said it — pace, pauses, filler words, steadiness — using ONLY the measured facts in that block. Never invent a number or a quote; where the block gives an example line, quote it exactly. If the block reports long pauses (over 2 seconds), you MUST mention them, with the measured count. If there is no DELIVERY block in the request, do not include a "delivery" key at all.
+- DELIVERY (only when the request includes a "DELIVERY (measured)" block): add one more key, "delivery": an array of 2-3 short strings about HOW the user said it — pace, pauses, filler words, steadiness — using ONLY the measured facts in that block. Never invent a number or a quote; where the block gives an example line, quote it exactly. If the block reports long pauses (over 2 seconds), you MUST mention them, with the measured count, and say where each pause fell — the word it came after — exactly as the block states. Call a pause a pause "before you started" ONLY when the block explicitly reports a before-starting pause over ~2 seconds; never invent a pause location or a start gap the block does not report. If there is no DELIVERY block in the request, do not include a "delivery" key at all.
 - Match the user's language: if the conversation is in Hebrew, every string in the JSON is in Hebrew."""
 
 
@@ -2231,7 +2231,9 @@ def _fallback_debrief(rec, user_lines):
 # browser's speech recognition produces each spoken line's transcript
 # plus timings (the speech/capture interval from recognition or
 # speech start through speech end — not just first-to-last result —
-# pause before it, longest mid-line pause); the client sends those
+# pause before it, longest mid-line pause, and each mid-line pause
+# event with the last word recognized before it began); the client
+# sends those
 # with the debrief request and the
 # numbers below are computed here. Typed-only rehearsals send no
 # voice turns and get no delivery section — no fake data.
@@ -2306,9 +2308,13 @@ def _delivery_facts(voice_turns, user_lines):
     """Measured delivery facts for the spoken turns of a rehearsal,
     or None when nothing usable was spoken. voice_turns entries are
     client-measured: {text, speak_ms, pause_before_ms,
-    longest_pause_ms}; each is matched to its transcript line by
-    exact (normalized) text, in order, so quotes stay the user's
-    exact words from the transcript itself."""
+    longest_pause_ms, pauses}; "pauses" is the client's per-line
+    list of mid-line pause events {ms, after} — "after" is the last
+    word recognized before that pause began — so coaching can say
+    WHERE a pause fell ("You paused 2.5s after 'workload'"). Each
+    turn is matched to its transcript line by exact (normalized)
+    text, in order, so quotes stay the user's exact words from the
+    transcript itself."""
     if not voice_turns or not user_lines:
         return None
     remaining = list(range(len(user_lines)))
@@ -2334,11 +2340,28 @@ def _delivery_facts(voice_turns, user_lines):
         if hit is None:
             continue
         remaining.remove(hit)
+        # Located mid-line pauses for this line: only events at or
+        # over the ~2 s coaching threshold, with a usable location
+        # word, sanitized (bounded count/length).
+        located = []
+        raw_pauses = vt.get("pauses")
+        if isinstance(raw_pauses, list):
+            for ev in raw_pauses[:6]:
+                if not isinstance(ev, dict):
+                    continue
+                try:
+                    ms = max(0, min(int(ev.get("ms") or 0), 600000))
+                except (TypeError, ValueError):
+                    continue
+                after = str(ev.get("after") or "").strip()[:60]
+                if ms >= 2000 and after:
+                    located.append({"ms": ms, "after": after})
         matched.append({
             "line": user_lines[hit],
             "speak_ms": _ms("speak_ms"),
             "pause_before_ms": _ms("pause_before_ms"),
             "longest_pause_ms": _ms("longest_pause_ms"),
+            "pauses": located,
         })
     if not matched:
         return None
@@ -2370,6 +2393,21 @@ def _delivery_facts(voice_turns, user_lines):
                     longest_pause_over_2_s, m[key] / 1000.0)
                 if m["line"] not in long_pause_examples:
                     long_pause_examples.append(m["line"])
+    # Located pauses (Tab fix): each coached mid-line pause carries
+    # the word it followed, so coaching can name where it fell.
+    pause_locations = []
+    for m in matched:
+        for ev in m["pauses"]:
+            pause_locations.append({
+                "s": round(ev["ms"] / 1000.0, 1),
+                "after": ev["after"],
+                "line": m["line"],
+            })
+    pause_locations = pause_locations[:4]
+    # The start gap (silence before a line began) is a reportable
+    # fact ONLY when it is over ~2 seconds; at or under that the
+    # coaching must not mention a start gap at all.
+    start_gaps = [m for m in matched if m["pause_before_ms"] > 2000]
     fillers_total = 0
     filler_detail = {}
     filler_line = ""
@@ -2405,6 +2443,11 @@ def _delivery_facts(voice_turns, user_lines):
         "long_pause_events": long_pause_events,
         "longest_pause_over_2_s": round(longest_pause_over_2_s, 1),
         "long_pause_examples": long_pause_examples[:2],
+        "pause_locations": pause_locations,
+        "start_gaps_over_2s": len(start_gaps),
+        "longest_start_gap_s": (
+            round(max(m["pause_before_ms"] for m in start_gaps) / 1000.0, 1)
+            if start_gaps else 0),
         "fillers_total": fillers_total,
         "fillers_detail": detail_top,
         "filler_line": filler_line if filler_line_n else "",
@@ -2434,6 +2477,18 @@ def _delivery_facts_block(f):
         for q in f.get("long_pause_examples", []):
             lines.append(
                 '- A line with a long pause, exactly: "%s"' % q)
+    for loc in f.get("pause_locations", []):
+        lines.append(
+            '- Pause location: a pause of about %s seconds came '
+            'right after "%s".' % (loc["s"], loc["after"]))
+    if f.get("start_gaps_over_2s"):
+        lines.append(
+            "- Before starting a line, the user paused over ~2 "
+            "seconds %d time(s); the longest such pause was about "
+            "%s seconds. This may be described as a pause \"before "
+            "you started\". No other start gap is reported — do "
+            "not mention one." % (f["start_gaps_over_2s"],
+                                  f["longest_start_gap_s"]))
     if f["fillers_total"]:
         det = ", ".join("%s ×%d" % kv for kv in f["fillers_detail"])
         lines.append("- Filler words: %d total (%s)." % (f["fillers_total"], det))
@@ -2469,7 +2524,22 @@ def _delivery_notes_code(f, hebrew):
                         f["pace_band"]]
             notes.append("הקצב שלך היה בערך %d מילים לדקה — %s."
                          % (f["wpm"], band))
-        if f.get("long_pause_events"):
+        if f.get("pause_locations"):
+            locs = f["pause_locations"][:2]
+            if len(locs) == 1:
+                where = "אחרי המילה \u201c%s\u201d" % locs[0]["after"]
+                notes.append(
+                    "עצרת בערך %s שניות %s. עצירה יכולה להישמע כמו "
+                    "איסוף מחשבות, לא כמו חולשה."
+                    % (locs[0]["s"], where))
+            else:
+                notes.append(
+                    "עצרת בערך %s שניות אחרי המילה \u201c%s\u201d, ועוד "
+                    "%s שניות אחרי המילה \u201c%s\u201d. עצירה יכולה "
+                    "להישמע כמו איסוף מחשבות, לא כמו חולשה."
+                    % (locs[0]["s"], locs[0]["after"],
+                       locs[1]["s"], locs[1]["after"]))
+        elif f.get("long_pause_events"):
             notes.append(
                 "היו %d הפסקות של יותר מ־2 שניות (הארוכה בערך %s שניות). "
                 "הפסקה יכולה להישמע כמו איסוף מחשבות, לא כמו חולשה."
@@ -2495,7 +2565,21 @@ def _delivery_notes_code(f, hebrew):
                     f["pace_band"]]
         notes.append("Your pace averaged about %d words per minute — %s."
                      % (f["wpm"], band))
-    if f.get("long_pause_events"):
+    if f.get("pause_locations"):
+        locs = f["pause_locations"][:2]
+        if len(locs) == 1:
+            notes.append("You paused about %s seconds after "
+                         "\u201c%s.\u201d A pause can read as "
+                         "collecting your thoughts, not weakness."
+                         % (locs[0]["s"], locs[0]["after"]))
+        else:
+            notes.append("You paused about %s seconds after "
+                         "\u201c%s\u201d, and about %s seconds after "
+                         "\u201c%s.\u201d A pause can read as "
+                         "collecting your thoughts, not weakness."
+                         % (locs[0]["s"], locs[0]["after"],
+                            locs[1]["s"], locs[1]["after"]))
+    elif f.get("long_pause_events"):
         notes.append("There were %d pauses over 2 seconds (longest "
                      "about %s seconds). A pause can read as "
                      "collecting your thoughts, not weakness."

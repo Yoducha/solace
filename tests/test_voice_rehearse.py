@@ -86,6 +86,58 @@ nf = solace._delivery_facts(
 if not nf or nf["wpm"] != 120 or nf["pace_band"] != "natural":
     failures.append("UNIT capture-interval pace wrong: %r" % nf)
 
+# Round 3 fix (Tab): pauses are coached WITH their location —
+# the word each pause followed — and a start gap is a reportable
+# fact only when it is over ~2 s.
+LOC_LINE = "I need to cut my workload because Fridays are impossible"
+loc_turns = [{
+    "text": LOC_LINE, "speak_ms": 9000, "pause_before_ms": 1500,
+    "longest_pause_ms": 3200,
+    "pauses": [{"ms": 2500, "after": "workload"},
+               {"ms": 900, "after": "my"},
+               {"ms": 3200, "after": "Fridays"},
+               {"ms": 4100, "after": ""}],
+}]
+lf = solace._delivery_facts(loc_turns, [LOC_LINE])
+if lf is None:
+    failures.append("UNIT located-pause facts None")
+else:
+    locs = lf["pause_locations"]
+    # Sub-2 s events and location-less events are dropped.
+    if [(x["s"], x["after"]) for x in locs] != [(2.5, "workload"),
+                                                (3.2, "Fridays")]:
+        failures.append("UNIT pause locations wrong: %r" % locs)
+    # 1.5 s before the line is NOT a reportable start gap.
+    if lf["start_gaps_over_2s"] != 0:
+        failures.append("UNIT sub-2s start gap reported: %r" % lf)
+    loc_block = solace._delivery_facts_block(lf)
+    if 'right after "workload"' not in loc_block:
+        failures.append("UNIT facts block lacks pause location: %r"
+                        % loc_block)
+    if "before you started" in loc_block:
+        failures.append("UNIT facts block invents a start gap: %r"
+                        % loc_block)
+    loc_notes = solace._delivery_notes_code(lf, hebrew=False)
+    if not any("after \u201cworkload" in n for n in loc_notes):
+        failures.append("UNIT code notes lack located pause: %r"
+                        % loc_notes)
+    loc_notes_he = solace._delivery_notes_code(lf, hebrew=True)
+    if not any("אחרי המילה" in n and "workload" in n
+               for n in loc_notes_he):
+        failures.append("UNIT Hebrew notes lack located pause: %r"
+                        % loc_notes_he)
+
+# A start gap over ~2 s IS reported, in the gated phrasing only.
+sg_turns = [{"text": LOC_LINE, "speak_ms": 9000,
+             "pause_before_ms": 2600, "longest_pause_ms": 0,
+             "pauses": []}]
+sgf = solace._delivery_facts(sg_turns, [LOC_LINE])
+if not sgf or sgf["start_gaps_over_2s"] != 1 \
+        or sgf["longest_start_gap_s"] != 2.6:
+    failures.append("UNIT start-gap facts wrong: %r" % sgf)
+elif "before you started" not in solace._delivery_facts_block(sgf):
+    failures.append("UNIT facts block lacks gated start gap")
+
 # Typed-only (no voice turns) -> no facts, no section, no fake data.
 if solace._delivery_facts([], user_lines) is not None:
     failures.append("UNIT typed-only rehearsal produced delivery facts")
@@ -226,7 +278,7 @@ for marker in ('id="rh-mic"', 'webkitSpeechRecognition', 'voice_turns',
                'the text of what you say.',
                'rh-voice-toggle', 'SpeechRecognition',
                'rhVoiceDurationMs', 'onspeechstart', 'onspeechend',
-               'captureStartAt',
+               'captureStartAt', 'rhLastWord', 'pauses: pauses',
                'Tap 🎤 and say it out loud.',
                "partnerVoice: ('speechSynthesis' in window)"):
     if marker not in html:
