@@ -252,6 +252,73 @@
   }
   [dir="rtl"] #rh-voicebar .pv { margin-left: 0; margin-right: auto; }
   #rh-voice-note { flex-basis: 100%; color: var(--clay); }
+  /* Chat composer mic: opens the full-screen Voice Mode. */
+  #composer button#chat-mic {
+    background: var(--card); border: 1px solid var(--line); color: var(--ink);
+    padding: 0 15px; font-size: 19px; font-weight: 400;
+  }
+  /* ---- Voice Mode: full-screen calm view (Tab spec) ----
+     One soft orb in Solace's own colors on a parchment wash —
+     never black. The orb's scale/glow are driven from JS by the
+     live voice level (mic while listening, Solace's speech while
+     speaking); the CSS only carries the idle breathing. */
+  #voice-mode {
+    position: fixed; inset: 0; z-index: 30; display: none;
+    flex-direction: column; align-items: center;
+    background:
+      radial-gradient(120% 90% at 50% 0%, var(--clay-soft) 0%, rgba(247,236,225,0) 55%),
+      radial-gradient(120% 100% at 50% 110%, var(--sage-soft) 0%, rgba(238,241,232,0) 60%),
+      var(--bg);
+    padding: calc(18px + env(safe-area-inset-top)) 20px calc(14px + env(safe-area-inset-bottom));
+  }
+  #voice-mode.open { display: flex; }
+  #vm-privacy {
+    max-width: 420px; text-align: center; color: var(--muted);
+    font-size: 13.5px; line-height: 1.5; margin-top: 8px;
+  }
+  #vm-center {
+    flex: 1; display: flex; flex-direction: column; align-items: center;
+    justify-content: center; gap: 22px; width: 100%;
+  }
+  #vm-orb {
+    width: 168px; height: 168px; border-radius: 50%;
+    background:
+      radial-gradient(circle at 35% 30%, #e8cdb2 0%, rgba(232,205,178,0) 55%),
+      radial-gradient(circle at 70% 78%, #a9b89b 0%, rgba(169,184,155,0) 58%),
+      radial-gradient(circle at 50% 50%, var(--clay) 0%, #b3a284 58%, var(--sage) 100%);
+    box-shadow: 0 0 60px 18px rgba(192,133,82,.28), 0 0 120px 50px rgba(125,139,111,.16),
+      inset 0 0 44px rgba(250,247,241,.45);
+    animation: vm-breathe 5.2s ease-in-out infinite;
+    will-change: transform;
+  }
+  @keyframes vm-breathe { 0%, 100% { filter: brightness(1); } 50% { filter: brightness(1.07); } }
+  #vm-status { font-size: 19px; font-weight: 600; color: var(--ink); min-height: 26px; }
+  #vm-caption {
+    max-width: 440px; min-height: 24px; text-align: center;
+    color: var(--muted); font-size: 15.5px; line-height: 1.5;
+  }
+  #vm-taptalk {
+    display: none; background: var(--clay); color: #fff; border: none;
+    border-radius: 999px; padding: 17px 42px; font-size: 18px; font-weight: 700;
+    cursor: pointer; font-family: inherit; margin-bottom: 20px;
+    box-shadow: 0 8px 24px rgba(192,133,82,.35);
+  }
+  #vm-taptalk.show { display: block; }
+  #vm-bar {
+    width: 100%; max-width: 520px; display: flex; align-items: center; gap: 10px;
+  }
+  #vm-bar button {
+    flex: none; width: 54px; height: 54px; border-radius: 50%; cursor: pointer;
+    font-size: 21px; font-family: inherit;
+    background: var(--card); border: 1px solid var(--line); color: var(--ink);
+  }
+  #vm-bar button#vm-mute.off { background: #b3402e; border-color: #b3402e; color: #fff; }
+  #vm-bar button#vm-exit { font-size: 19px; }
+  #vm-bar input {
+    flex: 1; border: 1px solid var(--line); border-radius: 999px;
+    padding: 14px 18px; font-size: 16px; font-family: inherit;
+    background: var(--card); color: var(--ink); min-width: 0;
+  }
   /* "Did this help?" — one vote per session, counted anonymously. */
   #help-vote {
     display: flex; align-items: center; justify-content: center; gap: 10px;
@@ -360,6 +427,7 @@
       <button type="button" id="help-down" aria-label="Not really">👎</button>
     </div>
     <div id="composer">
+      <button id="chat-mic" type="button" title="Voice mode">🎤</button>
       <input type="text" id="input" placeholder="Share what's on your mind…" autocomplete="off">
       <button id="send">Send</button>
     </div>
@@ -437,6 +505,25 @@
     </div>
   </section>
 </main>
+
+<!-- Voice Mode: full-screen hands-free voice view. Every turn
+     still flows through the normal chat / rehearsal pipelines
+     underneath, so the transcript is waiting in the chat on exit. -->
+<div id="voice-mode" role="dialog" aria-label="Voice mode">
+  <div id="vm-privacy" style="display:none"></div>
+  <div id="vm-center">
+    <div id="vm-orb"></div>
+    <div id="vm-status">Listening…</div>
+    <div id="vm-caption" dir="auto"></div>
+  </div>
+  <button id="vm-taptalk" type="button">Tap to talk</button>
+  <div id="vm-bar">
+    <button id="vm-mute" type="button" title="Mute mic">🎤</button>
+    <input type="text" id="vm-input" autocomplete="off">
+    <button id="vm-send" type="button" title="Send">↑</button>
+    <button id="vm-exit" type="button" title="End voice mode">✕</button>
+  </div>
+</div>
 
 <!-- What Solace remembers about you -->
 <div id="memory-overlay" role="dialog" aria-label="What Solace remembers about you">
@@ -752,6 +839,11 @@ function finishBubble(b, text) {
   scrollToLatest(b.box);
 }
 
+// The last chat turn's payload + rendered reply text — Voice Mode
+// reads these to speak the reply itself and to exit on crisis.
+let lastChatPayload = null;
+let lastChatReplyText = '';
+
 async function sendChat(text) {
   if ('speechSynthesis' in window) speechSynthesis.cancel();
   const typing = addTyping('messages');
@@ -765,6 +857,7 @@ async function sendChat(text) {
       hideBanner();
     }
     const reply = payload.reply || acc || "I'm here.";
+    lastChatReplyText = reply;
     if (bubble) {
       finishBubble(bubble, reply);
     } else {
@@ -808,6 +901,8 @@ async function sendChat(text) {
     if (!payload) throw new Error('stream ended without done');
     if (typing.isConnected) typing.remove();
     applyPayload(payload, bubble, acc);
+    lastChatPayload = payload;
+    return payload;
   } catch (e) {
     if (typing.isConnected) typing.remove();
     if (bubble) {
@@ -820,11 +915,14 @@ async function sendChat(text) {
       try {
         const res = await api('/api/chat', {user_id: userId, message: text});
         applyPayload(res, null, '');
+        lastChatPayload = res;
+        return res;
       } catch (e2) {
         addMsg("I'm having trouble connecting. Please check your connection and try again.", 'ai');
       }
     }
   }
+  return null;
 }
 
 function showChat() {
@@ -1215,6 +1313,30 @@ function rhBubble() {
   return {box: d, span};
 }
 
+// ---- Shared speech-out tracking ----
+// Counts utterances currently playing so Voice Mode can know when
+// Solace has finished speaking (and restart listening). Word
+// boundary events bump the voice-mode orb while Solace talks.
+let spkPending = 0;
+const spkWaiters = [];
+function spkTrack(u) {
+  spkPending++;
+  let done = false;
+  const fin = () => {
+    if (done) return;
+    done = true;
+    spkPending = Math.max(0, spkPending - 1);
+    if (!spkPending) spkWaiters.splice(0).forEach(f => f());
+  };
+  u.onend = fin;
+  u.onerror = fin;
+  u.onboundary = () => { if (typeof vmSpeakBump === 'function') vmSpeakBump(); };
+}
+function spkIdle() {
+  return spkPending === 0 ? Promise.resolve()
+    : new Promise(r => spkWaiters.push(r));
+}
+
 // ---- Voice Rehearse ----
 // Speech in: the browser's speech recognition (webkitSpeechRecognition
 // on iPhone Safari) turns the user's voice into text. The phone's own
@@ -1303,6 +1425,7 @@ function rhSpeakChunk(text) {
     u.voice = v;
     u.lang = lang === 'he' ? 'he-IL' : 'en-US';
     u.rate = 1.0;
+    spkTrack(u);
     speechSynthesis.speak(u);
   } catch (e) { /* no voice on this device — text carries it */ }
 }
