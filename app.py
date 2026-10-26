@@ -212,6 +212,76 @@ EMERGENCY_RESPONSE_HE = (
     "איתך. אני כאן איתך — בבקשה תתקשר עכשיו."
 )
 
+# Spouse loss + crisis (Tab ruling, Oct 26): a widow(er) whose
+# message carries risk ("I'm a widow, 47 years… I don't see the
+# point") gets a crisis reply that NAMES the loss — one line about
+# her husband (or his wife) — while keeping the safety question,
+# the 988 resources and the banner. The generic closer of the
+# frozen reply ("tell me what's going on") is wrong here, and the
+# frozen bytes may not change — so, like the retraction check-in,
+# this is a separate deterministic response used only on this
+# route; every other crisis keeps the frozen reply verbatim.
+_SPOUSE_LOSS_EN = [
+    (re.compile(r"\bwidow\b", re.I), "husband"),
+    (re.compile(r"\bwidower\b", re.I), "wife"),
+    (re.compile(r"\bmy\s+(husband|wife)\s+"
+                r"(?:died|passed\s+away|was\s+killed|is\s+gone)\b",
+                re.I), None),
+    (re.compile(r"\blost\s+my\s+(husband|wife)\b", re.I), None),
+    (re.compile(r"\bmy\s+late\s+(husband|wife)\b", re.I), None),
+]
+_SPOUSE_LOSS_HE = [
+    (re.compile(r"אלמנה"), "husband"),
+    (re.compile(r"אלמן"), "wife"),
+    (re.compile(r"בעלי\s+(?:נפטר|מת|נהרג)"), "husband"),
+    (re.compile(r"אשתי\s+(?:נפטרה|מתה|נהרגה)"), "wife"),
+    (re.compile(r"איבדתי\s+את\s+בעלי"), "husband"),
+    (re.compile(r"איבדתי\s+את\s+אשתי"), "wife"),
+]
+
+
+def detect_spouse_loss(text):
+    """'husband' / 'wife' when this message discloses a spouse's
+    death (widow/widower, 'my husband died', 'lost my wife',
+    אלמנה / בעלי נפטר …), else None."""
+    t = text or ""
+    for rx, fixed in _SPOUSE_LOSS_HE:
+        if rx.search(t):
+            return fixed
+    for rx, fixed in _SPOUSE_LOSS_EN:
+        m = rx.search(t)
+        if m:
+            return fixed or m.group(1).lower()
+    return None
+
+
+def spouse_crisis_response(spouse, hebrew):
+    """The widow-route crisis reply: loss line first, then the
+    safety question and resources (988 / ער״ן 1201), banner and
+    latch handled by the caller exactly as for the frozen reply."""
+    if hebrew:
+        who = "בעלך" if spouse == "husband" else "אשתך"
+        pronoun = "אותו" if spouse == "husband" else "אותה"
+        return (
+            "אני ממש מצטער על %s. לאבד %s משנה הכול — ועכשיו חשוב "
+            "לי לוודא שאתה בטוח. האם אתה חושב לפעול על פי המחשבות "
+            "האלה הלילה? אתה לא צריך לעבור את זה לבד — בישראל "
+            "אפשר להתקשר לער״ן, קו הסיוע הנפשי, במספר 1201 "
+            "(זמין 24/7). אם אתה בסכנה מיידית, התקשר למד״א במספר "
+            "101. אני כאן איתך." % (who, pronoun)
+        )
+    who = "husband" if spouse == "husband" else "wife"
+    pronoun = "him" if spouse == "husband" else "her"
+    return (
+        "I'm so sorry about your %s. Losing %s changes everything "
+        "— and right now I want to make sure you're safe. Are you "
+        "thinking about acting on these thoughts tonight? You "
+        "don't have to go through this alone — you can call or "
+        "text 988 (Suicide & Crisis Lifeline, 24/7) or text HOME "
+        "to 741741. If you're in immediate danger, call 911. "
+        "I'm here with you." % (who, pronoun)
+    )
+
 # Gentle check-in sent ONCE when a person walks back a crisis statement
 # while crisis mode is latched (re-test fix #2). A retraction no longer
 # switches safety mode off instantly: this check-in goes out, crisis
@@ -1598,8 +1668,14 @@ def _prepare_turn(uid, msg):
         banner_lang = safety_lang
         _set_user_state(uid, crisis_mode=True, stepdown_v=False,
                         banner_v=True, lang_v=banner_lang)
-        base = (FIXED_CRISIS_RESPONSE_HE if safety_hebrew
-                else FIXED_CRISIS_RESPONSE)
+        spouse = detect_spouse_loss(msg)
+        if spouse:
+            # Widow route (Tab ruling): the reply names the loss;
+            # the frozen reply serves every other crisis.
+            base = spouse_crisis_response(spouse, safety_hebrew)
+        else:
+            base = (FIXED_CRISIS_RESPONSE_HE if safety_hebrew
+                    else FIXED_CRISIS_RESPONSE)
         reply = base + crisis_resource_line(safety_hebrew, base)
         _save_assistant_msg(uid, reply)
         return ctx, ("final", {"reply": reply, "crisis": True,
