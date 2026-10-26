@@ -270,8 +270,13 @@
       radial-gradient(120% 100% at 50% 110%, var(--sage-soft) 0%, rgba(238,241,232,0) 60%),
       var(--bg);
     padding: calc(18px + env(safe-area-inset-top)) 20px calc(14px + env(safe-area-inset-bottom));
+    /* Bug fix (real-iPhone test): the view used to pop in at full
+       brightness. It now fades in gently over ~0.5s — no pop, no
+       white flash. (.shown is added a frame after .open.) */
+    opacity: 0;
   }
   #voice-mode.open { display: flex; }
+  #voice-mode.shown { opacity: 1; transition: opacity .55s ease; }
   #vm-privacy {
     max-width: 420px; text-align: center; color: var(--muted);
     font-size: 13.5px; line-height: 1.5; margin-top: 8px;
@@ -282,16 +287,18 @@
   }
   #vm-orb {
     width: 168px; height: 168px; border-radius: 50%;
+    /* Dimmed overall (real-iPhone test: the first version read as
+       a bright flash) — softer highlights, weaker inner white. */
     background:
-      radial-gradient(circle at 35% 30%, #e8cdb2 0%, rgba(232,205,178,0) 55%),
-      radial-gradient(circle at 70% 78%, #a9b89b 0%, rgba(169,184,155,0) 58%),
-      radial-gradient(circle at 50% 50%, var(--clay) 0%, #b3a284 58%, var(--sage) 100%);
-    box-shadow: 0 0 60px 18px rgba(192,133,82,.28), 0 0 120px 50px rgba(125,139,111,.16),
-      inset 0 0 44px rgba(250,247,241,.45);
-    animation: vm-breathe 5.2s ease-in-out infinite;
+      radial-gradient(circle at 35% 30%, #dec39f 0%, rgba(222,195,159,0) 55%),
+      radial-gradient(circle at 70% 78%, #9aa88c 0%, rgba(154,168,140,0) 58%),
+      radial-gradient(circle at 50% 50%, #b07e4e 0%, #a08e6f 58%, #6f7d60 100%);
+    box-shadow: 0 0 46px 13px rgba(192,133,82,.17), 0 0 90px 38px rgba(125,139,111,.10),
+      inset 0 0 44px rgba(250,247,241,.18);
+    animation: vm-breathe 6.5s ease-in-out infinite;
     will-change: transform;
   }
-  @keyframes vm-breathe { 0%, 100% { filter: brightness(1); } 50% { filter: brightness(1.07); } }
+  @keyframes vm-breathe { 0%, 100% { filter: brightness(1); } 50% { filter: brightness(1.03); } }
   #vm-status { font-size: 19px; font-weight: 600; color: var(--ink); min-height: 26px; }
   #vm-caption {
     max-width: 440px; min-height: 24px; text-align: center;
@@ -318,6 +325,36 @@
     flex: 1; border: 1px solid var(--line); border-radius: 999px;
     padding: 14px 18px; font-size: 16px; font-family: inherit;
     background: var(--card); color: var(--ink); min-width: 0;
+  }
+  /* Dark mode: the voice view stays calm and dim — deep warm
+     neutrals, a muted orb, no bright parchment blast. */
+  @media (prefers-color-scheme: dark) {
+    #voice-mode {
+      background:
+        radial-gradient(120% 90% at 50% 0%, #33291f 0%, rgba(51,41,31,0) 55%),
+        radial-gradient(120% 100% at 50% 110%, #272d21 0%, rgba(39,45,33,0) 60%),
+        #1e1a16;
+    }
+    #vm-orb {
+      background:
+        radial-gradient(circle at 35% 30%, #8a6b47 0%, rgba(138,107,71,0) 55%),
+        radial-gradient(circle at 70% 78%, #5f6c52 0%, rgba(95,108,82,0) 58%),
+        radial-gradient(circle at 50% 50%, #7d5c39 0%, #66583f 58%, #47523c 100%);
+      box-shadow: 0 0 40px 11px rgba(176,126,78,.14), 0 0 80px 32px rgba(111,125,96,.08),
+        inset 0 0 44px rgba(0,0,0,.28);
+    }
+    #vm-status { color: #ece4d4; }
+    #vm-caption, #vm-privacy { color: #a99c88; }
+    #vm-bar button { background: #2c2620; border-color: #4a4034; color: #ece4d4; }
+    #vm-bar input { background: #2c2620; border-color: #4a4034; color: #ece4d4; }
+    #vm-taptalk { box-shadow: 0 8px 24px rgba(0,0,0,.4); }
+  }
+  /* Reduce Motion: the orb is essentially static (no breathing
+     animation, no fade), and the JS orb loop renders a fixed
+     gentle scale instead of following the voice level. */
+  @media (prefers-reduced-motion: reduce) {
+    #vm-orb { animation: none; }
+    #voice-mode.shown { transition: none; }
   }
   /* "Did this help?" — one vote per session, counted anonymously. */
   #help-vote {
@@ -1158,6 +1195,10 @@ const RH = {
   },
 };
 let rhState = null;
+// Set by rhCrisisExit so Voice Mode can tell a crisis teardown
+// (it may close) from any other way the rehearsal can vanish
+// (it may NOT close — see vmClose).
+let rhExitWasCrisis = false;
 
 function rhLang() {
   return (bannerLang === 'he' || /^he/i.test(navigator.language || '')) ? 'he' : 'en';
@@ -1279,6 +1320,7 @@ function rhCrisisExit(payload) {
   rhStopSpeak();
   rhStopListening();
   document.getElementById('rehearse').style.display = 'none';
+  rhExitWasCrisis = true;
   rhState = null;
   showChat();
   if (payload.banner_lang) bannerLang = payload.banner_lang;
@@ -1986,9 +2028,20 @@ const vm = {
   active: false, ctx: null, lang: 'en', gen: 0,
   muted: false, tapMode: false, failStreak: 0,
   rec: null, sess: null, busy: false, queued: null,
-  act: 0, meter: null, meterOff: false,
+  act: 0, lvl: 0, meter: null, meterOff: false,
   lastReplyEndAt: 0, bargeTimer: null,
 };
+// Debug hook (real-iPhone bug hunt): every recognition restart,
+// degrade to Tap-to-talk, and close attempt is logged here and to
+// the console. Read it on-device via window.__vmLog.
+vm.log = [];
+function vmLog(what, detail) {
+  const entry = { t: new Date().toISOString(), what, detail: detail || '' };
+  vm.log.push(entry);
+  if (vm.log.length > 60) vm.log.shift();
+  try { console.log('[voice-mode]', what, detail || ''); } catch (e) {}
+  window.__vmLog = vm.log;
+}
 function vmT() { return VM_STR[vm.lang] || VM_STR.en; }
 function vmEl(id) { return document.getElementById(id); }
 function vmSetStatus(w) { const s = vmEl('vm-status'); if (s) s.textContent = w; }
@@ -2001,7 +2054,7 @@ function vmLangFor(ctx) {
 // Orb drive: mic level (WebAudio analyser) where available, else
 // an activity proxy bumped by recognition results and by Solace's
 // word boundaries while she speaks.
-function vmSpeakBump() { vm.act = Math.min(1, vm.act + 0.45); }
+function vmSpeakBump() { vm.act = Math.min(1, vm.act + 0.22); }
 function vmMicLevel() {
   const m = vm.meter;
   if (!m || !m.analyser) return 0;
@@ -2015,20 +2068,33 @@ function vmMicLevel() {
     return Math.min(1, Math.sqrt(sum / (m.data.length / 4)) * 3.2);
   } catch (e) { return 0; }
 }
+const VM_REDUCED_MOTION = !!(window.matchMedia &&
+  window.matchMedia('(prefers-reduced-motion: reduce)').matches);
 function vmOrbLoop() {
   if (!vm.active) return;
-  vm.act *= 0.93;
-  const speaking = spkPending > 0;
-  const breathe = 0.03 * (1 + Math.sin(Date.now() / 1600));
-  const lvl = Math.max(vmMicLevel(), vm.act,
-    speaking ? 0.22 + 0.1 * Math.sin(Date.now() / 210) : 0);
   const orb = vmEl('vm-orb');
+  if (VM_REDUCED_MOTION) {
+    // Essentially static: one fixed gentle scale, no pulse, no
+    // level following. Set once per status, then stop the loop.
+    if (orb) orb.style.transform = 'scale(1.02)';
+    return;
+  }
+  vm.act *= 0.96;
+  const speaking = spkPending > 0;
+  const breathe = 0.02 * (1 + Math.sin(Date.now() / 2400));
+  // Raw target level, then a slow approach toward it: the orb
+  // eases over ~half a second instead of jumping per frame, so
+  // voice-level changes read as a gentle swell, never a flicker
+  // (real-iPhone bug: the first version strobed with the voice).
+  const raw = Math.max(vmMicLevel(), vm.act, speaking ? 0.25 : 0);
+  vm.lvl = (vm.lvl || 0) + (Math.min(1, raw) - (vm.lvl || 0)) * 0.055;
+  const lvl = vm.lvl;
   if (orb) {
-    orb.style.transform = 'scale(' + (1 + breathe + lvl * 0.38).toFixed(3) + ')';
+    orb.style.transform = 'scale(' + (1 + breathe + lvl * 0.20).toFixed(3) + ')';
     orb.style.boxShadow =
-      '0 0 ' + Math.round(60 + lvl * 70) + 'px ' + Math.round(18 + lvl * 26) +
-      'px rgba(192,133,82,' + (0.28 + lvl * 0.25).toFixed(2) +
-      '), 0 0 120px 50px rgba(125,139,111,.16), inset 0 0 44px rgba(250,247,241,.45)';
+      '0 0 ' + Math.round(46 + lvl * 34) + 'px ' + Math.round(13 + lvl * 13) +
+      'px rgba(192,133,82,' + (0.17 + lvl * 0.12).toFixed(2) +
+      '), 0 0 90px 38px rgba(125,139,111,.10), inset 0 0 44px rgba(250,247,241,.18)';
   }
   requestAnimationFrame(vmOrbLoop);
 }
@@ -2128,15 +2194,18 @@ function vmStartListening(mode) {
 
 function vmNoteListenFailure() {
   vm.failStreak++;
-  if (vm.failStreak >= 2) { vmEnterTapMode(); return; }
+  vmLog('listen start failed — restarting', 'streak=' + vm.failStreak);
+  if (vm.failStreak >= 2) { vmEnterTapMode('start failures'); return; }
   setTimeout(() => {
     if (vm.active && !vm.muted && !vm.busy && !vm.rec) vmStartListening('turn');
   }, 350);
 }
 
-function vmEnterTapMode() {
+function vmEnterTapMode(reason) {
   // Auto-listen is blocked on this device/browser — degrade to
   // one big "Tap to talk" instead of failing or looping errors.
+  // The view stays OPEN either way.
+  if (!vm.tapMode) vmLog('degrade to Tap to talk', reason || '');
   vm.tapMode = true;
   vmEl('vm-taptalk').classList.add('show');
 }
@@ -2153,21 +2222,33 @@ function vmOnRecEnd(rec, sess) {
     vmDispatch(text, sess);
     return;
   }
-  // Nothing heard.
+  // Nothing heard — no-speech, a timeout, or a recognition error.
+  // Voice Mode stays open: restart listening, or degrade to
+  // Tap to talk after repeated failures. Log the reason either
+  // way (real-iPhone bug: the view used to vanish around here).
+  vmLog('recognition ended, nothing heard',
+        'error=' + (sess.errored || 'no-speech'));
   if (sess.errored === 'audio-capture' && vm.meter && !vm.meterOff) {
     // The level meter is holding the mic — drop it and retry once.
     vm.meterOff = true;
     vmStopMeter();
+    vmLog('restart listening', 'meter dropped (audio-capture)');
     vmStartListening('turn');
     return;
   }
   if (sess.errored === 'not-allowed' || sess.errored === 'service-not-allowed') {
-    vmEnterTapMode();
+    vmEnterTapMode('mic blocked: ' + sess.errored);
     return;
   }
   vm.failStreak++;
-  if (vm.failStreak >= 2) { vmEnterTapMode(); return; }
-  if (!vm.busy) vmStartListening('turn');
+  if (vm.failStreak >= 2) {
+    vmEnterTapMode('repeated ' + (sess.errored || 'no-speech'));
+    return;
+  }
+  if (!vm.busy) {
+    vmLog('restart listening', sess.errored || 'no-speech');
+    vmStartListening('turn');
+  }
 }
 
 // The measured voice turn, in the exact shape the rehearsal
@@ -2246,7 +2327,7 @@ async function vmDispatch(text, sess) {
       const payload = await sendChat(text);
       voiceOn = savedVoiceOn;
       if (!vm.active || gen !== vm.gen) return;
-      if (payload && payload.crisis) { vmClose(); return; }
+      if (payload && payload.crisis) { vmClose('crisis'); return; }
       if (lastChatReplyText) {
         vmSetStatus(vmT().speaking);
         vmSpeakText(lastChatReplyText);
@@ -2256,7 +2337,15 @@ async function vmDispatch(text, sess) {
       const vt = sess ? vmVoiceTurn(text, sess) : null;
       await rhUserLine(text, vt);
       if (!vm.active || gen !== vm.gen) return;
-      if (!rhState) { vmClose(); return; } // crisis exit closed the rehearsal
+      if (!rhState) {
+        // The rehearsal vanished mid-turn. Only a crisis teardown
+        // may close Voice Mode; anything else keeps the view open
+        // (idle in Tap-to-talk) — never shut in the user's face.
+        if (rhExitWasCrisis) { vmClose('crisis'); return; }
+        vmLog('rehearsal ended without crisis — staying open');
+        vmEnterTapMode();
+        return;
+      }
       if (spkPending > 0) vmSetStatus(vmT().speaking);
       await vmAfterSpeech(gen);
     }
@@ -2290,6 +2379,9 @@ function vmOpen(ctx) {
   vm.lang = vmLangFor(ctx);
   vm.active = true;
   vm.gen++;
+  vm.lvl = 0;
+  rhExitWasCrisis = false;
+  vmLog('open', ctx);
   vm.muted = false;
   vm.tapMode = false;
   vm.failStreak = 0;
@@ -2318,6 +2410,10 @@ function vmOpen(ctx) {
   muteBtn.classList.remove('off');
   muteBtn.textContent = '🎤';
   vmEl('voice-mode').classList.add('open');
+  // Fade in over ~0.5s (a frame later, so the transition runs).
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    if (vm.active) vmEl('voice-mode').classList.add('shown');
+  }));
   // Entering voice mode is the user gesture that unlocks audio on
   // iOS — prime synthesis now, before anything needs to speak.
   rhUnlockAudio();
@@ -2334,7 +2430,17 @@ function vmOpen(ctx) {
   vmStartListening('turn');
 }
 
-function vmClose() {
+// Voice Mode NEVER closes on its own (real-iPhone bug: it shut
+// in the user's face mid-conversation). The only two legitimate
+// closers are the user's ✕ and a crisis line (the frozen crisis
+// exit). Every call must name its reason; anything else is
+// refused and logged.
+function vmClose(reason) {
+  if (reason !== 'user' && reason !== 'crisis') {
+    vmLog('close REFUSED', 'reason=' + reason);
+    return;
+  }
+  vmLog('close', reason);
   vm.active = false;
   vm.gen++;
   vm.busy = false;
@@ -2344,6 +2450,7 @@ function vmClose() {
   if ('speechSynthesis' in window) { try { speechSynthesis.cancel(); } catch (e) {} }
   vmStopMeter();
   vmEl('voice-mode').classList.remove('open');
+  vmEl('voice-mode').classList.remove('shown');
   vmEl('vm-taptalk').classList.remove('show');
 }
 
@@ -2378,7 +2485,7 @@ function vmDoType() {
 }
 
 document.getElementById('chat-mic').addEventListener('click', () => vmOpen('chat'));
-document.getElementById('vm-exit').addEventListener('click', vmClose);
+document.getElementById('vm-exit').addEventListener('click', () => vmClose('user'));
 document.getElementById('vm-mute').addEventListener('click', vmToggleMute);
 document.getElementById('vm-send').addEventListener('click', vmDoType);
 document.getElementById('vm-taptalk').addEventListener('click', () => {
