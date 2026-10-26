@@ -352,6 +352,41 @@ GRIEF_OPENING_HE = (
     "ואין דרך נכונה להתאבל. אני כאן איתך — קח את כל הזמן שאתה צריך. "
     "כשתרצה, אשמח לשמוע עליו."
 )
+# Feminine-deceased variant (Tab ruling, Oct 26): when the person
+# who died is a mother / sister / grandmother / wife / daughter,
+# the fixed line must say עליה — the masculine עליו was wrong for
+# every mother. Only the final pronoun differs.
+GRIEF_OPENING_HE_F = (
+    "אני ממש מצטער על האובדן שלך. לאבד מישהו שאוהבים משנה הכול, "
+    "ואין דרך נכונה להתאבל. אני כאן איתך — קח את כל הזמן שאתה צריך. "
+    "כשתרצה, אשמח לשמוע עליה."
+)
+_GRIEF_KIN_HE_F = re.compile(
+    r"(אמא|סבתא|אחותי|אחות\s+שלי|אשתי|הבת\s+שלי|בת\s+שלי|חברה\s+שלי)")
+_GRIEF_KIN_HE_M = re.compile(
+    r"(אבא|סבא|אחי|אח\s+שלי|בעלי|הבן\s+שלי|בן\s+שלי|חבר\s+שלי)")
+
+
+def detect_grief_kin_he(text):
+    """'f' / 'm' / None — the gender of the deceased kin named in a
+    Hebrew grief message (feminine checked first: אחותי must never
+    be read as a brother)."""
+    t = text or ""
+    if _GRIEF_KIN_HE_F.search(t):
+        return "f"
+    if _GRIEF_KIN_HE_M.search(t):
+        return "m"
+    return None
+
+
+def grief_opening_for(hebrew, msg):
+    """The exact fixed opening for this grief turn: Hebrew gets the
+    gender-correct pronoun for the person who died."""
+    if not hebrew:
+        return GRIEF_OPENING
+    if detect_grief_kin_he(msg) == "f":
+        return GRIEF_OPENING_HE_F
+    return GRIEF_OPENING_HE
 # Continuation used only if the model call fails on a grief turn.
 GRIEF_FALLBACK = (
     "I'm here — we don't have to figure anything out right now. "
@@ -1111,6 +1146,31 @@ def scrub_field(text):
         _sentence_segments(text), include_last=True).strip()
 
 
+_CONDOLENCE_LEAD_RE = re.compile(
+    r"(אני (?:ממש )?מצטער|משתתף בצער|תנחומיי|שלא תדעו עוד צער|"
+    r"i'?m so sorry|i am so sorry|sorry for your loss|"
+    r"my condolences)",
+    re.I,
+)
+
+
+def _strip_dup_condolence(body):
+    """Grief turns open with the FIXED condolence line; a model
+    continuation that ALSO opens with its own condolence reads as a
+    second, glued-on reply (Tab's Hebrew grief bug). Drop that
+    first sentence when it merely repeats the condolence and real
+    content follows."""
+    if not body:
+        return body
+    segs = _sentence_segments(body)
+    if len(segs) < 2:
+        return body
+    if not _CONDOLENCE_LEAD_RE.search(segs[0][0]):
+        return body
+    rest = "".join(s + sep for s, sep in segs[1:]).strip()
+    return rest if rest else body
+
+
 def _same_theme_judge(deleted_text, cand_text):
     """Gray-band arbiter for the tombstone guard: when a candidate
     shares some content words with a deleted item but not enough for
@@ -1746,8 +1806,9 @@ def _prepare_turn(uid, msg):
             summary_date=summary_date,
         ) + GRIEF_NOTE
         ctx["grief_hebrew"] = hebrew
+        ctx["grief_opening"] = grief_opening_for(hebrew, msg)
         ctx["fallback_text"] = (
-            (GRIEF_OPENING_HE + " " + GRIEF_FALLBACK_HE) if hebrew
+            (ctx["grief_opening"] + " " + GRIEF_FALLBACK_HE) if hebrew
             else (GRIEF_OPENING + " " + GRIEF_FALLBACK)
         )
         return ctx, ("model", "grief", gsys)
@@ -1794,9 +1855,10 @@ def _finish_model_turn(ctx, mode, reply, background):
         # produce it, never let it be paraphrased away). No crisis
         # latch, no banner change, no hotline footer — grief is not
         # the crisis flow.
-        opening = (GRIEF_OPENING_HE if ctx.get("grief_hebrew")
-                   else GRIEF_OPENING)
-        body = scrub_field(reply.strip())
+        opening = ctx.get("grief_opening") or (
+            GRIEF_OPENING_HE if ctx.get("grief_hebrew")
+            else GRIEF_OPENING)
+        body = _strip_dup_condolence(scrub_field(reply.strip()))
         if opening[:24] not in body[:80]:
             reply = opening + ("\n\n" + body if body else "")
         else:
@@ -1960,8 +2022,9 @@ def _chat_stream_events(uid, msg, background):
         # The fixed condolence opens the reply — send it at once,
         # before the model's continuation streams. (The done
         # payload stays authoritative, as everywhere else.)
-        opening = (GRIEF_OPENING_HE if ctx.get("grief_hebrew")
-                   else GRIEF_OPENING)
+        opening = ctx.get("grief_opening") or (
+            GRIEF_OPENING_HE if ctx.get("grief_hebrew")
+            else GRIEF_OPENING)
         yield _sse({"type": "delta", "text": opening + "\n\n"})
 
     raw = ""

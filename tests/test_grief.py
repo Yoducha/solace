@@ -149,13 +149,17 @@ if "988" in reply or "741741" in reply:
 print("e2e EN: fixed opening + continuation, no crisis machinery")
 
 # ---------- E2E: grief turn, HE (non-stream) ---------------------------
+# SUPERSEDED detail (Tab ruling, Oct 26): this message is about a
+# MOTHER, so the opening must be the feminine variant (עליה) — the
+# old assertion pinned the masculine bug. Full coverage lives in
+# tests/test_grief_he.py.
 uid = new_user()
 r = client.post("/api/chat", json={
     "user_id": uid, "message": "אמא שלי נפטרה אתמול",
 }).json()
-if not r.get("reply", "").startswith(solace.GRIEF_OPENING_HE):
-    failures.append("GRIEF HE reply does not start with the HE opening: %r"
-                    % r.get("reply", "")[:120])
+if not r.get("reply", "").startswith(solace.GRIEF_OPENING_HE_F):
+    failures.append("GRIEF HE reply does not start with the HE "
+                    "feminine opening: %r" % r.get("reply", "")[:120])
 if r.get("crisis"):
     failures.append("GRIEF HE turn flagged crisis")
 if "1201" in r.get("reply", "") or "101" in r.get("reply", ""):
