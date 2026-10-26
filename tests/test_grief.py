@@ -13,10 +13,10 @@ Covers:
 - A non-grief message is untouched (no opening prepended).
 - Audit (a): SYSTEM_PROMPT carries the identity-language rule;
   the fixed grief strings themselves are banned-word clean.
-- Audit (c): the "won't tell anyone" reassurance is on the first
-  screen (intake) and the privacy page, EN + HE; SYSTEM_PROMPT
-  carries the reassurance rule. The first screen still shows
-  "not a substitute for professional care" exactly once.
+- Audit (c) (reversed by Tab, Oct 26): the tell-anyone reassurance
+  is REMOVED everywhere; only the approved privacy sentence remains
+  (first screen, privacy page EN + HE, SYSTEM_PROMPT). The first
+  screen still shows "not a substitute for professional care" once.
 - Frozen crisis strings byte-identical (hash pins).
 """
 import hashlib
@@ -206,22 +206,44 @@ for w in ("פסיכולוג", "טיפול", "מטפל"):
 
 print("audit(a): identity-language rule in prompt; grief strings clean")
 
-# ---------- audit (c): tell-anyone reassurance ---------------------------
+# ---------- audit (c): privacy wording (SUPERSEDED by Tab, Oct 26) ------
+# Tab's fresh-user test reversed the morning's tell-anyone audit: the
+# ONLY approved privacy sentence is now the one below, and every
+# "won't tell anyone / stays here / no one will read" phrasing must
+# be GONE from the first screen, the privacy page (EN + HE), and the
+# system prompt.
+APPROVED_PRIVACY = ("Your chats aren't shared with other people or "
+                    "used to advertise to you. See the privacy page "
+                    "for details.")
+APPROVED_PRIVACY_HE = "השיחות שלך לא משותפות עם אנשים אחרים"
+BANNED_PRIVACY = [
+    "won't tell anyone", "wont tell anyone", "not going to tell anyone",
+    "stays in your conversations", "stays here",
+    "no one is going to read your conversation",
+    "לא תספר לאף אחד", "נשאר בשיחות",
+]
 html = client.get("/").text
-if "Solace won't tell anyone what you share here." not in html:
-    failures.append("AUDIT(c) first-screen reassurance missing")
+if APPROVED_PRIVACY not in html:
+    failures.append("AUDIT(c) first-screen approved privacy line missing")
 if html.count("not a substitute for professional care") != 1:
     failures.append("AUDIT(c) care line count on first screen != 1: %d"
                     % html.count("not a substitute for professional care"))
 priv = client.get("/privacy").text
-if "Solace won't tell anyone what you share here." not in priv:
-    failures.append("AUDIT(c) privacy page EN reassurance missing")
-if "לא תספר לאף אחד" not in priv:
-    failures.append("AUDIT(c) privacy page HE reassurance missing")
-if "not going to tell anyone" not in solace.SYSTEM_PROMPT:
-    failures.append("AUDIT(c) SYSTEM_PROMPT lacks the reassurance rule")
+if APPROVED_PRIVACY not in priv:
+    failures.append("AUDIT(c) privacy page EN approved line missing")
+if APPROVED_PRIVACY_HE not in priv:
+    failures.append("AUDIT(c) privacy page HE approved line missing")
+for bad in BANNED_PRIVACY:
+    if bad in html:
+        failures.append("AUDIT(c) banned phrase on first screen: %s" % bad)
+    if bad in priv:
+        failures.append("AUDIT(c) banned phrase on privacy page: %s" % bad)
+    if bad in solace.SYSTEM_PROMPT:
+        failures.append("AUDIT(c) banned phrase in SYSTEM_PROMPT: %s" % bad)
+if APPROVED_PRIVACY not in solace.SYSTEM_PROMPT:
+    failures.append("AUDIT(c) SYSTEM_PROMPT lacks the approved sentence")
 
-print("audit(c): reassurance on first screen + privacy (EN+HE) + prompt")
+print("audit(c): approved privacy sentence only (EN+HE), banned gone")
 
 if failures:
     print("\nFAILURES (%d):" % len(failures))
