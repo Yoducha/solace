@@ -6,9 +6,11 @@ ANTHROPIC_API_KEY environment variable (set on the hosting provider).
 For LOCAL development only, if the env var is missing, calls fall back to
 the vault-backed dev CLI — never hardcode or commit any key.
 """
+import hashlib
 import json
 import os
 import re
+import secrets
 import sqlite3
 import subprocess
 import threading
@@ -17,8 +19,8 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
 import httpx
-from fastapi import FastAPI, BackgroundTasks, Response
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi import FastAPI, BackgroundTasks, HTTPException, Response
+from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -2470,6 +2472,9 @@ def rehearse_debrief(body: RehearseDebriefIn, background: BackgroundTasks):
         delivery_facts = _delivery_facts(body.voice_turns, user_lines)
     except Exception:
         delivery_facts = None
+    if delivery_facts:
+        # The visitor actually spoke lines in this rehearsal.
+        stats_feature(body.user_id, "voice")
     if not user_lines:
         debrief = {
             "worked": ["You took the first step and set the talk up — "
@@ -2709,6 +2714,281 @@ def history(user_id: str, response: Response):
 @app.get("/api/health")
 def health():
     return {"ok": True}
+
+
+# --------------------------------------- Anonymous usage stats ----
+# Counts only — never content. Visitors are recorded under a
+# one-way SHA-256 of their browser id with a stats-only salt that is
+# generated on the server and lives only inside this separate
+# database file, so a stats row can never be joined back to anyone's
+# chats, summaries or memory. Rows hold only a hashed id, a day, and
+# counters: no message text, no IPs, no user agents, nothing finer
+# than the day. Every writer is fire-and-forget — stats can never
+# slow or break a chat or a rehearsal.
+STATS_DB_PATH = os.path.join(DATA_DIR, "stats.db")
+_stats_lock = threading.Lock()
+_stats_ready_paths = set()
+_stats_salt_cache = {}
+
+
+def _stats_iso_day():
+    try:
+        from zoneinfo import ZoneInfo
+        return datetime.now(ZoneInfo("America/New_York")).date().isoformat()
+    except Exception:
+        return datetime.now(timezone.utc).date().isoformat()
+
+
+def _stats_ensure(path=None):
+    path = path or STATS_DB_PATH
+    if path in _stats_ready_paths:
+        return path
+    with _stats_lock:
+        conn = sqlite3.connect(path)
+        try:
+            conn.executescript(
+                """
+                CREATE TABLE IF NOT EXISTS stat_meta (
+                    k TEXT PRIMARY KEY, v TEXT);
+                CREATE TABLE IF NOT EXISTS stat_visitors (
+                    hid TEXT PRIMARY KEY, first_seen TEXT);
+                CREATE TABLE IF NOT EXISTS stat_activity (
+                    hid TEXT, day TEXT, PRIMARY KEY (hid, day));
+                CREATE TABLE IF NOT EXISTS stat_features (
+                    hid TEXT, feature TEXT, PRIMARY KEY (hid, feature));
+                CREATE TABLE IF NOT EXISTS stat_votes (
+                    surface TEXT, vote INTEGER, n INTEGER DEFAULT 0,
+                    PRIMARY KEY (surface, vote));
+                """
+            )
+            row = conn.execute(
+                "SELECT v FROM stat_meta WHERE k = 'salt'").fetchone()
+            if not row:
+                conn.execute(
+                    "INSERT INTO stat_meta (k, v) VALUES ('salt', ?)",
+                    (secrets.token_hex(32),))
+                conn.commit()
+            _stats_salt_cache[path] = conn.execute(
+                "SELECT v FROM stat_meta WHERE k = 'salt'"
+            ).fetchone()[0]
+        finally:
+            conn.close()
+    _stats_ready_paths.add(path)
+    return path
+
+
+def _stats_hid(uid, path=None):
+    path = _stats_ensure(path)
+    salt = _stats_salt_cache.get(path, "")
+    return hashlib.sha256(
+        (salt + ":" + str(uid)).encode("utf-8")).hexdigest()
+
+
+def stats_touch(uid, day=None):
+    """Record a visitor as active on a day (first-seen day = the
+    new-user cohort). Fire-and-forget."""
+    try:
+        if not uid:
+            return
+        path = _stats_ensure()
+        day = day or _stats_iso_day()
+        hid = _stats_hid(uid, path)
+        with _stats_lock:
+            conn = sqlite3.connect(path)
+            try:
+                conn.execute(
+                    "INSERT OR IGNORE INTO stat_visitors (hid, first_seen)"
+                    " VALUES (?, ?)", (hid, day))
+                conn.execute(
+                    "INSERT OR IGNORE INTO stat_activity (hid, day)"
+                    " VALUES (?, ?)", (hid, day))
+                conn.commit()
+            finally:
+                conn.close()
+    except Exception:
+        pass
+
+
+def stats_feature(uid, feature, day=None):
+    """Record that a visitor used a feature (once per visitor)."""
+    try:
+        if not uid or not feature:
+            return
+        stats_touch(uid, day)
+        path = _stats_ensure()
+        hid = _stats_hid(uid, path)
+        with _stats_lock:
+            conn = sqlite3.connect(path)
+            try:
+                conn.execute(
+                    "INSERT OR IGNORE INTO stat_features (hid, feature)"
+                    " VALUES (?, ?)", (hid, feature))
+                conn.commit()
+            finally:
+                conn.close()
+    except Exception:
+        pass
+
+
+def stats_vote(surface, vote):
+    """Aggregate helpfulness counts — no identity is stored."""
+    try:
+        path = _stats_ensure()
+        with _stats_lock:
+            conn = sqlite3.connect(path)
+            try:
+                conn.execute(
+                    "INSERT INTO stat_votes (surface, vote, n)"
+                    " VALUES (?, ?, 1) ON CONFLICT (surface, vote)"
+                    " DO UPDATE SET n = n + 1",
+                    (surface, int(vote)))
+                conn.commit()
+            finally:
+                conn.close()
+    except Exception:
+        pass
+
+
+def _stats_report():
+    """Structured counts for the private stats page: new users per
+    day (last 30), cohort returns at day +7 / +30, feature users,
+    helpfulness vote totals."""
+    from datetime import date, timedelta
+    path = _stats_ensure()
+    today = date.fromisoformat(_stats_iso_day())
+    conn = sqlite3.connect(path)
+    try:
+        new_rows = conn.execute(
+            "SELECT first_seen, COUNT(*) FROM stat_visitors"
+            " GROUP BY first_seen ORDER BY first_seen DESC LIMIT 30"
+        ).fetchall()
+        cohorts = []
+        for day0, size in new_rows:
+            d0 = date.fromisoformat(day0)
+
+            def _back(off):
+                target = (d0 + timedelta(days=off)).isoformat()
+                return conn.execute(
+                    "SELECT COUNT(*) FROM stat_activity a"
+                    " JOIN stat_visitors v ON v.hid = a.hid"
+                    " WHERE v.first_seen = ? AND a.day = ?",
+                    (day0, target)).fetchone()[0]
+
+            cohorts.append({
+                "day": day0, "size": size,
+                "d7": _back(7) if d0 + timedelta(days=7) <= today else None,
+                "d30": _back(30) if d0 + timedelta(days=30) <= today else None,
+            })
+        feats = dict(conn.execute(
+            "SELECT feature, COUNT(*) FROM stat_features"
+            " GROUP BY feature").fetchall())
+        votes = {}
+        for surface, vote, n in conn.execute(
+                "SELECT surface, vote, n FROM stat_votes"):
+            votes.setdefault(surface, {})[int(vote)] = n
+        return {
+            "new_by_day": [{"day": d, "n": n} for d, n in new_rows],
+            "cohorts": cohorts,
+            "rehearse_users": feats.get("rehearse", 0),
+            "voice_users": feats.get("voice", 0),
+            "votes": votes,
+        }
+    finally:
+        conn.close()
+
+
+class StatsEventIn(BaseModel):
+    user_id: str = ""
+    event: str = ""
+
+
+@app.post("/api/stats/event")
+def stats_event(body: StatsEventIn):
+    # Only "visit" is recorded from the client; feature use is
+    # recorded server-side where it actually happens.
+    if body.event == "visit" and body.user_id:
+        stats_touch(body.user_id)
+    return {"ok": True}
+
+
+class StatsVoteIn(BaseModel):
+    surface: str = ""
+    vote: int = 0
+
+
+@app.post("/api/stats/vote")
+def stats_vote_ep(body: StatsVoteIn):
+    # Counts only — no identity is read or stored for a vote; the
+    # once-per-session limit lives on the client.
+    if body.surface in ("chat", "rehearse") and body.vote in (1, -1):
+        stats_vote(body.surface, body.vote)
+    return {"ok": True}
+
+
+@app.get("/stats", response_class=HTMLResponse)
+def stats_page(key: str = ""):
+    want = os.environ.get("STATS_KEY", "")
+    if not want or not key or not secrets.compare_digest(key, want):
+        # Indistinguishable from any other missing page.
+        raise HTTPException(status_code=404, detail="Not found")
+    rep = _stats_report()
+
+    def _rows(items, fmt):
+        return "".join(fmt(i) for i in items) or (
+            '<tr><td colspan="4">No data yet.</td></tr>')
+
+    new_rows = _rows(rep["new_by_day"], lambda r:
+                     "<tr><td>%s</td><td>%d</td></tr>"
+                     % (esc(r["day"]), r["n"]))
+    cohort_rows = _rows(rep["cohorts"], lambda c:
+                         "<tr><td>%s</td><td>%d</td><td>%s</td><td>%s</td></tr>"
+                         % (esc(c["day"]), c["size"],
+                            "—" if c["d7"] is None else c["d7"],
+                            "—" if c["d30"] is None else c["d30"]))
+    votes = rep["votes"]
+    up = sum(v.get(1, 0) for v in votes.values())
+    down = sum(v.get(-1, 0) for v in votes.values())
+
+    def _v(surface, vote):
+        return votes.get(surface, {}).get(vote, 0)
+
+    return HTMLResponse(
+        "<!DOCTYPE html><html lang=\"en\"><head><meta charset=\"utf-8\">"
+        "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
+        "<title>Solace — usage counts</title><style>"
+        "body{font-family:-apple-system,system-ui,sans-serif;max-width:640px;"
+        "margin:0 auto;padding:24px 18px 60px;color:#2b2620;background:#faf8f4;"
+        "line-height:1.6} table{border-collapse:collapse;margin:8px 0 24px}"
+        "td,th{border:1px solid #ddd5c6;padding:5px 12px;text-align:left}"
+        "h2{font-size:17px;margin-top:28px} .note{color:#8a8178;font-size:13px}"
+        "</style></head><body>"
+        "<h1>Solace — usage counts</h1>"
+        "<p class=\"note\">Counts only. No message text, summaries or memory "
+        "are ever part of these numbers, and visitor ids here are one-way "
+        "hashes that cannot be matched back to anyone's chats.</p>"
+        "<h2>New users per day (last 30 days)</h2>"
+        "<table><tr><th>Day</th><th>New users</th></tr>" + new_rows + "</table>"
+        "<h2>Returns by cohort</h2>"
+        "<table><tr><th>First day</th><th>New users</th>"
+        "<th>Back on day +7</th><th>Back on day +30</th></tr>"
+        + cohort_rows + "</table>"
+        "<h2>Features</h2>"
+        "<table>"
+        "<tr><td>Rehearse users</td><td>%d</td></tr>"
+        "<tr><td>Voice Rehearse users</td><td>%d</td></tr>"
+        "</table>"
+        "<h2>“Did this help?”</h2>"
+        "<table>"
+        "<tr><th></th><th>👍</th><th>👎</th></tr>"
+        "<tr><td>After a rehearsal</td><td>%d</td><td>%d</td></tr>"
+        "<tr><td>In the main chat</td><td>%d</td><td>%d</td></tr>"
+        "<tr><td><strong>Total</strong></td><td><strong>%d</strong></td>"
+        "<td><strong>%d</strong></td></tr>"
+        "</table>"
+        "</body></html>" % (
+            rep["rehearse_users"], rep["voice_users"],
+            _v("rehearse", 1), _v("rehearse", -1),
+            _v("chat", 1), _v("chat", -1), up, down))
 
 
 # ------------------------------------------------------ Frontend ----
