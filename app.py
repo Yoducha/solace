@@ -165,6 +165,53 @@ FIXED_CRISIS_RESPONSE_HE = (
     "אני כאן איתך — אתה רוצה לספר לי מה עובר עליך?"
 )
 
+# Completed overdose / poisoning (Tab ruling, Oct 26): someone who
+# has ALREADY swallowed pills is a medical emergency — the reply
+# must LEAD with call 911 (in Hebrew, MADA 101), never with the
+# suicide question. Deterministic and pre-model, like the crisis
+# path, but a SEPARATE response: the frozen crisis strings stay
+# untouched. Only completed-ingestion phrasing fires this; plans
+# ("going to overdose tonight", "pills saved up") keep the frozen
+# crisis path, and ordinary medication talk ("I took my pills this
+# morning") never fires.
+OVERDOSE_RE = [
+    re.compile(p, re.I) for p in (
+        r"(?:took|swallowed|ate)\b[^.!?\n]{0,25}?"
+        r"(?:all\s+(?:the|my)|whole|entire|too\s+many|handful|bottle|"
+        r"\d+\s*(?:pills|tablets))",
+        r"took\s+an?\s+overdose",
+        r"\boverdosed\b",
+        r"swallowed\s+a\s+bottle",
+    )
+] + [
+    re.compile(p) for p in (
+        r"(?:בלעתי|לקחתי)[^.!?\n]{0,20}?(?:כל הכדורים|יותר מדי|בקבוק)",
+        r"מנת\s+יתר",
+    )
+]
+
+
+def detect_overdose(text):
+    """True only for COMPLETED ingestion (already swallowed) — the
+    medical-emergency subset of crisis signals."""
+    t = text or ""
+    return any(rx.search(t) for rx in OVERDOSE_RE)
+
+
+EMERGENCY_RESPONSE = (
+    "Call 911 right now — this is a medical emergency, and getting "
+    "help fast matters more than anything else. If you can, tell "
+    "them what you took and how much, and stay on the line with "
+    "them. If someone is near you, ask them to call or to stay "
+    "with you. I'm here with you — please make that call now."
+)
+EMERGENCY_RESPONSE_HE = (
+    "התקשר עכשיו למד״א במספר 101 — זהו מצב חירום רפואי, וקבלת עזרה "
+    "מהר חשובה יותר מכל דבר אחר. אם אתה יכול, ספר להם מה לקחת וכמה, "
+    "והישאר איתם על הקו. אם יש מישהו לידך, בקש שיתקשר או שיישאר "
+    "איתך. אני כאן איתך — בבקשה תתקשר עכשיו."
+)
+
 # Gentle check-in sent ONCE when a person walks back a crisis statement
 # while crisis mode is latched (re-test fix #2). A retraction no longer
 # switches safety mode off instantly: this check-in goes out, crisis
@@ -1479,6 +1526,7 @@ def _prepare_turn(uid, msg):
     safety_lang = "he" if safety_hebrew else "en"
     safety_hotline = "1201" if safety_hebrew else "988"
     kw_risk = detect_crisis_keywords(msg)
+    emergency = detect_overdose(msg)
     info_q = (not kw_risk) and is_informational_word_question(msg)
     if kw_risk:
         risk = True
@@ -1527,6 +1575,21 @@ def _prepare_turn(uid, msg):
         "user_count": user_count, "retracted": retracted,
         "returning": returning, "fallback_text": "",
     }
+
+    # Completed overdose (Tab ruling): medical emergency FIRST —
+    # lead with 911 / מד״א 101, not the suicide question. Same latch
+    # and banner as the crisis path; a separate deterministic
+    # response, the frozen strings untouched.
+    if emergency:
+        _set_user_state(uid, crisis_mode=True, stepdown_v=False,
+                        banner_v=True, lang_v=safety_lang)
+        base = (EMERGENCY_RESPONSE_HE if safety_hebrew
+                else EMERGENCY_RESPONSE)
+        reply = base + crisis_resource_line(safety_hebrew, base)
+        _save_assistant_msg(uid, reply)
+        return ctx, ("final", {"reply": reply, "crisis": True,
+                               "hotline": safety_hotline, "banner": True,
+                               "banner_lang": safety_lang})
 
     # Fresh risk signal: fixed human response, no normal reply, latch
     # on, step-down reset, banner on for the rest of the session. Fully
@@ -2277,7 +2340,14 @@ def _rehearsal_crisis_exit(rec, saved_user_text, hebrew):
             )
         c.commit()
         c.close()
-    base = FIXED_CRISIS_RESPONSE_HE if hebrew else FIXED_CRISIS_RESPONSE
+    if detect_overdose(saved_user_text or ""):
+        # Medical emergency first here too (Tab ruling) — 911 /
+        # מד״א 101 leads, not the suicide question.
+        base = (EMERGENCY_RESPONSE_HE if hebrew
+                else EMERGENCY_RESPONSE)
+    else:
+        base = (FIXED_CRISIS_RESPONSE_HE if hebrew
+                else FIXED_CRISIS_RESPONSE)
     reply = base + crisis_resource_line(hebrew, base)
     _save_assistant_msg(uid, reply)
     return {"reply": reply, "crisis": True,
