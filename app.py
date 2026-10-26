@@ -2075,6 +2075,7 @@ def rehearse_start(body: RehearseStartIn):
         rid = cur.lastrowid
         conn.commit()
         conn.close()
+    stats_feature(uid, "rehearse")
     return {"ok": True, "rehearsal_id": rid,
             "person_display": _persona_display(
                 {"person_type": ptype, "person_name": name,
