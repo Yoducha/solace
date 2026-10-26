@@ -473,6 +473,46 @@ GRIEF_NOTE = (
     "any wish to harm themselves, follow the crisis protocol."
 )
 
+# Hebrew grief grammar directive (Tab round 2): the model's own
+# Hebrew continuation flipped masculine/feminine mid-reply — it
+# wrote about a mother with masculine forms (עליו, ממנו) under the
+# feminine fixed opening. The note pins the deceased's gender,
+# the addressee forms used by the fixed opening, and bans the
+# slash-hedge (מקשיב/ה) and separator lines.
+_GRIEF_GENDER_NOTES = {
+    "f": (
+        "\n\nHEBREW GRAMMAR — CRITICAL for this reply: the person "
+        "who died is a WOMAN. Refer to her ONLY in feminine forms "
+        "(היא, עליה, הייתה, שלה) — never עליו, הוא, היה or ממנו "
+        "about her. Address the person you are speaking with in "
+        "masculine singular, exactly as the opening line does "
+        "(קח את הזמן, כשתרצה). Never use slash forms such as "
+        "מקשיב/ה — choose the one matching form and stay with it. "
+        "Never write a separator line such as ---: write ONE "
+        "continuous reply that continues from the opening line."
+    ),
+    "m": (
+        "\n\nHEBREW GRAMMAR — CRITICAL for this reply: the person "
+        "who died is a MAN. Refer to him ONLY in masculine forms "
+        "(הוא, עליו, היה, שלו) — never עליה, היא, הייתה or ממנה "
+        "about him. Address the person you are speaking with in "
+        "masculine singular, exactly as the opening line does "
+        "(קח את הזמן, כשתרצה). Never use slash forms such as "
+        "מקשיב/ה — choose the one matching form and stay with it. "
+        "Never write a separator line such as ---: write ONE "
+        "continuous reply that continues from the opening line."
+    ),
+    None: (
+        "\n\nHEBREW GRAMMAR — CRITICAL for this reply: keep ONE "
+        "consistent gender for the person who died (the forms of "
+        "the opening line govern), address the person you are "
+        "speaking with exactly as the opening line does, and "
+        "never use slash forms such as מקשיב/ה. Never write a "
+        "separator line such as ---: write ONE continuous reply "
+        "that continues from the opening line."
+    ),
+}
+
 # System prompt used for follow-up turns while crisis mode is latched:
 # safety only — no techniques, no homework, no jargon.
 CRISIS_SYSTEM_PROMPT = """You are Solace, in CRISIS MODE with a person who has expressed thoughts of suicide or self-harm. Rules for every reply in this mode:
@@ -1224,18 +1264,83 @@ _CONDOLENCE_LEAD_RE = re.compile(
 def _strip_dup_condolence(body):
     """Grief turns open with the FIXED condolence line; a model
     continuation that ALSO opens with its own condolence reads as a
-    second, glued-on reply (Tab's Hebrew grief bug). Drop that
-    first sentence when it merely repeats the condolence and real
-    content follows."""
+    second, glued-on reply (Tab's Hebrew grief bug). Drop EVERY
+    leading condolence sentence — the live failure wrote a whole
+    multi-sentence condolence paragraph of its own, and stripping
+    only the first sentence left the rest of that second reply in
+    place."""
     if not body:
         return body
-    segs = _sentence_segments(body)
-    if len(segs) < 2:
+    for _ in range(6):
+        segs = _sentence_segments(body)
+        if len(segs) < 2:
+            return body
+        if not _CONDOLENCE_LEAD_RE.search(segs[0][0]):
+            return body
+        rest = "".join(s + sep for s, sep in segs[1:]).strip()
+        if not rest:
+            return body
+        body = rest
+    return body
+
+
+# A markdown rule line on its own — models use it to split a reply
+# into two "messages"; in a chat bubble it is exactly the visible
+# seam of the glued-replies bug.
+_DIVIDER_LINE_RE = re.compile(
+    r"(?m)^[ \t]*(?:-{3,}|\*{3,}|_{3,}|—{2,})[ \t]*$")
+
+
+def _strip_opening_echo(body, opening):
+    """If the model parroted the fixed opening back as the start of
+    its continuation, drop the echoed sentences — the caller
+    prepends the one true opening itself."""
+    if not body or not opening:
         return body
-    if not _CONDOLENCE_LEAD_RE.search(segs[0][0]):
+    open_segs = [s.strip() for s, _ in _sentence_segments(opening)
+                 if s.strip()]
+    for want in open_segs:
+        segs = _sentence_segments(body)
+        if len(segs) < 2 or segs[0][0].strip() != want:
+            break
+        rest = "".join(s + sep for s, sep in segs[1:]).strip()
+        if not rest:
+            break
+        body = rest
+    return body
+
+
+def _grief_clean_body(body, opening):
+    """The deterministic cleanup every grief continuation passes
+    through (sync, stream-visible, saved text): no divider seams,
+    no echoed opening, no leading condolence pile-up — so the
+    final reply is the fixed opening + ONE continuation."""
+    if not body:
         return body
-    rest = "".join(s + sep for s, sep in segs[1:]).strip()
-    return rest if rest else body
+    body = _DIVIDER_LINE_RE.sub("", body)
+    body = re.sub(r"\n{3,}", "\n\n", body).strip()
+    body = _strip_opening_echo(body, opening)
+    body = _strip_dup_condolence(body)
+    body = body.strip()
+    if opening and body and body in opening:
+        # Nothing left but a fragment of the opening itself.
+        return ""
+    return body
+
+
+def _grief_stream_visible(raw_text, opening, started):
+    """The visible continuation during a grief STREAM: the scrubbed
+    prefix, cleaned exactly like the final body. Held back ("")
+    until two complete sentences exist — the condolence strip
+    needs the second sentence to know the first was the model's
+    own repeat, and emitting that first sentence live is what
+    glued two replies together on screen."""
+    scrubbed = scrub_prefix(raw_text)
+    if not started:
+        segs = [s for s, _ in _sentence_segments(scrubbed) if s.strip()]
+        if len(segs) < 2:
+            return "", False
+    return _grief_clean_body(scrubbed, opening), True
 
 
 def _same_theme_judge(deleted_text, cand_text):
@@ -1884,6 +1989,8 @@ def _prepare_turn(uid, msg):
             has_prior=user_count > 1, returning=returning,
             summary_date=summary_date,
         ) + GRIEF_NOTE
+        if hebrew:
+            gsys += _GRIEF_GENDER_NOTES[detect_grief_kin_he(msg)]
         ctx["grief_hebrew"] = hebrew
         ctx["grief_opening"] = grief_opening_for(hebrew, msg)
         ctx["fallback_text"] = (
@@ -1931,17 +2038,19 @@ def _finish_model_turn(ctx, mode, reply, background):
         mode = "normal"
     if mode == "grief":
         # Prepend the FIXED opening line (never trust the model to
-        # produce it, never let it be paraphrased away). No crisis
-        # latch, no banner change, no hotline footer — grief is not
-        # the crisis flow.
+        # produce it, never let it be paraphrased away). The body is
+        # cleaned deterministically — divider seams, an echoed
+        # opening and the model's own condolence pile-up all come
+        # out — so what remains is opening + ONE continuation. (The
+        # old "the body already starts with the opening, keep it"
+        # branch trusted a model echo, gender and all; gone.) No
+        # crisis latch, no banner change, no hotline footer — grief
+        # is not the crisis flow.
         opening = ctx.get("grief_opening") or (
             GRIEF_OPENING_HE if ctx.get("grief_hebrew")
             else GRIEF_OPENING)
-        body = _strip_dup_condolence(scrub_field(reply.strip()))
-        if opening[:24] not in body[:80]:
-            reply = opening + ("\n\n" + body if body else "")
-        else:
-            reply = body
+        body = _grief_clean_body(scrub_field(reply.strip()), opening)
+        reply = opening + ("\n\n" + body if body else "")
         _save_assistant_msg(uid, reply)
         if ctx["user_count"] == 3 or ctx["user_count"] % 5 == 0:
             background.add_task(update_summary, uid)
@@ -2110,6 +2219,8 @@ def _chat_stream_events(uid, msg, background):
     skip = None  # None until the [CRISIS]-marker question is settled
     emitted_visible = ""
     failed = False
+    grief_started = False
+    grief_frozen = False
     try:
         for chunk in _anthropic_stream_chunks(system, ctx["messages"]):
             raw += chunk
@@ -2126,7 +2237,21 @@ def _chat_stream_events(uid, msg, background):
             # The output filter runs here too: only scrubbed COMPLETE
             # sentences are emitted, so a banned word can never reach
             # the screen even briefly inside a growing sentence.
-            visible = scrub_prefix(raw[skip:].lstrip())
+            if mode == "grief":
+                # Grief streams show the CLEANED body (dividers,
+                # echoes and the model's own condolence removed),
+                # held until two sentences exist. If cleaning ever
+                # rewrites text already emitted, freeze — the done
+                # payload stays authoritative and replaces the
+                # bubble, exactly as elsewhere.
+                visible, grief_started = _grief_stream_visible(
+                    raw[skip:].lstrip(), opening, grief_started)
+                if grief_frozen or not visible.startswith(
+                        emitted_visible):
+                    grief_frozen = True
+                    continue
+            else:
+                visible = scrub_prefix(raw[skip:].lstrip())
             if len(visible) > len(emitted_visible):
                 new = visible[len(emitted_visible):]
                 emitted_visible = visible

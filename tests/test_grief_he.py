@@ -139,6 +139,72 @@ if not r["reply"].startswith(solace.GRIEF_OPENING_HE) \
 print("E2E: Hebrew mother gets עליה + one coherent reply (sync + "
       "stream); father keeps עליו")
 
+# ---------- Tab round 2: the glued-replies failure shape ----------------
+# The live model wrote its OWN full condolence reply (several
+# sentences), a "---" divider, then a second part that flipped to
+# masculine forms for the mother. The assembled reply must be the
+# fixed opening + ONE continuation: no divider, no second
+# condolence, no leftover echo of the opening.
+BAD_HE = ("אני ממש מצטער לשמוע על האובדן שלך. "
+          "לאבד אמא זה הדבר הכי קשה שיש בעולם. "
+          "אני כאן בשבילך תמיד.\n\n---\n\n"
+          "אמא שלך בטח הייתה אישה מדהימה ומלאת חום. "
+          "כשתרצה, ספר לי עליה עוד.")
+
+
+def stub_sync_bad(model, system, messages, max_tokens=1024):
+    return BAD_HE
+
+
+def stub_stream_bad(system, messages):
+    yield BAD_HE
+
+
+solace.call_anthropic = stub_sync_bad
+solace._anthropic_stream_chunks = stub_stream_bad
+
+for surface in ("sync", "stream"):
+    uid = new_user()
+    if surface == "sync":
+        r = client.post("/api/chat", json={
+            "user_id": uid, "message": "אמא שלי נפטרה אתמול"}).json()
+        rep = r["reply"]
+    else:
+        evts = sse_events(client.post("/api/chat/stream", json={
+            "user_id": uid, "message": "אמא שלי נפטרה אתמול"}).text)
+        rep = [e for e in evts if e.get("type") == "done"][0]["reply"]
+        shown = "".join(e["text"] for e in evts
+                        if e.get("type") == "delta")
+        if "---" in shown or shown.count("מצטער") > 1:
+            failures.append("BAD stream (%s) showed the glued text "
+                            "live: %r" % (surface, shown[:160]))
+    if "---" in rep:
+        failures.append("BAD (%s) kept the divider: %r"
+                        % (surface, rep))
+    if not rep.startswith(solace.GRIEF_OPENING_HE_F):
+        failures.append("BAD (%s) wrong opening: %r"
+                        % (surface, rep[:120]))
+    if rep.count("מצטער") != 1:
+        failures.append("BAD (%s) condolence not single: %r"
+                        % (surface, rep))
+    if "אישה מדהימה" not in rep:
+        failures.append("BAD (%s) lost the real continuation: %r"
+                        % (surface, rep))
+
+# Unit: divider + echo + fragment-of-opening cleaning.
+cleaned = solace._grief_clean_body(
+    "---\n\n" + solace.GRIEF_OPENING_HE_F + "\n\n---\n\n"
+    "היא הייתה אישה מדהימה.",
+    solace.GRIEF_OPENING_HE_F)
+if cleaned != "היא הייתה אישה מדהימה.":
+    failures.append("CLEAN echo/divider wrong: %r" % cleaned)
+if solace._grief_clean_body(solace.GRIEF_OPENING_HE_F,
+                            solace.GRIEF_OPENING_HE_F) != "":
+    failures.append("CLEAN pure echo not emptied")
+
+print("Tab round 2: glued shape (divider + own condolence + echo) "
+      "assembles to one reply, sync + stream")
+
 if failures:
     print("\nFAILURES (%d):" % len(failures))
     for f in failures:
