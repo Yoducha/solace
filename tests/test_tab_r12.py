@@ -262,7 +262,10 @@ if r["reply"] != solace.VOICE_ANSWER:
     failures.append("VOICE E2E recordings wrong: %r" % r["reply"])
 uid = new_user()
 r = chat(uid, "אתה יכול לשמוע הודעות קוליות?")
-if r["reply"] != solace.VOICE_ANSWER_HE:
+# Tab r13 item 5 supersedes the r12 pin for an UNKNOWN-gender
+# writer: Hebrew voice strings are always neutral then (the
+# masculine-pinned string now ships only for a known 'm').
+if r["reply"] != solace._voice_answer_he(None):
     failures.append("VOICE E2E HE wrong: %r" % r["reply"])
 if calls["n"] != 0:
     failures.append("VOICE E2E used the model (%d calls)" % calls["n"])

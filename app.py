@@ -81,6 +81,20 @@ CRISIS_PATTERNS = [
     r"do not want to live",
     r"don'?t want to be here",
     r"don'?t want to exist",
+    # Tab r13 item 1: the "be alive" family was missing, so
+    # "I don't want to be alive anymore" fell through to the
+    # (slow, probabilistic) classifier and took 0.6-2.6s on
+    # device. Every one of these is deterministic now.
+    r"don'?t want to be alive",
+    r"do not want to be alive",
+    r"don'?t wanna be alive",
+    r"not want to be alive",
+    r"want to be dead",
+    r"rather be dead",
+    r"no (?:will|desire) to live",
+    r"sick of (?:living|being alive)",
+    r"can'?t stand (?:living|being alive)",
+    r"end my own life",
     r"wish i (was|were) dead",
     r"wish i didn'?t exist",
     r"want it all to (end|stop)",
@@ -134,6 +148,17 @@ CRISIS_PATTERNS = [
     r"עדיף למות",
     r"רוצה לפגוע בעצמי",
     r"פוגע בעצמי",
+    # Tab r13 item 1: the Hebrew "be alive" family joins the
+    # deterministic layer (was classifier-only, like English).
+    r"לא רוצה להיות בחיים",
+    r"נמאס לי להיות בחיים",
+    r"רוצה להיות מת",
+    r"הלוואי (?:ש)?הייתי מת",
+    r"לא רוצה להתקיים",
+    r"מעדיף למות",
+    r"רוצה להרוג את עצמי",
+    r"לשים קץ לחיים",
+    r"לגמור עם החיים",
 ]
 CRISIS_RE = [re.compile(r"\b" + p + r"\b") for p in CRISIS_PATTERNS]
 
@@ -367,6 +392,23 @@ _MEDICAL_RES = [
     re.compile(r"\bcan'?t\s+breathe\b|\bcannot\s+breathe\b|"
                r"\bstruggling\s+to\s+breathe\b|\bi'?m\s+choking\b"),
     re.compile(r"לא\s+(?:מצליח|יכול)\s+לנשום|קשה\s+לי\s+לנשום|אני\s+נחנק"),
+    # Tab r13 item 2: THIRD-PERSON emergencies. "My dad
+    # collapsed and isn't breathing" matched NOTHING here —
+    # collapsed / not-breathing (about someone else) were
+    # simply absent, so the turn fell through to the model.
+    re.compile(r"\bcollaps\w*\b"),
+    re.compile(r"\bnot\s+breathing\b|\bisn'?t\s+breathing\b|"
+               r"\bstopped\s+breathing\b|\bno\s+longer\s+breathing\b|"
+               r"\bisn'?t\s+breathing\s+(?:anymore|any\s+more)\b"),
+    re.compile(r"\bno\s+pulse\b|\bnot\s+responsive\b|"
+               r"\bunresponsive\b|\bheart\s+attack\b|\bstroke\b|"
+               r"\bchoking\b|\bturning\s+blue\b|"
+               r"\blips?\s+(?:are\s+)?(?:turning\s+)?blue\b"),
+    re.compile(r"התמוטט|התמוטטה|לא\s+נושם|לא\s+נושמת|"
+               r"הפסיק\s+לנשום|הפסיקה\s+לנשום|אין\s+נשימה|"
+               r"איבד\s+(?:את\s+)?ההכרה|איבדה\s+(?:את\s+)?ההכרה|"
+               r"אובדן\s+הכרה|אין\s+דופק|"
+               r"התקף\s+לב|שבץ\s+מוחי|נחנק|נחנקת"),
     # chest pain
     re.compile(r"\bchest\s+pain\b|\bpain\s+in\s+my\s+chest\b|"
                r"\bchest\s+(?:hurts|is\s+tight)\b"),
@@ -381,8 +423,18 @@ _MEDICAL_RES = [
     re.compile(r"פרכוס|עוויתות"),
     # heavy bleeding
     re.compile(r"\bbleeding\s+(?:heavily|badly|a\s+lot)\b|"
-               r"\bwon'?t\s+stop\s+bleeding\b|\bblood\s+everywhere\b"),
-    re.compile(r"דימום\s+חזק|מדמם\s+הרבה|הדימום\s+לא\s+עוצר"),
+               r"\bwon'?t\s+stop\s+bleeding\b|\bblood\s+everywhere\b|"
+               r"\bbleeding\s+out\b|\blosing\s+(?:a\s+lot\s+of\s+)?blood\b|"
+               r"\bblood\s+(?:is\s+)?(?:pouring|gushing)\b"),
+    # Tab r13 item 2: Hebrew heavy bleeding — the standard
+    # term is דימום כבד, which was missing entirely, along with
+    # the feminine and possessive forms; a Hebrew bleeding
+    # message reached the suicide script instead of מד״א 101.
+    re.compile(r"דימום\s+(?:חזק|כבד|מסיבי)|מדמם\s+הרבה|"
+               r"הדימום\s+לא\s+עוצר|מדממת|מדמם\s+(?:המון|בלי\s+הפסקה)|"
+               r"(?:הרבה|המון)\s+דם|דם\s+(?:בכל\s+מקום|לא\s+מפסיק)|"
+               r"שופך\s+דם|מאבד\s+(?:הרבה\s+)?דם|ממשיך\s+לדמם|"
+               r"לא\s+מפסיק\s+לדמם|הדם\s+לא\s+מפסיק"),
     # severe allergic reaction
     re.compile(r"\ballergic\s+reaction\b|\banaphylax|"
                r"\bthroat\s+is\s+closing\b|\blips?\s+(?:are\s+)?swelling\b"),
@@ -545,7 +597,11 @@ _GREETING_RE = re.compile(
 # sends "Hi, I'd like to talk." when the person skips the form —
 # it is a content-free greeting and gets the template reply.
 _GREETING_INTAKE_RE = re.compile(
-    r"^\s*hi,?\s+i'?d\s+like\s+to\s+talk\.?\s*$", re.I)
+    r"^\s*hi,?\s+i'?d\s+like\s+to\s+talk\.?\s*$"
+    # Tab r13 item 10: the Hebrew first message the app itself
+    # sends on a Hebrew phone — it must hit the same instant
+    # template greeting, in Hebrew.
+    r"|^\s*(?:היי|שלום)[\s,!.]*אשמח\s+לדבר[\s.!]*$", re.I)
 
 GREETING_SELF_EN = "an AI companion for reflection and self-help"
 GREETING_SELF_HE = "מלווה בינה מלאכותית להרהור ולתמיכה עצמית"
@@ -716,6 +772,64 @@ def is_stuck_in_life_statement(text):
     if _STUCK_UNSAFE_RE.search(t):
         return False
     return any(rx.search(t) for rx in _STUCK_RES)
+
+
+# "I just want to disappear" (Tab r13 item 3): vanish /
+# disappear / done-with-everything, with NO life-or-death word
+# anywhere in the message, is overwhelm — not a crisis
+# statement. The keyword layer carries "(wish|want) … disappear"
+# and "disappear forever" as crisis patterns, so the wish alone
+# latched the full suicide reply on device. By rule now, like
+# the med and stuck guards: the vanish family is cleared ONLY
+# when it is the message's sole crisis-shaped signal — any
+# other crisis pattern, any life-or-death word, or a finality
+# marker (forever / for good / never come back) keeps the
+# crisis routing untouched.
+_VANISH_RES = [
+    re.compile(r"\b(?:want|wish|wanna|need)\b[^.!?\n]{0,30}?"
+               r"\b(?:disappear|vanish)\b", re.I),
+    re.compile(r"\bjust\s+(?:want|wish|need)\s+to\s+"
+               r"(?:disappear|vanish)\b", re.I),
+    re.compile(r"\bi\s+want\s+to\s+(?:disappear|vanish)\b", re.I),
+    re.compile(r"\b(?:i'?m|i\s+am)\s+done\s+with\s+everything\b",
+               re.I),
+    re.compile(r"\bdone\s+with\s+everything\b", re.I),
+    re.compile(r"בא\s+לי\s+להיעלם"),
+    re.compile(r"רוצה\s+להיעלם"),
+    re.compile(r"נמאס\s+לי\s+מהכול"),
+]
+_VANISH_FINALITY_RE = re.compile(
+    r"\bforever\b|\bfor\s+good\b|\bnever\s+(?:come|coming)\s+back\b|"
+    r"\bpermanently\b|לתמיד|ולא\s+לחזור", re.I)
+_VANISH_DEATH_RE = re.compile(
+    r"\b(?:die|dead|death|kill|suicid\w*|self[-\s]?harm|hurt\s+"
+    r"myself|harm\s+myself|end\s+(?:it|my\s+life)|never\s+wake|"
+    r"not\s+wake\s+up)\b|"
+    r"למות|להתאבד|להרוג|לפגוע\s+בעצמ|לסיים\s+(?:את\s+החיים|עם\s+החיים)",
+    re.I)
+
+
+def is_vanish_only_statement(text):
+    """True when the message is a vanish / disappear /
+    done-with-everything statement and NOTHING else in it is
+    crisis-shaped: no other keyword pattern accounts for the
+    words, no life-or-death word, no finality marker."""
+    t = text or ""
+    n = _norm_match(t)
+    if not any(rx.search(n) for rx in _VANISH_RES) \
+            and not any(rx.search(t) for rx in _VANISH_RES):
+        return False
+    if _VANISH_FINALITY_RE.search(n) or _VANISH_DEATH_RE.search(n):
+        return False
+    # Strip the vanish matches; if any crisis keyword pattern
+    # still fires on what remains, the vanish words were not
+    # the message's only signal.
+    rest = n
+    for rx in _VANISH_RES:
+        rest = rx.sub(" ", rest)
+    if detect_crisis_keywords(rest):
+        return False
+    return True
 
 
 EMERGENCY_RESPONSE = (
@@ -1048,6 +1162,27 @@ _VOICE_Q_RES = [
         r"(?:ההודעות|הקלטות|הודעות)\s+הקוליות"),
     re.compile(r"אפשר\s+לדבר\s+בקול"),
 ]
+# Tab r13 item 4: questions about STORING / RECORDING the
+# person's audio are a DIFFERENT label from "does voice exist"
+# — the voice patterns above even carry the storage shapes, so
+# "Do you store my audio?" got the voice answer, whose first
+# word is "Yes". The truthful first word is No: the browser
+# turns speech into text on the device, and Solace never
+# receives or stores audio at all. This label is checked
+# BEFORE the voice patterns in detect_intent_label.
+_VOICE_STORAGE_RES = [
+    re.compile(r"\b(?:store|save|keep|record|retain|upload)\b"
+               r"[^.!?\n]{0,40}?\b(?:audio|voice|recordings?|"
+               r"mic|microphone)\b", re.I),
+    re.compile(r"\b(?:audio|voice|recordings?)\b[^.!?\n]{0,30}?"
+               r"\b(?:stored|saved|kept|recorded|retained)\b",
+               re.I),
+    re.compile(r"\bdo\s+you\s+record\s+(?:me|us)\b", re.I),
+    re.compile(r"(?:שומר|שומרת|שומרים|מקליט|מקליטה|מקליטים)"
+               r"[^.!?\n]{0,30}?(?:קול|אודיו|הקלט|מיקרופון)"),
+    re.compile(r"(?:הקלטות|האודיו|הקול)[^.!?\n]{0,20}?"
+               r"(?:נשמר|נשמרות|נשמרים|מוקלט)"),
+]
 
 # A bare mention of voice messages / recordings counts as
 # the voice question only in a question-shaped message, so
@@ -1065,6 +1200,24 @@ VOICE_ANSWER_HE = (
     "כן — יש לסולאס מצב קול: מקישים על ה־🎤 ואפשר לדבר בקול "
     "במקום להקליד. סולאס אף פעם לא מקבל או שומר את האודיו "
     "שלך — רק את הטקסט של מה שאתה אומר."
+)
+# Tab r13 item 4: the storage answer. First word "No" — the
+# question is whether audio is stored, and the truthful answer
+# is that it never reaches Solace at all. The Voice Mode offer
+# follows as its own sentence. The Hebrew form keeps the
+# writer-addressed tail neutral ("מה שנאמר") for an unknown
+# gender (item 5); Solace's own verbs stay masculine, per A6.
+VOICE_STORAGE_ANSWER = (
+    "No. Solace never receives or stores your audio — only the "
+    "text of what you say. The speech-to-text happens in your "
+    "browser, on your device. If you'd like to talk instead of "
+    "typing, tap the 🎤 for Voice Mode."
+)
+VOICE_STORAGE_ANSWER_HE = (
+    "לא. סולאס אף פעם לא מקבל או שומר את האודיו שלך — רק את "
+    "הטקסט של מה שנאמר. ההמרה מדיבור לטקסט קורית בדפדפן שלך, "
+    "על המכשיר שלך. אם נוח לך יותר לדבר במקום להקליד, יש מצב "
+    "קול — מקישים על ה־🎤."
 )
 
 
@@ -1425,6 +1578,11 @@ def detect_intent_label(text):
         return "human"
     if any(rx.search(t) for rx in _PRIVACY_Q_RES):
         return "privacy"
+    if any(rx.search(t) for rx in _VOICE_STORAGE_RES):
+        # r13 item 4: storage questions are classified BEFORE
+        # the voice capability patterns (which contain the same
+        # store/record shapes) so the first word can be "No".
+        return "voice_storage"
     if detect_voice_question(t):
         return "voice"
     if detect_availability_question(t):
@@ -1472,6 +1630,9 @@ def label_answer(label, hebrew, gender=None, name=None):
         ans = HUMAN_ANSWER_HE if hebrew else HUMAN_ANSWER
     elif label == "privacy":
         ans = PRIVACY_ANSWER_HE if hebrew else PRIVACY_ANSWER
+    elif label == "voice_storage":
+        ans = VOICE_STORAGE_ANSWER_HE if hebrew \
+            else VOICE_STORAGE_ANSWER
     elif label == "voice":
         ans = VOICE_ANSWER_HE if hebrew else VOICE_ANSWER
         if hebrew:
@@ -1597,13 +1758,19 @@ def _gendered_identity_he(kind, gender):
 
 def _voice_answer_he(gender):
     """A5: the Hebrew voice answer — the voice-privacy line's
-    writer-addressed tail follows the writer's gender when it is
-    known to be feminine; every other case ships the Tab-pinned
-    string, byte-identical."""
+    writer-addressed tail follows the writer's gender when it
+    is known. Tab r13 item 5: an UNKNOWN gender is always
+    neutral, in one consistent style — the tail becomes
+    "של מה שנאמר" (no writer address at all; Solace's own
+    verbs stay masculine per A6). A known masculine writer
+    keeps the Tab-pinned string, byte-identical."""
     if gender == "f":
         return VOICE_ANSWER_HE.replace(
             "של מה שאתה אומר", "של מה שאת אומרת")
-    return VOICE_ANSWER_HE
+    if gender == "m":
+        return VOICE_ANSWER_HE
+    return VOICE_ANSWER_HE.replace(
+        "של מה שאתה אומר", "של מה שנאמר")
 
 
 # ---- A5 morphology: a paradigm of second-person present-tense
@@ -2586,6 +2753,11 @@ def classify_intent_model(text):
 def assess_risk(text):
     """Full pre-model risk check: keyword layer first, classifier second.
     Runs BEFORE any normal model call, on every user message."""
+    if is_vanish_only_statement(text):
+        # Tab r13 item 3: checked before the keyword layer —
+        # the guard itself verified the vanish words are the
+        # message's only crisis-shaped signal.
+        return False
     if detect_crisis_keywords(text):
         return True
     if is_prescribed_med_statement(text):
@@ -2595,6 +2767,12 @@ def assess_risk(text):
     if is_stuck_in_life_statement(text):
         # "Feeling stuck in life" is not-crisis by rule (Tab
         # round 6) — the classifier never gets to escalate it.
+        return False
+    if is_vanish_only_statement(text):
+        # Vanish / disappear / done-with-everything, with no
+        # life-or-death word, is not-crisis by rule (Tab r13) —
+        # checked before the classifier; its own guard already
+        # verified no other crisis signal is present.
         return False
     return classify_risk(text)
 
@@ -3187,6 +3365,13 @@ _HE_CALQUE_RES = [
     re.compile(r"לא\s+זזה"),
     re.compile(r"בלי\s+(?:שום\s+)?מהירות"),
     re.compile(r"(?:^|[.!?…]\s+)זה\s+תחושה"),
+    # Tab r13 item 6: the two calques Tab caught on device,
+    # in their standalone forms — "אין שום מהירות לרפא" (no
+    # בלי before it) and "דברו כואב" (a garbled imperative of
+    # "speaking hurts"). Whole sentences carrying them are
+    # dropped, never shipped.
+    re.compile(r"שום\s+מהירות"),
+    re.compile(r"דברו\s+כואב"),
 ]
 
 
@@ -3613,7 +3798,10 @@ _DIVIDER_LINE_RE = re.compile(
 def _strip_opening_echo(body, opening):
     """If the model parroted the fixed opening back as the start of
     its continuation, drop the echoed sentences — the caller
-    prepends the one true opening itself."""
+    prepends the one true opening itself. Tab r13 item 6: an
+    echo sentence is dropped wherever it appears in the body,
+    not only at the start — a follow-up must never repeat the
+    opening, in whole or in part."""
     if not body or not opening:
         return body
     open_segs = [s.strip() for s, _ in _sentence_segments(opening)
@@ -3626,6 +3814,13 @@ def _strip_opening_echo(body, opening):
         if not rest:
             break
         body = rest
+    # Mid-body echoes (only when something else remains).
+    for want in open_segs:
+        segs = _sentence_segments(body)
+        kept = [(s, sep) for s, sep in segs if s.strip() != want]
+        if len(kept) == len(segs) or not kept:
+            continue
+        body = "".join(s + sep for s, sep in kept).strip()
     return body
 
 
@@ -3766,6 +3961,13 @@ _SYMPATHY_ANY_RE = re.compile(
     r"(sorry\s+for\s+your\s+loss|sorry\s+to\s+hear|"
     r"my\s+(?:deepest\s+)?condolences|deepest\s+sympath|"
     r"i'?m\s+so\s+sorry\s+(?:for|about|to\s+hear)|"
+    # Tab r13 item 6: the bare forms are sympathy too — a
+    # grief CONTINUATION may not open with (or contain) a
+    # standalone "I'm so sorry", "so sorry", or "my heart
+    # goes out to you" at all.
+    r"i'?m\s+so\s+sorry\b|"
+    r"\bso\s+sorry\b|"
+    r"my\s+heart\s+goes\s+out|"
     r"we'?re\s+(?:so\s+)?sorry|"
     # A7's lexicon names them: "take your time" and "with you"
     # companionship are sympathy language in a continuation.
@@ -4192,6 +4394,22 @@ def update_summary(user_id):
         transcript = "\n".join(
             "%s: %s" % (r["role"], r["content"]) for r in reversed(rows)
         )
+        # Tab r13 item 10: the memory note follows the
+        # conversation's language. A Hebrew conversation gets a
+        # Hebrew note and Hebrew ITEMS — the whole first-run
+        # experience is in the person's language, not just the
+        # replies.
+        _he_user = sum(
+            1 for r in rows if r["role"] == "user"
+            and HEBREW_RE.search(r["content"] or ""))
+        _all_user = sum(1 for r in rows if r["role"] == "user")
+        lang_note = ""
+        if _all_user and _he_user * 2 >= _all_user:
+            lang_note = (
+                "\n\nLANGUAGE: this conversation is in Hebrew. "
+                "Write the note itself in Hebrew, and write "
+                "every ITEMS text in Hebrew too."
+            )
         # Completed rehearsals feed memory through this same updater:
         # one describing-language line each, so a finished practice
         # shows up as a theme/goal item the person can review. (They
@@ -4254,7 +4472,7 @@ def update_summary(user_id):
             "Previous note:\n%s\n\nRecent conversation:\n%s%s"
             % (_today_str(), _week_map_str(),
                old["summary"] if old else "(none)",
-               transcript, rehearsal_note + deleted_note)
+               transcript, rehearsal_note + deleted_note + lang_note)
         )
         out = call_anthropic(
             SUMMARY_MODEL,
@@ -4331,6 +4549,12 @@ class ChatIn(BaseModel):
 
 class DeleteIn(BaseModel):
     user_id: str
+    # Tab r13 item 9: every user id this DEVICE has ever used —
+    # "New chat" mints a fresh id, and deleting only the newest
+    # one left every older chat on the server. The client sends
+    # its full device id list; the endpoint deletes and then
+    # VERIFIES every one of them before it may say "deleted".
+    user_ids: list[str] | None = None
 
 
 class MemoryItemDeleteIn(BaseModel):
@@ -4514,6 +4738,11 @@ def _prepare_turn(uid, msg):
     # quote / school frame) is not-crisis BY RULE, checked before
     # the classifier — the classifier never gets to escalate it.
     idiom_safe = is_never_crisis_idiom(msg)
+    # Tab r13 item 3: vanish / disappear / done-with-everything
+    # with no life-or-death word is not-crisis BY RULE — the
+    # "(wish|want) … disappear" keyword pattern no longer gets
+    # to latch it, and the classifier is skipped for it.
+    vanish_safe = is_vanish_only_statement(msg)
     # Tab FINAL order A3: the MEDICAL-EMERGENCY check is separate
     # and runs BEFORE the suicide check — but a plain prescribed-
     # medication statement is guarded out of it, as before.
@@ -4533,9 +4762,11 @@ def _prepare_turn(uid, msg):
     if detected_gender and detected_gender != stored_gender:
         _set_user_state(uid, gender_v=detected_gender)
     info_q = (not kw_risk) and is_informational_word_question(msg)
-    if idiom_safe:
+    if idiom_safe or vanish_safe:
         # A1 wins over the keyword layer: the idiom accounts for
         # the dark words in the message (checked in the detector).
+        # The vanish guard (r13) likewise: the disappear words
+        # are the message's only signal (checked in its detector).
         risk = False
     elif kw_risk:
         risk = True
@@ -4573,7 +4804,8 @@ def _prepare_turn(uid, msg):
     # normal chat again from this message on. (A fresh risk
     # signal or a completed overdose was already handled
     # above and never reaches this bypass.)
-    if in_crisis_mode and (med_safe or stuck_safe or idiom_safe) \
+    if in_crisis_mode and (med_safe or stuck_safe or idiom_safe
+                           or vanish_safe) \
             and not risk and not emergency and not medical_kind \
             and not detect_clarification(msg):
         _set_user_state(uid, crisis_mode=False, stepdown_v=False,
@@ -4618,6 +4850,7 @@ def _prepare_turn(uid, msg):
         "need_professional": detect_need_professional(msg),
         "med_statement": med_safe,
         "stuck_statement": stuck_safe,
+        "vanish_statement": vanish_safe,
         # The writer's own gender (Tab round 5, FINAL order A5):
         # stored per user, neutral until known — steers every
         # gendered fixed string and the scrub layer's morphology.
@@ -4691,6 +4924,28 @@ def _prepare_turn(uid, msg):
                                "banner_lang": banner_lang,
                                "writer_gender": writer_gender or "",
                                "reply_lang": safety_lang})
+
+    # Tab r13 item 3: after a FALSE ALARM, the next normal
+    # question gets a normal answer. A deterministic intent
+    # question (about Solace itself — privacy, voice, identity,
+    # availability…) from a latched chat is the person oriented
+    # and moving on: the latch and banner clear, and the A8
+    # block below answers it with its approved text instead of
+    # a crisis-mode model reply. (A fresh risk signal was
+    # already handled above and never reaches this point.)
+    if in_crisis_mode:
+        _lbl = detect_intent_label(msg)
+        # "seeking" never unlatches: mid-crisis, "do I need a
+        # professional?" stays in the crisis flow, which adds
+        # the referral AND the crisis resources (pinned r11).
+        if _lbl is not None and _lbl != "seeking":
+            _set_user_state(uid, crisis_mode=False,
+                            stepdown_v=False, banner_v=False,
+                            checkin_v=False, lang_v=safety_lang)
+            in_crisis_mode = False
+            stepdown = False
+            banner = False
+            ctx["banner"] = False
 
     # Tab FINAL order A8: ONE intent classification, one approved
     # deterministic answer per label — identity ("Is this
@@ -4827,9 +5082,41 @@ def _prepare_turn(uid, msg):
         ctx["grief_writer_gender"] = ctx["eff_gender"]
         ctx["grief_opening"] = grief_opening_for(
             hebrew, msg, writer_gender)
+        # Tab r13 item 6: a grief FOLLOW-UP never repeats the
+        # opening. If the previous assistant reply already
+        # opened with a fixed grief opening (this chat has
+        # grieved before), this turn carries NO opening — the
+        # model continues the conversation — and the finish
+        # layers must not resurrect one either.
+        _prev_opened = False
+        for _m in reversed(messages):
+            if _m["role"] == "assistant":
+                _prev_opened = any(
+                    _m["content"].startswith(_o) for _o in (
+                        GRIEF_OPENING, GRIEF_OPENING_HE,
+                        GRIEF_OPENING_HE_F, GRIEF_OPENING_HE_N,
+                        GRIEF_OPENING_HE_N_F, GRIEF_OPENING_HE_WF,
+                        GRIEF_OPENING_HE_WF_F))
+                break
+        ctx["grief_repeat"] = _prev_opened
+        if _prev_opened:
+            ctx["grief_opening"] = ""
+            gsys += (
+                "\n\nNOTE: this conversation has ALREADY "
+                "acknowledged the loss with its opening line "
+                "in an earlier reply. Do NOT repeat any "
+                "condolence opening, do NOT say you are sorry "
+                "for the loss again, and do not restart the "
+                "conversation as if hearing this for the "
+                "first time — simply continue, warmly and "
+                "directly, with what the person just said."
+            )
         ctx["fallback_text"] = (
-            (ctx["grief_opening"] + " " + GRIEF_FALLBACK_HE) if hebrew
-            else (GRIEF_OPENING + " " + GRIEF_FALLBACK)
+            ((ctx["grief_opening"] + " " + GRIEF_FALLBACK_HE)
+             if ctx["grief_opening"] else GRIEF_FALLBACK_HE)
+            if hebrew
+            else ((ctx["grief_opening"] + " " + GRIEF_FALLBACK)
+                  if ctx["grief_opening"] else GRIEF_FALLBACK)
         )
         return ctx, ("model", "grief", gsys)
 
@@ -4860,6 +5147,21 @@ def _prepare_turn(uid, msg):
             "NOT a sign of suicidal intent. Respond to it "
             "normally and warmly, and explore what feels "
             "stuck; do NOT begin with [CRISIS], do not "
+            "safety-interrogate, and do not treat it as an "
+            "emergency."
+        )
+    if vanish_safe:
+        # Same rule for vanish / disappear / done-with-
+        # everything (Tab r13): overwhelm, cleared
+        # deterministically — the model must not re-escalate.
+        system += (
+            "\n\nNOTE: the person said they want to "
+            "disappear / vanish, or that they are done with "
+            "everything — an expression of overwhelm, NOT a "
+            "crisis statement (there is no life-or-death "
+            "word in their message). Respond normally and "
+            "warmly and explore what they want a break "
+            "from; do NOT begin with [CRISIS], do not "
             "safety-interrogate, and do not treat it as an "
             "emergency."
         )
@@ -4914,12 +5216,23 @@ def _finish_model_turn(ctx, mode, reply, background):
         # branch trusted a model echo, gender and all; gone.) No
         # crisis latch, no banner change, no hotline footer — grief
         # is not the crisis flow.
-        opening = ctx.get("grief_opening") or (
-            GRIEF_OPENING_HE if ctx.get("grief_hebrew")
-            else GRIEF_OPENING)
+        if ctx.get("grief_repeat"):
+            # r13 item 6: a follow-up turn carries no opening —
+            # the body's own words are the whole reply (echoes
+            # of the fixed opening are still stripped, against
+            # the opening this kin would have used).
+            opening = ""
+            echo_ref = grief_opening_for(
+                bool(ctx.get("grief_hebrew")), user_text,
+                ctx.get("grief_writer_gender"))
+        else:
+            opening = ctx.get("grief_opening") or (
+                GRIEF_OPENING_HE if ctx.get("grief_hebrew")
+                else GRIEF_OPENING)
+            echo_ref = opening
         body = _grief_clean_body(
             scrub_field(reply.strip(),
-                        ctx.get("grief_writer_gender")), opening,
+                        ctx.get("grief_writer_gender")), echo_ref,
             ctx.get("grief_writer_gender"))
         if not body:
             # The continuation was ONLY a second opening (Tab
@@ -4927,7 +5240,7 @@ def _finish_model_turn(ctx, mode, reply, background):
             # grief fallback line, never the opening alone.
             body = (GRIEF_FALLBACK_HE if ctx.get("grief_hebrew")
                     else GRIEF_FALLBACK)
-        reply = opening + ("\n\n" + body if body else "")
+        reply = (opening + "\n\n" + body) if opening else body
         if ctx.get("need_professional"):
             # The referral guarantee covers EVERY finish path
             # (Tab round 5): the grief branch used to return
@@ -4967,7 +5280,8 @@ def _finish_model_turn(ctx, mode, reply, background):
         # footer. The same holds for a feeling-stuck statement
         # (Tab round 6).
         if not ctx["retracted"] and not ctx.get("med_statement") \
-                and not ctx.get("stuck_statement"):
+                and not ctx.get("stuck_statement") \
+                and not ctx.get("vanish_statement"):
             crisis = True
             banner = True
             banner_lang = safety_lang
@@ -5084,7 +5398,19 @@ def _fast_final_turn(uid, msg):
     behind other users' model calls (Tab round 3: with 10 users
     at once the 988 reply took 2–5 s). _prepare_turn is only
     regex + local SQLite on this path — milliseconds."""
-    if not (detect_crisis_keywords(msg) or detect_overdose(msg)):
+    if is_vanish_only_statement(msg):
+        # Tab r13 item 3: vanish-only is cleared by rule — a
+        # model turn. Bailing here (before _prepare_turn runs)
+        # also keeps the caller from preparing the turn twice.
+        return None
+    # Tab r13 items 1-2: medical emergencies take this instant
+    # route too — the deterministic medical reply must resolve
+    # before any model queue, exactly like crisis keywords.
+    med_kind = detect_medical_emergency(msg)
+    if med_kind and is_prescribed_med_statement(msg):
+        med_kind = None
+    if not (detect_crisis_keywords(msg) or detect_overdose(msg)
+            or med_kind):
         return None
     _, outcome = _prepare_turn(uid, msg)
     if outcome[0] == "final":
@@ -5195,10 +5521,15 @@ def _chat_stream_events_inner(uid, msg, background):
         # The fixed condolence opens the reply — send it at once,
         # before the model's continuation streams. (The done
         # payload stays authoritative, as everywhere else.)
-        opening = ctx.get("grief_opening") or (
-            GRIEF_OPENING_HE if ctx.get("grief_hebrew")
-            else GRIEF_OPENING)
-        yield _sse({"type": "delta", "text": opening + "\n\n"})
+        # r13 item 6: a follow-up turn (grief_repeat) streams
+        # NO opening at all — the `or` fallback must not
+        # resurrect one for it.
+        opening = ("" if ctx.get("grief_repeat") else
+                   ctx.get("grief_opening") or (
+                       GRIEF_OPENING_HE if ctx.get("grief_hebrew")
+                       else GRIEF_OPENING))
+        if opening:
+            yield _sse({"type": "delta", "text": opening + "\n\n"})
 
     raw = ""
     skip = None  # None until the [CRISIS]-marker question is settled
@@ -5282,15 +5613,25 @@ def _chat_stream_events_inner(uid, msg, background):
         # its referral line on this path as everywhere else.
         _she = ctx.get("safety_hebrew", ctx["hebrew"])
         if mode == "grief":
-            opening = ctx.get("grief_opening") or (
-                GRIEF_OPENING_HE if ctx.get("grief_hebrew")
-                else GRIEF_OPENING)
             body = (GRIEF_FALLBACK_HE if ctx.get("grief_hebrew")
                     else GRIEF_FALLBACK)
-            payload = {"reply": opening + "\n\n" + body,
-                       "crisis": False, "hotline": ctx["hotline"],
-                       "banner": ctx["banner"],
-                       "banner_lang": ctx["banner_lang"]}
+            if ctx.get("grief_repeat"):
+                # r13 item 6: a follow-up never repeats the
+                # opening — the fallback body stands alone.
+                payload = {"reply": body,
+                           "crisis": False,
+                           "hotline": ctx["hotline"],
+                           "banner": ctx["banner"],
+                           "banner_lang": ctx["banner_lang"]}
+            else:
+                opening = ctx.get("grief_opening") or (
+                    GRIEF_OPENING_HE if ctx.get("grief_hebrew")
+                    else GRIEF_OPENING)
+                payload = {"reply": opening + "\n\n" + body,
+                           "crisis": False,
+                           "hotline": ctx["hotline"],
+                           "banner": ctx["banner"],
+                           "banner_lang": ctx["banner_lang"]}
         elif mode == "crisis":
             rep = ctx["fallback_text"]
             if ctx.get("need_professional"):
@@ -6671,24 +7012,49 @@ def delete_data(body: DeleteIn, response: Response):
     """Delete ALL data stored for a user_id (re-test fix #3): profile,
     every message, the memory/summary note, the memory items and
     tombstones, and all crisis state. Backs the in-app
-    "Delete my data" button."""
-    uid = body.user_id.strip()
-    if not uid:
-        return {"ok": False, "deleted": False}
+    "Delete my data" button.
+
+    Tab r13 item 9: "New chat" mints a NEW user id, so the old
+    chat lived on under the old id — deleting only the current
+    id left it on the server while the UI said "deleted". The
+    client now sends every id this device has ever used
+    (body.user_ids); ALL of them are deleted, and the response
+    only claims deletion after a verification pass proves zero
+    rows remain for every id in every table."""
+    uids = []
+    for raw in [body.user_id] + list(body.user_ids or []):
+        u = (raw or "").strip()
+        if u and u not in uids:
+            uids.append(u)
+    if not uids:
+        return {"ok": False, "deleted": False, "remaining": -1}
+    tables = ("messages", "summaries", "memory_items",
+              "memory_tombstones", "rehearsals",
+              "real_talk_followups")
     with db_lock:
         conn = _conn()
-        conn.execute("DELETE FROM messages WHERE user_id=?", (uid,))
-        conn.execute("DELETE FROM summaries WHERE user_id=?", (uid,))
-        conn.execute("DELETE FROM memory_items WHERE user_id=?", (uid,))
-        conn.execute("DELETE FROM memory_tombstones WHERE user_id=?", (uid,))
-        conn.execute("DELETE FROM rehearsals WHERE user_id=?", (uid,))
-        conn.execute(
-            "DELETE FROM real_talk_followups WHERE user_id=?", (uid,))
-        conn.execute("DELETE FROM users WHERE id=?", (uid,))
+        for uid in uids:
+            for t in tables:
+                conn.execute(
+                    "DELETE FROM %s WHERE user_id=?" % t, (uid,))
+            conn.execute("DELETE FROM users WHERE id=?", (uid,))
         conn.commit()
+        # Verification pass: count what is actually left.
+        remaining = 0
+        for uid in uids:
+            for t in tables:
+                remaining += conn.execute(
+                    "SELECT COUNT(*) AS c FROM %s WHERE user_id=?"
+                    % t, (uid,)).fetchone()["c"]
+            remaining += conn.execute(
+                "SELECT COUNT(*) AS c FROM users WHERE id=?",
+                (uid,)).fetchone()["c"]
         conn.close()
-    response.delete_cookie(UID_COOKIE, path="/")
-    return {"ok": True, "deleted": True}
+    deleted = remaining == 0
+    if deleted:
+        response.delete_cookie(UID_COOKIE, path="/")
+    return {"ok": deleted, "deleted": deleted,
+            "remaining": remaining, "users": len(uids)}
 
 
 @app.get("/api/memory")
