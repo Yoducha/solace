@@ -395,9 +395,17 @@ def detect_medical_emergency(text):
     n = _norm_match(text)
     if any(rx.search(n) for rx in _MEDICAL_RES):
         # An ingestion word rides the medical path too — the
-        # Poison Control line joins the reply below.
+        # Poison Control line joins the reply below. Ingestion
+        # includes a third person ("my friend took too many
+        # pills and won't wake up" — Part B line 22).
         if re.search(r"\boverdose\b|\boverdosed\b", n) \
-                or "מנת יתר" in n or "הרעלת תרופות" in n:
+                or "מנת יתר" in n or "הרעלת תרופות" in n \
+                or re.search(r"\btoo\s+many\s+pills\b", n) \
+                or re.search(
+                    r"\b(?:took|swallowed|ate|drank|taken)\b"
+                    r"[^.!?\n]{0,40}?\b(?:pills?|bottle|tylenol|"
+                    r"tablets?|capsules?|meds|medicine|sleeping\s+"
+                    r"pills)\b", n):
             return "ingestion"
         return "medical"
     if detect_overdose(text):
