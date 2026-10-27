@@ -3870,8 +3870,8 @@ def _followup_person_display(rec, lang, requested=""):
     ptype = rec["person_type"]
     if lang == "he":
         known = {
-            "boss": "הבוס שלך", "partner": "בן/בת הזוג שלך",
-            "dad": "אבא", "mom": "אמא", "friend": "החבר/ה שלך",
+            "boss": "הבוס שלך", "partner": "בן הזוג שלך",
+            "dad": "אבא", "mom": "אמא", "friend": "החבר שלך",
         }
     else:
         known = {

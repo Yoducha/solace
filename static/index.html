@@ -429,7 +429,6 @@
     <p class="privacy-line" id="privacy-line">We count usage anonymously — never what you write.</p>
 
     <div id="intake-fields" style="display:none">
-      <p class="audience" id="audience-line">Heavy mind? Day or night, no judgment.</p>
       <p class="lead" id="lead-line">Your chats aren't shared with other people or used to advertise to you. See the privacy page for details.</p>
 
       <div>
@@ -1203,8 +1202,8 @@ const RH = {
     pvOn: '🔊 קול הצד השני פעיל', pvOff: '🔇 קול הצד השני כבוי',
     helpQ: 'זה עזר לך?', voteThanks: 'תודה שסיפרת לנו.',
     again: 'לתרגל שוב', done: 'סיימתי',
-    people: {boss: 'הבוס', partner: 'בן/בת הזוג', dad: 'אבא', mom: 'אמא', friend: 'חבר/ה', custom: 'מישהו אחר'},
-    display: {boss: 'הבוס שלך', partner: 'בן/בת הזוג שלך', dad: 'אבא', mom: 'אמא', friend: 'החבר/ה שלך'},
+    people: {boss: 'הבוס', partner: 'בן הזוג', dad: 'אבא', mom: 'אמא', friend: 'חבר', custom: 'מישהו אחר'},
+    display: {boss: 'הבוס שלך', partner: 'בן הזוג שלך', dad: 'אבא', mom: 'אמא', friend: 'החבר שלך'},
     setupSub: d => 'כמה הקשות מהירות, ואז מתרגלים עם ' + d + '. הוא יגיב כמו שתתאר — כדי שתוכל לנסות את המילים שלך קודם.',
     withP: d => 'אתה מתרגל עם ' + d,
     pickFirst: 'קודם בחר עם מי השיחה.',
@@ -2617,7 +2616,6 @@ if (UI_HE) {
   set('begin-rehearse', 'לתרגל שיחה קשה');
   set('begin', BTXT.begin);
   set('privacy-line', 'אנחנו סופרים שימוש באופן אנונימי — לעולם לא את מה שכותבים.');
-  set('audience-line', 'לכל מי שהראש כבד עליו — ביום ובלילה, בלי שיפוט.');
   set('lead-line', 'השיחות שלך לא משותפות עם אנשים אחרים ולא משמשות כדי לפרסם לך. לפרטים נוספים, ראו את עמוד הפרטיות.');
   set('name-label', 'איך לקרוא לך? (לא חובה)');
   document.getElementById('name').placeholder = 'השם הפרטי שלך';

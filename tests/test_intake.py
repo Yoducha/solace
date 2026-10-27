@@ -76,11 +76,22 @@ if _welcome.count("Not therapy") != 1:
     failures.append("INTAKE 'Not therapy' count != 1: %d"
                     % _welcome.count("Not therapy"))
 
+# ---------- no availability phrasing anywhere on the page ----------------
+# Tab round 4 (his "r10" test): "Heavy mind? Day or night, no
+# judgment." (HE: "ביום ובלילה") is an availability claim by
+# another name — the intake line is deleted, in both languages.
+for bad in ("Day or night", "ביום ובלילה", "Heavy mind"):
+    if bad in html:
+        failures.append("INTAKE still carries availability copy: %r"
+                        % bad)
+if 'id="audience-line"' in html:
+    failures.append("INTAKE audience line still present")
+
 # ---------- Hebrew intake -------------------------------------------------
 for marker in ("UI_HE", "BTXT", "applyIntakeHe".replace("applyIntakeHe", "UI_HE"),
                "להתחיל התבוננות", "מה הכי מכביד עליך?",
                "לא בטוח מאיפה להתחיל?", "id=\"tagline\"",
-               "id=\"audience-line\"", "id=\"mood-label\"",
+               "id=\"mood-label\"",
                "id=\"concern-label\"", "id=\"tiny-line\""):
     if marker not in html:
         failures.append("HE INTAKE marker missing: %s" % marker)
