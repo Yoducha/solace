@@ -92,7 +92,10 @@ if 'id="audience-line"' in html:
 # UI_STRINGS table — the markers name the new machinery.
 for marker in ("UI_STRINGS", "BTXT", "applyUIStrings",
                "להתחיל התבוננות", "מה הכי מכביד עכשיו?",
-               "לא בטוח מאיפה להתחיל?", "id=\"tagline\"",
+               # Tab r13 item 5 supersedes the masculine
+               # starters label pinned here before: an
+               # unknown-gender writer is always neutral.
+               "לא יודעים מאיפה להתחיל?", "id=\"tagline\"",
                "id=\"mood-label\"",
                "id=\"concern-label\"", "id=\"tiny-line\""):
     if marker not in html:

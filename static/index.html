@@ -103,6 +103,11 @@
   .linkbtn {
     background: none; border: none; padding: 0; font: inherit; color: var(--clay);
     cursor: pointer; text-decoration: underline;
+    /* Tab r13 item 11: every .linkbtn is a 44x44 target, not
+       only the ones inside .tiny rows — the rehearse header
+       buttons use this class bare. */
+    display: inline-flex; align-items: center; justify-content: center;
+    min-height: 44px; min-width: 44px;
   }
   .linkbtn.danger { color: var(--danger-ink); }
   #crisis-banner {
@@ -110,7 +115,7 @@
     padding: 14px 16px; font-size: 14px; line-height: 1.55; border-bottom: 1px solid #f3d9d9;
   }
   #crisis-banner strong { display: block; margin-bottom: 4px; }
-  #crisis-banner a { color: var(--danger-ink); font-weight: 700; }
+  #crisis-banner a { color: var(--danger-ink); font-weight: 700; display: inline-flex; align-items: center; min-height: 44px; padding: 0 6px; }
   #crisis-banner[dir="rtl"] { text-align: right; }
   main { flex: 1; display: flex; flex-direction: column; min-height: 0; max-width: 640px; width: 100%; margin: 0 auto; }
 
@@ -143,7 +148,7 @@
   }
   .mem-empty { color: var(--muted); font-size: 15px; line-height: 1.55; }
   #memory-card .row { display: flex; gap: 10px; margin-top: 18px; }
-  #memory-card .row button { flex: 1; border-radius: 14px; padding: 13px; font-size: 15px; font-weight: 700; cursor: pointer; }
+  #memory-card .row button { flex: 1; border-radius: 14px; padding: 13px; font-size: 15px; font-weight: 700; cursor: pointer; min-height: 44px; min-width: 44px; }
   #memory-close { background: var(--sage); color: #fff; border: none; }
   #memory-delete-all { background: none; border: 1px solid var(--danger-ink); color: var(--danger-ink); }
   #welcome p.lead { color: var(--muted); font-size: 16px; line-height: 1.6; margin: 0; }
@@ -655,6 +660,31 @@ if (userId) {
   localStorage.setItem('solace_uid', userId);
   setUidCookie(userId);
 }
+// Tab r13 item 9: EVERY user id this device has ever used.
+// "New chat" mints a fresh id, and the chats under the older
+// ids stay on the server — so every id is remembered here, and
+// "Delete my data" sends the whole list and wipes them all.
+function knownUids() {
+  try { return JSON.parse(localStorage.getItem('solace_uids') || '[]'); }
+  catch (e) { return []; }
+}
+function rememberUid(id) {
+  if (!id) return;
+  try {
+    const ids = knownUids();
+    if (!ids.includes(id)) {
+      ids.push(id);
+      localStorage.setItem('solace_uids', JSON.stringify(ids));
+    }
+  } catch (e) { /* storage unavailable */ }
+}
+function forgetUid(id) {
+  try {
+    localStorage.setItem('solace_uids',
+      JSON.stringify(knownUids().filter(x => x !== id)));
+  } catch (e) { /* storage unavailable */ }
+}
+if (userId) rememberUid(userId);
 let mood = '';
 let intakeShown = false;
 let voiceOn = false;
@@ -700,6 +730,7 @@ const UI_STRINGS = {
     memThemes: 'Themes', memGoals: 'Goals', memRemove: 'Remove this',
     welcomeBack: "Welcome back — here's where you left off.",
     confirmNew: 'Start a new conversation? A fresh session will begin.',
+    confirmNewDelete: 'Also delete the old conversation from the server? This cannot be undone.',
     noDataYet: 'There is no saved data to delete yet.',
     confirmDelete: 'Permanently delete ALL your Solace data — every message, your profile, and the memory notes? This cannot be undone.',
     deleted: 'Your data has been deleted.',
@@ -729,8 +760,8 @@ const UI_STRINGS = {
     nameLabel: 'איך לקרוא לך? (לא חובה)', namePh: 'השם הפרטי שלך',
     moodLabel: 'איך ההרגשה עכשיו?',
     moods: { 'Really struggling': 'ממש קשה לי', 'Low': 'נמוך', 'Okay': 'בסדר', 'Good': 'טוב', 'Great': 'מצוין' },
-    startersLabel: 'לא בטוח מאיפה להתחיל? אפשר להקיש על אחד:',
-    starters: ['אני לא מצליח לישון — הראש לא מפסיק לרוץ.', 'העבודה ממש מכבידה עליי בזמן האחרון.', 'רבתי עם מישהו שאני אוהב.'],
+    startersLabel: 'לא יודעים מאיפה להתחיל? אפשר להקיש על אחד מהמשפטים:',
+    starters: ['קשה לישון — הראש לא מפסיק לרוץ.', 'העבודה ממש מכבידה עליי בזמן האחרון.', 'רבתי עם מישהו קרוב.'],
     concernLabel: 'מה הכי מכביד עכשיו?',
     concernPh: 'כל מה שעולה בראש — אין תשובה לא נכונה.',
     tinyLine: 'המשך השימוש מהווה הסכמה ל<a href="/terms" target="_blank">תנאים</a> ול<a href="/privacy" target="_blank">מדיניות הפרטיות</a>. במשבר: ער״ן <a href="tel:1201">1201</a>, מד״א <a href="tel:101">101</a>.',
@@ -746,6 +777,7 @@ const UI_STRINGS = {
     memThemes: 'נושאים', memGoals: 'מטרות', memRemove: 'הסרת הפריט',
     welcomeBack: 'טוב שחזרתם — הנה המקום שבו הפסקנו.',
     confirmNew: 'להתחיל שיחה חדשה? תתחיל שיחה טרייה.',
+    confirmNewDelete: 'למחוק גם את השיחה הקודמת מהשרת? אי אפשר לבטל את זה.',
     noDataYet: 'עדיין אין נתונים שמורים למחיקה.',
     confirmDelete: 'למחוק לצמיתות את כל נתוני סולאס — כל ההודעות, הפרופיל והערות הזיכרון? אי אפשר לבטל את זה.',
     deleted: 'הנתונים נמחקו.',
@@ -846,7 +878,9 @@ const VOICE_PRIVACY_HE = {
   n: 'סולאס אף פעם לא מקבל או שומר הקלטות — רק את הטקסט של מה שנאמר.',
 };
 function voicePrivacyHe() {
-  return VOICE_PRIVACY_HE[writerGender] || VOICE_PRIVACY_HE.m;
+  // Tab r13 item 5: an unknown writer is ALWAYS neutral — the
+  // default is the neutral form, never the masculine.
+  return VOICE_PRIVACY_HE[writerGender] || VOICE_PRIVACY_HE.n;
 }
 
 function pickVoice() {
@@ -890,12 +924,23 @@ document.getElementById('voice-toggle').addEventListener('click', function() {
 
 // New Conversation: fresh session id, cleared view, reset intake. confirm()
 // guards against an accidental tap wiping the current chat.
-document.getElementById('new-chat').addEventListener('click', () => {
+document.getElementById('new-chat').addEventListener('click', async () => {
   if (!confirm(T().confirmNew)) return;
+  const oldId = userId;
   userId = Array.from(crypto.getRandomValues(new Uint8Array(8)))
     .map(b => b.toString(16).padStart(2, '0')).join('');
   localStorage.setItem('solace_uid', userId);
   setUidCookie(userId);
+  rememberUid(userId);
+  // r13 item 9: offer to delete the OLD conversation from the
+  // server. If declined (or the delete fails), its id stays in
+  // the device registry and "Delete my data" still wipes it.
+  if (oldId && oldId !== userId && confirm(T().confirmNewDelete)) {
+    try {
+      const res = await api('/api/delete', {user_id: oldId, user_ids: [oldId]});
+      if (res.deleted) forgetUid(oldId);
+    } catch (e) { /* stays registered for a later delete */ }
+  }
   document.getElementById('messages').innerHTML = '';
   bannerLang = 'en';
   hideBanner();
@@ -973,6 +1018,18 @@ function addTyping(containerId) {
   document.getElementById(containerId).appendChild(d);
   scrollToLatest(d);
   return d;
+}
+
+// Tab r13 item 7: the typing dots stay visible until the reply
+// is FULLY done. While a reply streams, the dots are kept as
+// the last row of the conversation — re-appended after the
+// streaming bubble on every chunk — and removed only when the
+// turn settles (done or error), never on the first chunk.
+function pinTypingAfter(typing, anchor) {
+  if (!typing || !typing.isConnected) return;
+  const parent = typing.parentNode;
+  if (parent) parent.appendChild(typing);
+  scrollToLatest(typing);
 }
 
 // Bring the newest message fully into view. On iPhone the PAGE scrolls
@@ -1207,7 +1264,13 @@ let lastChatReplyText = '';
 
 // A17: while a reply is streaming, Send and the mic stay
 // disabled — a second turn can't start until this one is done.
+// Tab r13 item 8: ONE busy flag for the whole chat — Enter,
+// Send and 🎤 are ALL blocked until the reply is done. The
+// buttons are disabled visually, and doSend itself refuses:
+// the Enter-key path never consults the button's state.
+let chatBusy = false;
 function setChatBusy(busy) {
+  chatBusy = busy;
   const send = document.getElementById('send');
   const mic = document.getElementById('chat-mic');
   if (send) send.disabled = busy;
@@ -1268,10 +1331,12 @@ async function sendChatTurn(text) {
         if (!line) continue;
         const evt = JSON.parse(line.slice(5));
         if (evt.type === 'delta') {
-          if (!bubble) { typing.remove(); bubble = addStreamBubble(); }
+          // r13 item 7: the dots stay until the reply is done —
+          // the bubble appears ABOVE them, never replaces them.
+          if (!bubble) { bubble = addStreamBubble(); bubble.box.parentNode.insertBefore(bubble.box, typing); }
           acc += evt.text;
           bubble.span.innerHTML = renderAI(acc);
-          scrollToLatest(bubble.box);
+          pinTypingAfter(typing, bubble.box);
         } else if (evt.type === 'done') {
           payload = evt;
         }
@@ -1332,10 +1397,15 @@ document.getElementById('begin').addEventListener('click', async () => {
     userId = res.user_id;
     localStorage.setItem('solace_uid', userId);
     setUidCookie(userId);
+    rememberUid(userId);
     statVisit();
     showChat();
-    addMsg(concern ? concern : "Hi, I'd like to talk.", 'user');
-    await sendChat(concern ? concern : "Hi, I'd like to talk.");
+    // Tab r13 item 10: a Hebrew phone's first message is
+    // Hebrew — the whole first run happens in its language.
+    const opener = concern ? concern
+      : (UILang === 'he' ? 'היי, אשמח לדבר.' : "Hi, I'd like to talk.");
+    addMsg(opener, 'user');
+    await sendChat(opener);
   } catch (e) {
     btn.disabled = false;
     btn.textContent = intakeShown ? BTXT.beginOpen : BTXT.begin;
@@ -1344,6 +1414,9 @@ document.getElementById('begin').addEventListener('click', async () => {
 });
 
 async function doSend() {
+  // r13 item 8: while a reply is streaming, Enter and Send do
+  // nothing — the typed text stays in the box, unsent.
+  if (chatBusy) return;
   const inp = document.getElementById('input');
   const text = inp.value.trim();
   if (!text) return;
@@ -1374,9 +1447,15 @@ async function doDeleteData() {
   if (!userId) { alert(T().noDataYet); return; }
   if (!confirm(T().confirmDelete)) return;
   try {
-    const res = await api('/api/delete', {user_id: userId});
-    if (!res.ok) throw new Error('delete failed');
+    // r13 item 9: delete EVERY chat this device ever had —
+    // the server verifies zero rows remain for every id before
+    // it answers deleted:true, and only then may the UI say so.
+    const ids = knownUids();
+    if (userId && !ids.includes(userId)) ids.push(userId);
+    const res = await api('/api/delete', {user_id: userId, user_ids: ids});
+    if (!res.ok || !res.deleted) throw new Error('delete failed');
     localStorage.removeItem('solace_uid');
+    localStorage.removeItem('solace_uids');
     clearUidCookie();
     closeMemory();
     userId = '';
@@ -1624,11 +1703,13 @@ async function openRehearse() {
       .map(b => b.toString(16).padStart(2, '0')).join('');
     localStorage.setItem('solace_uid', userId);
     setUidCookie(userId);
+    rememberUid(userId);
     try {
       const res = await api('/api/profile', {user_id: userId, name: '', notes: ''});
       userId = res.user_id;
       localStorage.setItem('solace_uid', userId);
       setUidCookie(userId);
+      rememberUid(userId);
     } catch (e) { /* the start call creates the user row too */ }
   }
   rhState = {
@@ -2002,9 +2083,12 @@ async function rhStream(text) {
         if (!line) continue;
         const evt = JSON.parse(line.slice(5));
         if (evt.type === 'delta') {
-          if (!bubble) { typing.remove(); bubble = rhBubble(); }
+          // r13 item 7: same rule as the chat — the dots stay
+          // pinned under the streaming bubble until done.
+          if (!bubble) { bubble = rhBubble(); bubble.box.parentNode.insertBefore(bubble.box, typing); }
           acc += evt.text;
           bubble.span.innerHTML = renderAI(acc);
+          pinTypingAfter(typing, bubble.box);
           speakPump(acc, false);
           scrollToLatest(bubble.box);
         } else if (evt.type === 'done') {
@@ -2103,6 +2187,9 @@ async function rhUserLine(text, voiceTurn) {
 
 async function rhDoSend() {
   if (rhRec) return; // mid-dictation: the mic tap finishes the line
+  // r13 item 8: while a reply is streaming the send is refused
+  // BEFORE the input is cleared — the typed line is never lost.
+  if (rhState.busy) return;
   const inp = document.getElementById('rh-input');
   const text = inp.value.trim();
   if (!text) return;
