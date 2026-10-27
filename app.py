@@ -1008,12 +1008,28 @@ db_lock = threading.Lock()
 def _conn():
     conn = sqlite3.connect(DB_PATH, check_same_thread=False)
     conn.row_factory = sqlite3.Row
+    # Round 5: a brief busy window instead of an instant
+    # "database is locked" under simultaneous-start write
+    # bursts; the journal is WAL (set in init_db), so readers
+    # no longer queue behind a writer at all, and NORMAL
+    # synchronous (the standard WAL pairing) keeps each
+    # commit's fsync off the crisis path's critical queue.
+    conn.execute("PRAGMA busy_timeout=3000")
+    conn.execute("PRAGMA synchronous=NORMAL")
     return conn
 
 
 def init_db():
     with db_lock:
         conn = _conn()
+        # WAL (Tab round 5): readers never block behind a
+        # writer — one of the simultaneous-start stalls on the
+        # crisis fast path. The mode persists in the DB file;
+        # setting it on every boot is a no-op once active.
+        try:
+            conn.execute("PRAGMA journal_mode=WAL")
+        except Exception:
+            pass
         conn.executescript(
             """
             CREATE TABLE IF NOT EXISTS users (
@@ -1118,6 +1134,25 @@ def init_db():
 
 
 # ------------------------------------------------------- Anthropic ----
+# One shared HTTP client for API calls (Tab round 5):
+# previously EVERY call_anthropic built a fresh httpx.Client,
+# so at simultaneous start nine chats each paid a full TLS
+# handshake for their classifier call and another for the
+# chat call — pure contention on a throttled CPU. httpx
+# Clients are thread-safe; connections now stay warm.
+_http_client = None
+_http_client_lock = threading.Lock()
+
+
+def _get_http_client():
+    global _http_client
+    if _http_client is None:
+        with _http_client_lock:
+            if _http_client is None:
+                _http_client = httpx.Client(timeout=120)
+    return _http_client
+
+
 def call_anthropic(model, system, messages, max_tokens=1024):
     """Call the Anthropic Messages API.
 
@@ -1132,18 +1167,17 @@ def call_anthropic(model, system, messages, max_tokens=1024):
     }
     key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
     if key:
-        with httpx.Client(timeout=120) as client:
-            r = client.post(
-                "https://api.anthropic.com/v1/messages",
-                headers={
-                    "x-api-key": key,
-                    "anthropic-version": "2023-06-01",
-                    "content-type": "application/json",
-                },
-                json=payload,
-            )
-            r.raise_for_status()
-            data = r.json()
+        r = _get_http_client().post(
+            "https://api.anthropic.com/v1/messages",
+            headers={
+                "x-api-key": key,
+                "anthropic-version": "2023-06-01",
+                "content-type": "application/json",
+            },
+            json=payload,
+        )
+        r.raise_for_status()
+        data = r.json()
         return "".join(
             b.get("text", "") for b in data.get("content", []) if b.get("type") == "text"
         ).strip()
@@ -2675,6 +2709,35 @@ def update_summary(user_id):
         new_summary, items = _parse_summary_output(out)
         if not new_summary:
             new_summary = out.strip()
+        # The tombstone guard runs the same-theme JUDGE — a model
+        # call, seconds slow. It must be computed BEFORE the
+        # write transaction opens (Tab round 5): previously the
+        # judge ran INSIDE the `with db_lock` write below, so a
+        # background memory update could hold the global DB lock
+        # — and an open SQLite write transaction — for seconds
+        # at a time, and the deterministic crisis fast path
+        # (which takes db_lock in the event loop) stalled behind
+        # it exactly when many chats started at once. Now the
+        # locked section is pure SQL again, milliseconds.
+        kept_items = None
+        if items is not None:
+            sigs = _rehearsal_signatures(rehearsal_rows)
+            kept_items = []
+            for it in items:
+                if _deleted_and_not_restated(it["text"], tomb_entries,
+                                             user_msgs,
+                                             judge=_same_theme_judge):
+                    continue  # deleted by the person — in ANY wording
+                # A completed practice conversation is a dated
+                # note of something that happened — a theme,
+                # never a goal (Tab fix), whatever kind the
+                # updater model assigned it; and a goal that is
+                # just the rehearsal's topic restated as a to-do
+                # is dropped entirely (see _guarded_item_kind).
+                kind = _guarded_item_kind(it["kind"], it["text"], sigs)
+                if kind is None:
+                    continue
+                kept_items.append((kind, it["text"]))
         with db_lock:
             conn = _conn()
             conn.execute(
@@ -2682,28 +2745,14 @@ def update_summary(user_id):
                 "ON CONFLICT(user_id) DO UPDATE SET summary=excluded.summary, updated_at=datetime('now')",
                 (user_id, new_summary),
             )
-            if items is not None:
+            if kept_items is not None:
                 conn.execute(
                     "DELETE FROM memory_items WHERE user_id=?", (user_id,)
                 )
-                sigs = _rehearsal_signatures(rehearsal_rows)
-                for it in items:
-                    if _deleted_and_not_restated(it["text"], tomb_entries,
-                                                 user_msgs,
-                                                 judge=_same_theme_judge):
-                        continue  # deleted by the person — in ANY wording
-                    # A completed practice conversation is a dated
-                    # note of something that happened — a theme,
-                    # never a goal (Tab fix), whatever kind the
-                    # updater model assigned it; and a goal that is
-                    # just the rehearsal's topic restated as a to-do
-                    # is dropped entirely (see _guarded_item_kind).
-                    kind = _guarded_item_kind(it["kind"], it["text"], sigs)
-                    if kind is None:
-                        continue
+                for kind, text in kept_items:
                     conn.execute(
                         "INSERT INTO memory_items (user_id, kind, text) VALUES (?,?,?)",
-                        (user_id, kind, it["text"]),
+                        (user_id, kind, text),
                     )
             conn.commit()
             conn.close()
