@@ -439,6 +439,30 @@ _MEDICAL_RES = [
     re.compile(r"\ballergic\s+reaction\b|\banaphylax|"
                r"\bthroat\s+is\s+closing\b|\blips?\s+(?:are\s+)?swelling\b"),
     re.compile(r"תגובה\s+אלרגית|הגרון\s+נסגר|השפתיים\s+מתנפחות"),
+    # Tab r14 item 2: anaphylaxis shapes Tab named — throat or
+    # tongue swelling, trouble breathing (after food or a sting:
+    # the symptom is what routes, whatever caused it).
+    re.compile(r"\b(?:throat|tongue)\s+(?:is\s+)?(?:swelling|"
+               r"swollen|closing\s+up)\b|"
+               r"\bswollen\s+(?:throat|tongue)\b|"
+               r"\bmy\s+(?:throat|tongue)\s+(?:is\s+)?swell\w*\b|"
+               r"\btrouble\s+breathing\b|\bdifficulty\s+breathing\b|"
+               r"\bhard\s+to\s+breathe\b"),
+    re.compile(r"הגרון\s+(?:שלי\s+)?מתנפח|הלשון\s+(?:שלי\s+)?מתנפחת|"
+               r"נפיחות\s+ב(?:גרון|לשון)|גרון\s+נפוח|לשון\s+נפוחה|"
+               r"קשיי\s+נשימה|מתקשה\s+לנשום|"
+               r"התנפח\s+לי\s+הגרון|התנפחה\s+לי\s+הלשון"),
+    # Tab r14 item 2: bleeding that "won't stop" — the EN list
+    # knew "won't stop bleeding" but not "the bleeding won't
+    # stop" / "can't stop the bleeding"; the HE list gains the
+    # לא מפסיק form for the bleeding noun itself.
+    re.compile(r"\bbleeding\s+(?:won'?t|will\s+not|doesn'?t|"
+               r"isn'?t|is\s+not)\s+stop\b|"
+               r"\bcan'?t\s+stop\s+the\s+bleeding\b|"
+               r"\bcannot\s+stop\s+the\s+bleeding\b|"
+               r"\bkeeps\s+bleeding\b"),
+    re.compile(r"הדימום\s+לא\s+מפסיק|דימום\s+שלא\s+עוצר|"
+               r"הדימום\s+ממשיך"),
     # the word overdose — in a COMPLETED frame only. A plan
     # ("I'm going to overdose tonight") keeps the frozen crisis
     # path (Tab's standing ruling); a completed ingestion is
@@ -5406,6 +5430,98 @@ def _chat_payload_inner(uid, msg, background):
     return _finish_model_turn(ctx, mode, reply, background)
 
 
+def _safety_lane_turn(uid, msg):
+    """Tab r14 item 1: the PRIORITY SAFETY LANE. Tab's re-test
+    still saw 18 of 31 crisis/medical runs over 1 s with 9 chats
+    running: the r13 fast path ran the FULL _prepare_turn —
+    history and summary loads, the whole detector battery (grief,
+    intent, retraction, need-professional…), the returning-user
+    math — before it reached the safety branches, all of it in
+    the event loop, competing with nine streaming turns for the
+    same throttled CPU. This lane is the safety check FIRST and
+    ONLY: the deterministic safety detectors and their guards,
+    one profile read, the user-message insert, and the exact
+    branch _prepare_turn would have taken (medical -> emergency
+    -> keyword crisis), with byte-identical replies and payload
+    shapes. Anything the detectors don't decide outright returns
+    None and the turn takes the ordinary path — the lane never
+    re-decides a turn the rules leave to _prepare_turn."""
+    med_safe = is_prescribed_med_statement(msg)
+    medical_kind = None if med_safe else detect_medical_emergency(msg)
+    emergency = (detect_overdose(msg) and not med_safe
+                 and not is_stuck_in_life_statement(msg))
+    kw_risk = detect_crisis_keywords(msg)
+    crisis = (kw_risk and not is_never_crisis_idiom(msg)
+              and not is_vanish_only_statement(msg))
+    if not (medical_kind or emergency or crisis):
+        return None
+    safety_hebrew = message_is_hebrew(msg)
+    safety_lang = "he" if safety_hebrew else "en"
+    safety_hotline = "1201" if safety_hebrew else "988"
+    with db_lock:
+        conn = _conn()
+        row = conn.execute(
+            "SELECT * FROM users WHERE id=?", (uid,)).fetchone()
+        if not row:
+            conn.execute("INSERT INTO users (id) VALUES (?)", (uid,))
+            conn.commit()
+            row = conn.execute(
+                "SELECT * FROM users WHERE id=?", (uid,)).fetchone()
+        profile = dict(row)
+        conn.execute(
+            "INSERT INTO messages (user_id, role, content) "
+            "VALUES (?,?,?)", (uid, "user", msg))
+        conn.commit()
+        conn.close()
+    # The writer's gender, exactly as _prepare_turn resolves it:
+    # this message's own first-person form, else the stored
+    # value, else a known first name; stored the moment learned.
+    stored_gender = (profile.get("writer_gender") or "") or None
+    detected_gender = detect_writer_gender_he(msg)
+    if not detected_gender:
+        detected_gender = _gender_from_name(profile.get("name"))
+    writer_gender = detected_gender or stored_gender
+    if detected_gender and detected_gender != stored_gender:
+        _set_user_state(uid, gender_v=detected_gender)
+    if medical_kind:
+        _set_user_state(uid, crisis_mode=True, stepdown_v=False,
+                        banner_v=True, lang_v=safety_lang)
+        reply = medical_reply(medical_kind, safety_hebrew,
+                              writer_gender)
+        _save_assistant_msg(uid, reply)
+        return {"reply": reply, "crisis": True,
+                "hotline": safety_hotline, "banner": True,
+                "banner_lang": safety_lang,
+                "writer_gender": writer_gender or "",
+                "reply_lang": safety_lang}
+    if emergency:
+        _set_user_state(uid, crisis_mode=True, stepdown_v=False,
+                        banner_v=True, lang_v=safety_lang)
+        base = (EMERGENCY_RESPONSE_HE if safety_hebrew
+                else EMERGENCY_RESPONSE)
+        reply = base + crisis_resource_line(safety_hebrew, base)
+        _save_assistant_msg(uid, reply)
+        return {"reply": reply, "crisis": True,
+                "hotline": safety_hotline, "banner": True,
+                "banner_lang": safety_lang}
+    # Keyword crisis: the fixed reply, latch on, one check-in owed.
+    _set_user_state(uid, crisis_mode=True, stepdown_v=False,
+                    banner_v=True, lang_v=safety_lang, checkin_v=True)
+    spouse = detect_spouse_loss(msg)
+    if spouse:
+        base = spouse_crisis_response(spouse, safety_hebrew)
+    else:
+        base = (crisis_reply_he(writer_gender) if safety_hebrew
+                else FIXED_CRISIS_RESPONSE)
+    reply = base + crisis_resource_line(safety_hebrew, base)
+    _save_assistant_msg(uid, reply)
+    return {"reply": reply, "crisis": True,
+            "hotline": safety_hotline, "banner": True,
+            "banner_lang": safety_lang,
+            "writer_gender": writer_gender or "",
+            "reply_lang": safety_lang}
+
+
 def _fast_final_turn(uid, msg):
     """Resolve a turn that pure-regex checks decide completely —
     a keyword crisis or a completed overdose — with NO model
@@ -5414,8 +5530,15 @@ def _fast_final_turn(uid, msg):
     in the event loop, so the frozen crisis / emergency reply is
     produced the moment the request arrives and never queues
     behind other users' model calls (Tab round 3: with 10 users
-    at once the 988 reply took 2–5 s). _prepare_turn is only
-    regex + local SQLite on this path — milliseconds."""
+    at once the 988 reply took 2–5 s). Tab r14 item 1: the
+    deterministic safety branches resolve in the priority lane
+    (_safety_lane_turn) — the full _prepare_turn below remains
+    only as the fallback for detector-hit turns the lane's
+    guards decline (an idiom the keyword layer caught, an
+    overdose a stuck-statement disarmed)."""
+    lane = _safety_lane_turn(uid, msg)
+    if lane is not None:
+        return lane
     if is_vanish_only_statement(msg):
         # Tab r13 item 3: vanish-only is cleared by rule — a
         # model turn. Bailing here (before _prepare_turn runs)
