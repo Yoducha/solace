@@ -509,6 +509,52 @@ AVAILABILITY_ANSWER_HE = (
     "אני כאן כשתפתח את סולאס — מה עובר עליך?"
 )
 
+# Voice questions (Tab round 5): "Can I talk to you with my
+# voice?" got a model answer claiming Solace is "text-only,
+# no audio" — wrong: the app HAS Voice Mode. Like the identity
+# and availability questions, this is answered deterministically,
+# and the reply carries the approved voice-privacy line
+# verbatim (EN + HE — the HE line is Tab's approved wording,
+# masculine verbs, round-4 follow-up commit 60639cc).
+_VOICE_Q_RES = [
+    re.compile(
+        r"\bdo\s+you\s+have\s+(?:a\s+)?voice\s+"
+        r"(?:mode|chat|option|feature)?\b", re.I),
+    re.compile(
+        r"\bcan\s+i\s+(?:talk|speak|chat)\s+(?:to\s+you\s+)?"
+        r"(?:with|using|by)\s+(?:my\s+)?voice\b", re.I),
+    re.compile(r"\bcan\s+i\s+talk\s+to\s+you\s+out\s+loud\b",
+               re.I),
+    re.compile(r"\bcan\s+you\s+hear\s+me\b", re.I),
+    re.compile(r"\bspeak\s+instead\s+of\s+typ", re.I),
+    re.compile(
+        r"\bvoice\s+mode\b[^.!?\n]{0,20}\?", re.I),
+    re.compile(r"אפשר\s+לדבר\s+(?:איתך|אתך)\s+בקול"),
+    re.compile(r"לדבר\s+(?:איתך|אתך)\s+בקול"),
+    re.compile(r"יש\s+(?:לך\s+)?מצב\s+קול"),
+    re.compile(r"(?:אתה|את)\s+יכול(?:ה)?\s+לשמוע\s+אותי"),
+    re.compile(r"אפשר\s+לדבר\s+בקול"),
+]
+
+VOICE_ANSWER = (
+    "Yes — Solace has Voice Mode: tap the 🎤 and you can talk "
+    "out loud instead of typing. Solace never receives or "
+    "stores your audio — only the text of what you say."
+)
+VOICE_ANSWER_HE = (
+    "כן — יש לסולאס מצב קול: מקישים על ה־🎤 ואפשר לדבר בקול "
+    "במקום להקליד. Solace אף פעם לא מקבל או שומר את האודיו "
+    "שלך — רק את הטקסט של מה שאתה אומר."
+)
+
+
+def detect_voice_question(text):
+    """True when the message asks whether voice can be used
+    with Solace (Voice Mode exists — the deterministic answer
+    says so; the model must never claim text-only)."""
+    t = text or ""
+    return any(rx.search(t) for rx in _VOICE_Q_RES)
+
 
 # Need-a-professional questions (Tab round 3): "אני צריך
 # פסיכולוג?" ("Do I need a psychologist?") never suggested a
@@ -1632,6 +1678,36 @@ def _sentence_approach_claim(seg):
     return any(rx.search(seg) for rx in _APPROACH_CLAIM_RES)
 
 
+# Voice-denial claims (Tab round 5): the app HAS Voice Mode,
+# so a model sentence claiming Solace is text-only or cannot
+# receive audio is false and is removed like the other claim
+# families. (A persona in Rehearse saying "I can't hear you"
+# mid-scene is not this shape — these patterns are capability
+# statements about the chat itself.)
+_VOICE_DENIAL_RES = [
+    re.compile(r"\btext[-\s]only\b", re.I),
+    re.compile(
+        r"\bi\s+(?:can\s+only|only)\s+"
+        r"(?:communicate|chat|talk|respond)\s+"
+        r"(?:in|via|through|by)\s+text\b", re.I),
+    re.compile(
+        r"\bi\s+(?:can't|cannot|can\s+not)\s+"
+        r"(?:receive|hear|process|accept)\s+audio\b", re.I),
+    re.compile(
+        r"\bno\s+audio\s+(?:input|support|option)\b", re.I),
+    re.compile(r"אין\s+לי\s+אפשרות\s+לשמוע"),
+    re.compile(r"אני\s+לא\s+יכול(?:ה)?\s+לשמוע\s+אותך"),
+    re.compile(r"רק\s+בטקסט"),
+    re.compile(r"תקשורת\s+טקסטואלית\s+בלבד"),
+]
+
+
+def _sentence_voice_denial(seg):
+    """True when one sentence denies voice/audio capability
+    the app actually has."""
+    return any(rx.search(seg) for rx in _VOICE_DENIAL_RES)
+
+
 def _sentence_segments(text):
     """Split into (sentence, separator-after) pairs, losslessly."""
     parts = _SENT_SEP_RE.split(text or "")
@@ -1656,6 +1732,7 @@ def _scrub_join(segs, include_last):
                 break
         if _sentence_banned(seg) or _sentence_availability_claim(seg) \
                 or _sentence_approach_claim(seg) \
+                or _sentence_voice_denial(seg) \
                 or _sentence_dangling(seg):
             continue
         out.append(seg + sep)
@@ -2850,6 +2927,17 @@ def _prepare_turn(uid, msg):
     if detect_availability_question(msg) and not in_crisis_mode:
         reply = (AVAILABILITY_ANSWER_HE if safety_hebrew
                  else AVAILABILITY_ANSWER)
+        _save_assistant_msg(uid, reply)
+        return ctx, ("final", {"reply": reply, "crisis": False,
+                               "hotline": hotline, "banner": banner,
+                               "banner_lang": banner_lang})
+
+    # Voice question ("Can I talk to you with my voice?"):
+    # Voice Mode EXISTS — a deterministic yes plus the
+    # approved voice-privacy line, verbatim (Tab round 5).
+    if detect_voice_question(msg) and not in_crisis_mode:
+        reply = (VOICE_ANSWER_HE if safety_hebrew
+                 else VOICE_ANSWER)
         _save_assistant_msg(uid, reply)
         return ctx, ("final", {"reply": reply, "crisis": False,
                                "hotline": hotline, "banner": banner,
