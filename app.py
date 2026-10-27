@@ -202,11 +202,34 @@ OVERDOSE_RE = [
 ]
 
 
+# Tab round 3 (his "r9" test): "בלעתי כדורים" — swallowed pills,
+# with NO quantity word — reached the suicide question in 1 of 2
+# runs instead of מד״א 101 right away: the quantity patterns above
+# missed it and only the (probabilistic) classifier stood behind
+# them. A first-person past-tense ingestion verb + plural pills
+# IS a completed ingestion; no quantity word is required. The
+# ordinary-medication guards below keep prescribed talk safe:
+# a single pill, "my pills", "my medication", "as the doctor
+# said" never fire this pattern.
+_HE_INGEST_PILLS_RE = re.compile(
+    r"(?:בלעתי|בלע|בלעה|לקחתי|אכלתי)[^.!?\n]{0,20}?"
+    r"(?:כדורים|גלולות)")
+_HE_MED_GUARD_RE = re.compile(
+    r"(?:כדור\s+אחד|הכדור\s+שלי|הכדורים\s+שלי|הגלולות\s+שלי|"
+    r"התרופה\s+שלי|כמו\s+שהרופא\s+אמר|לפי\s+הוראות\s+הרופא|"
+    r"במינון\s+הרגיל)")
+
+
 def detect_overdose(text):
     """True only for COMPLETED ingestion (already swallowed) — the
     medical-emergency subset of crisis signals."""
     t = text or ""
-    return any(rx.search(t) for rx in OVERDOSE_RE)
+    if any(rx.search(t) for rx in OVERDOSE_RE):
+        return True
+    if _HE_INGEST_PILLS_RE.search(t) \
+            and not _HE_MED_GUARD_RE.search(t):
+        return True
+    return False
 
 
 EMERGENCY_RESPONSE = (
@@ -315,6 +338,25 @@ _IDENTITY_Q_RES = [
     ("professional", re.compile(
         r"^\s*(?:האם\s+)?(?:אתה|את|אתם)\s+"
         r"(?:פסיכולוג|פסיכולוגית|פסיכולוגים|מטפל|מטפלת)\b")),
+    # Request form (Tab round 3): "Can you be my therapist?" is
+    # the same identity question wearing a request — it gets the
+    # same plain deterministic "No", never a model reply whose
+    # scrubbed remains open with a dangling "What I can do…".
+    ("therapy", re.compile(
+        r"^\s*(?:can|could|will|would)\s+you\s+(?:please\s+)?"
+        r"(?:be|become|act\s+as)\s+(?:my\s+|a\s+|the\s+)?"
+        r"(?:therapist|psychologist|counselor|counsellor|"
+        r"psychiatrist|shrink)\b", re.I)),
+    ("therapy", re.compile(
+        r"^\s*(?:please\s+)?be\s+my\s+"
+        r"(?:therapist|psychologist|counselor|counsellor)\b", re.I)),
+    ("therapy", re.compile(
+        r"(?:אתה|את)\s+יכול(?:ה)?\s+להיות\s+(?:ה)?"
+        r"(?:מטפל|פסיכולוג)(?:\s+שלי)?")),
+    ("therapy", re.compile(
+        r"יכול(?:ה)?\s+להיות\s+(?:ה)?(?:מטפל|פסיכולוג)\s+שלי")),
+    ("therapy", re.compile(
+        r"תהיה\s+(?:ה)?(?:מטפל|פסיכולוג)\s+שלי")),
 ]
 
 IDENTITY_ANSWERS = {
@@ -346,6 +388,50 @@ def detect_identity_question(text):
         if rx.search(t):
             return kind
     return None
+
+
+# Availability questions (Tab round 3): "Are you available 24/7?"
+# got a model "Yes… any time of day or night, any day of the
+# week". Solace makes NO availability promise, so — like the
+# identity questions — this is answered deterministically with a
+# non-claim that simply returns to the conversation. (A message
+# that merely mentions these words mid-sentence is not the
+# question; the risk paths run before this one regardless.)
+_AVAILABILITY_Q_RES = [
+    re.compile(r"\b24\s*/\s*7\b"),
+    re.compile(
+        r"^\s*are\s+you\s+(?:available|there|around|online)\b", re.I),
+    re.compile(
+        r"\bare\s+you\s+always\s+(?:available|there|around)\b", re.I),
+    re.compile(
+        r"\bcan\s+i\s+(?:talk|message|text|write|reach)(?:\s+to\s+you)?"
+        r"\s+(?:any\s?time|whenever|at\s+any\s+time)\b", re.I),
+    re.compile(r"(?:אתה|את)\s+זמינ\w*\s*(?:תמיד|בכל\s+שעה|24\s*/\s*7)"),
+    re.compile(r"זמינ\w*\s+(?:24\s*/\s*7|מסביב\s+לשעון)"),
+    re.compile(r"אפשר\s+לדבר\s+איתך\s+בכל\s+שעה"),
+    re.compile(r"^\s*(?:האם\s+)?(?:אתה|את)\s+זמינ\w*\s*\?\s*$"),
+]
+
+AVAILABILITY_ANSWER = (
+    "I'm here whenever you open Solace — what's on your mind?"
+)
+AVAILABILITY_ANSWER_HE = (
+    "אני כאן כשתפתח את סולאס — מה עובר עליך?"
+)
+
+
+def detect_availability_question(text):
+    """True when the message asks whether Solace is available
+    (24/7, always, any time) — answered without any claim. A bare
+    "24/7" mention fires only in a question-shaped message, so
+    "my support group meets 24/7" stays an ordinary message."""
+    t = text or ""
+    if any(rx.search(t) for rx in _AVAILABILITY_Q_RES[1:]):
+        return True
+    if re.search(r"\b24\s*/\s*7\b", t):
+        return "?" in t or bool(
+            re.match(r"\s*(are|can|do|is|will)\b", t, re.I))
+    return False
 
 
 # Gentle check-in sent ONCE when a person walks back a crisis statement
@@ -512,6 +598,18 @@ _GRIEF_GENDER_NOTES = {
         "that continues from the opening line."
     ),
 }
+
+# Tab round 3: whatever the kin note above says, the person is
+# addressed in ONE gender throughout — if a second-person form
+# is ever uncertain, a gender-neutral construction (infinitive
+# or noun form) is used instead of switching gender mid-reply.
+for _gk in _GRIEF_GENDER_NOTES:
+    _GRIEF_GENDER_NOTES[_gk] += (
+        " Address the person in ONE gender from start to finish; "
+        "if a second-person form is uncertain, use a "
+        "gender-neutral construction (an infinitive or a noun "
+        "form) — never switch gender mid-reply."
+    )
 
 # System prompt used for follow-up turns while crisis mode is latched:
 # safety only — no techniques, no homework, no jargon.
@@ -1201,6 +1299,43 @@ def _sentence_banned(seg):
     return any(rx.search(seg) for rx in _BANNED_CHECK_RES)
 
 
+# Availability claims (Tab round 3): the model answered "Are you
+# available 24/7?" with "Yes… any time of day or night, any day
+# of the week". Solace makes NO availability claims about itself,
+# ever — a sentence claiming one is removed like a banned-word
+# sentence. Sentences about the HOTLINES (988 / 741741 / ער״ן
+# 1201 / מד״א 101 / 911) are resource context, not a Solace
+# claim — "free, confidential, 24/7" describing 988 is Tab's
+# settled wording and is never touched.
+_AVAILABILITY_CLAIM_RES = [
+    re.compile(r"24\s*/\s*7"),
+    re.compile(r"\baround the clock\b", re.I),
+    re.compile(r"\bany time of day or night\b", re.I),
+    re.compile(r"\bany day of the week\b", re.I),
+    re.compile(r"\balways available\b", re.I),
+    re.compile(r"\bavailable (?:at\s+)?(?:any|all) times?\b", re.I),
+    re.compile(r"\bi'?m here (?:for you )?(?:day or night|"
+               r"any ?time|whenever you)", re.I),
+    re.compile(r"מסביב לשעון"),
+    re.compile(r"זמינ\w+\s+תמיד"),
+    re.compile(r"תמיד\s+זמינ\w+"),
+    re.compile(r"אני כאן (?:בשבילך\s+)?(?:יום ולילה|בכל שעה)"),
+]
+_RESOURCE_CONTEXT_RE = re.compile(
+    r"(988|741741|1201|ער״ן|מד״א|\b911\b|\b101\b|lifeline|hotline|"
+    r"קו\s+(?:ה)?(?:סיוע|חיים))",
+    re.I,
+)
+
+
+def _sentence_availability_claim(seg):
+    """True when one sentence claims Solace is available around
+    the clock (and is not talking about a crisis hotline)."""
+    if _RESOURCE_CONTEXT_RE.search(seg):
+        return False
+    return any(rx.search(seg) for rx in _AVAILABILITY_CLAIM_RES)
+
+
 def _sentence_segments(text):
     """Split into (sentence, separator-after) pairs, losslessly."""
     parts = _SENT_SEP_RE.split(text or "")
@@ -1223,16 +1358,59 @@ def _scrub_join(segs, include_last):
             tail = seg.rstrip().rstrip("\"'”’)]")
             if not tail or tail[-1] not in ".!?…":
                 break
-        if _sentence_banned(seg):
+        if _sentence_banned(seg) or _sentence_availability_claim(seg):
             continue
         out.append(seg + sep)
     return "".join(out)
 
 
+# Dangling opener (Tab round 3): when the filter removes the
+# sentence that carried the refusal ("I can't be your
+# therapist"), a model reply can be left OPENING with the
+# fragment "What I *can* do…" — a sentence with its first half
+# cut off. A reply that starts with that fragment loses the
+# fragment sentence.
+_DANGLING_OPENER_RE = re.compile(
+    r"^\s*what\s+i\s+\*?can\*?\s+do\b", re.I)
+
+
+def _drop_dangling_opener(text, keep_if_only=False):
+    segs = _sentence_segments(text)
+    real = [i for i, (s, _) in enumerate(segs) if s.strip()]
+    if not real:
+        return text
+    first = real[0]
+    if not _DANGLING_OPENER_RE.search(segs[first][0]):
+        return text
+    rest = "".join(s + sep for s, sep in segs[first + 1:]).strip()
+    if not rest and keep_if_only:
+        return text
+    return rest
+
+
+def _truncate_glued_reply(text):
+    """One reply only (Tab round 3): a standalone divider line
+    (--- / *** / ___) in a model reply is the seam where a second
+    reply was glued onto the first — everything from the divider
+    on is cut. Runs in scrub_reply / scrub_prefix, i.e. on every
+    reply surface. (The grief BODY does not pass through here —
+    it goes through scrub_field + _grief_clean_body, whose own
+    seam handling is Tab's round-2 ruling: strip the model's
+    glued condolence, keep its real continuation.)"""
+    if not text:
+        return text
+    m = _DIVIDER_LINE_RE.search(text)
+    if not m:
+        return text
+    return text[:m.start()].rstrip()
+
+
 def scrub_reply(text):
     """The full-text filter applied to every finished model reply."""
-    out = _scrub_join(_sentence_segments(text), include_last=True)
-    out = out.strip()
+    out = _scrub_join(
+        _sentence_segments(_truncate_glued_reply(text)),
+        include_last=True)
+    out = _drop_dangling_opener(out.strip())
     if out:
         return out
     if has_hebrew(text or ""):
@@ -1243,7 +1421,10 @@ def scrub_reply(text):
 def scrub_prefix(text):
     """Streaming form: the scrubbed text of all COMPLETE sentences
     so far — safe to emit as a delta; the tail is still growing."""
-    return _scrub_join(_sentence_segments(text), include_last=False)
+    return _drop_dangling_opener(
+        _scrub_join(
+            _sentence_segments(_truncate_glued_reply(text)),
+            include_last=False))
 
 
 def scrub_field(text):
@@ -1310,10 +1491,101 @@ def _strip_opening_echo(body, opening):
     return body
 
 
+# A condolence phrased as if hearing the news for the first time
+# ("sorry to HEAR about your loss", "מצטער על האובדן") — distinct
+# from a mid-reply "I'm sorry you're going through this". One of
+# these AFTER the body's opening sentences means a second reply
+# was glued on (Tab round 3).
+_SECOND_REPLY_LEAD_RE = re.compile(
+    r"(אני (?:ממש )?מצטער (?:לשמוע|על האובדן)|משתתף בצער|"
+    r"תנחומיי|שלא תדעו עוד צער|"
+    r"i'?m so sorry (?:to hear|for your loss)|my condolences)",
+    re.I,
+)
+
+
+def _cut_second_reply_block(body, opening):
+    """Cut a glued-on second reply inside a grief continuation:
+    a later paragraph — or a later sentence — that opens as if
+    the conversation were starting again (a fresh condolence for
+    the news, or a repeat of the fixed opening). Everything from
+    there on is the second reply; it goes."""
+    if not body:
+        return body
+    open_firsts = {
+        s.strip() for s, _ in _sentence_segments(opening or "")
+        if s.strip()}
+    paras = body.split("\n\n")
+    if len(paras) > 1:
+        for i in range(1, len(paras)):
+            head = paras[i].strip()
+            if not head:
+                continue
+            first_sent = _sentence_segments(head)[0][0].strip()
+            if _SECOND_REPLY_LEAD_RE.search(first_sent) \
+                    or first_sent in open_firsts:
+                return "\n\n".join(paras[:i]).strip()
+    segs = _sentence_segments(body)
+    for i in range(1, len(segs)):
+        s = segs[i][0].strip()
+        if s and (_SECOND_REPLY_LEAD_RE.search(s)
+                  or s in open_firsts):
+            return "".join(x + sep for x, sep in segs[:i]).strip()
+    return body
+
+
+# Hebrew gender consistency (Tab round 3): the model's grief
+# continuation addressed the person as masculine in one half
+# ("קח… שאתה צריך") and feminine in the other ("שאת מרגישה…
+# תרצי"). The fixed opening addresses the person in masculine
+# forms, so unambiguous feminine SECOND-PERSON forms in the
+# continuation are rewritten to the masculine forms (forms about
+# the person who died — היא, עליה, שלה — are never touched).
+# Anything still carrying a feminine second-person marker after
+# the rewrite loses its sentence: one reply, one gender.
+_HE_FEM_VERB_MASC = {
+    "מרגישה": "מרגיש", "צריכה": "צריך", "יכולה": "יכול",
+    "חושבת": "חושב", "יודעת": "יודע", "נמצאת": "נמצא",
+    "מסוגלת": "מסוגל", "אומרת": "אומר", "שואלת": "שואל",
+    "כותבת": "כותב", "מדברת": "מדבר", "מבקשת": "מבקש",
+    "מספרת": "מספר", "רוצה": "רוצה",
+}
+_HE_FEM_VERB_ALT = "|".join(_HE_FEM_VERB_MASC)
+_HE_FEM2P_RE = re.compile(
+    r"(שאת|את)\s+(?:" + _HE_FEM_VERB_ALT + r")")
+_HE_FEM2P_LEFTOVER_RE = re.compile(
+    r"(שאת\b|תרצי|תרגישי|תקחי|קחי\b|"
+    r"את\s+(?:" + _HE_FEM_VERB_ALT + r"))")
+
+
+def _he_gender_consistency(body):
+    if not body or not _HE_FEM2P_LEFTOVER_RE.search(body):
+        return body
+
+    def _verb_sub(m):
+        verb = m.group(0).split(None, 1)[1]
+        return m.group(1) + " " + _HE_FEM_VERB_MASC[verb]
+
+    out = _HE_FEM2P_RE.sub(_verb_sub, body)
+    out = re.sub(r"תרצי", "תרצה", out)
+    out = re.sub(r"תרגישי", "תרגיש", out)
+    out = re.sub(r"תקחי", "תקח", out)
+    out = re.sub(r"קחי\b", "קח", out)
+    out = re.sub(r"ספרי\s+לי", "ספר לי", out)
+    out = re.sub(r"שאת\b", "שאתה", out)
+    segs = _sentence_segments(out)
+    kept = [(s, sep) for s, sep in segs
+            if not _HE_FEM2P_LEFTOVER_RE.search(s)]
+    if len(kept) != len(segs):
+        out = "".join(s + sep for s, sep in kept).strip()
+    return out
+
+
 def _grief_clean_body(body, opening):
     """The deterministic cleanup every grief continuation passes
     through (sync, stream-visible, saved text): no divider seams,
-    no echoed opening, no leading condolence pile-up — so the
+    no echoed opening, no leading condolence pile-up, no glued-on
+    second reply, one consistent gender of address — so the
     final reply is the fixed opening + ONE continuation."""
     if not body:
         return body
@@ -1321,6 +1593,9 @@ def _grief_clean_body(body, opening):
     body = re.sub(r"\n{3,}", "\n\n", body).strip()
     body = _strip_opening_echo(body, opening)
     body = _strip_dup_condolence(body)
+    body = _cut_second_reply_block(body, opening)
+    if opening and has_hebrew(opening):
+        body = _he_gender_consistency(body)
     body = body.strip()
     if opening and body and body in opening:
         # Nothing left but a fragment of the opening itself.
@@ -1832,6 +2107,12 @@ def _prepare_turn(uid, msg):
     info_q = (not kw_risk) and is_informational_word_question(msg)
     if kw_risk:
         risk = True
+    elif emergency:
+        # The emergency branch below returns before risk is ever
+        # consulted — and NO model call may precede the 911 /
+        # מד״א 101 reply (Tab round 3: the crisis reply must not
+        # wait behind model work).
+        risk = False
     else:
         # The classifier also runs for informational word questions, so
         # anything ambiguous or first-person still escalates; only a
@@ -1921,6 +2202,17 @@ def _prepare_turn(uid, msg):
     identity_q = detect_identity_question(msg)
     if identity_q and not in_crisis_mode:
         reply = IDENTITY_ANSWERS[(identity_q, safety_hebrew)]
+        _save_assistant_msg(uid, reply)
+        return ctx, ("final", {"reply": reply, "crisis": False,
+                               "hotline": hotline, "banner": banner,
+                               "banner_lang": banner_lang})
+
+    # Availability question ("Are you available 24/7?"): a
+    # deterministic non-claim (Tab round 3) — no model call, so
+    # no "any time of day or night" answer can be produced.
+    if detect_availability_question(msg) and not in_crisis_mode:
+        reply = (AVAILABILITY_ANSWER_HE if safety_hebrew
+                 else AVAILABILITY_ANSWER)
         _save_assistant_msg(uid, reply)
         return ctx, ("final", {"reply": reply, "crisis": False,
                                "hotline": hotline, "banner": banner,
