@@ -1708,6 +1708,82 @@ def _sentence_voice_denial(seg):
     return any(rx.search(seg) for rx in _VOICE_DENIAL_RES)
 
 
+# Invented-worry openers (Tab round 5): a Hebrew greeting
+# ("היי") got the opener "ראיתי שיש משהו שמעיק עליך" — "I
+# saw that something is troubling you" — a problem the
+# person never stated. The prompt now forbids it, and this
+# scrub is the code wall: when the person's message states
+# NO problem, a FIRST sentence claiming to see / sense an
+# unstated trouble is dropped. When they did state one
+# (including a loss), the reply may reflect it — the guard
+# stays off.
+_PROBLEM_STATED_RE = re.compile(
+    r"(חרד|דואג|דאגה|עצוב|קשה\s+לי|כואב|כאב|בעיה|מעיק|מטריד|"
+    r"לחוץ|לחץ|מפחד|פחד|בודד|עייף|מרגיש\s+רע|לא\s+טוב\s+לי|"
+    r"נפטר|נפטרה|מת\s+לי|מתה|אובדן|אבא\s+שלי\s+מת|"
+    r"\b(?:anxious|anxiety|worried|worry|sad|depress\w*|"
+    r"stress\w*|panic|afraid|scared|hurt|pain|angry|lonely|"
+    r"overwhelm\w*|bothering|troubling|struggl\w*|problem|"
+    r"died|passed\s+away|funeral|grief|feel\s+"
+    r"(?:bad|awful|terrible|down|low))\b)",
+    re.I)
+_INVENTED_WORRY_RES = [
+    re.compile(
+        r"ראיתי\s+ש(?:יש|היה)\s+[^.!?\n]{0,25}?"
+        r"(?:מעיק|מטריד|מכביד)\s+עליך"),
+    re.compile(
+        r"(?:אני\s+)?(?:רואה|מרגיש|מרגישה|חש|חשה)\s+שיש\s+"
+        r"משהו\s+ש(?:מעיק|מטריד|מכביד)"),
+    re.compile(
+        r"(?:נראה|מרגיש)\s+(?:לי\s+)?ש(?:יש\s+)?משהו\s+"
+        r"(?:מעיק|מטריד|מכביד)\s+עליך"),
+    re.compile(r"יש\s+משהו\s+ש(?:מעיק|מטריד|מכביד)\s+עליך"),
+    re.compile(
+        r"\bi\s+can\s+(?:see|sense|tell)\b[^.!?\n]{0,40}?\b"
+        r"(?:bothering|troubling|weighing)\b", re.I),
+    re.compile(
+        r"\bsomething\s+(?:is|seems\s+to\s+be)\s+"
+        r"(?:bothering|troubling|weighing\s+on)\s+you\b", re.I),
+    re.compile(
+        r"\byou\s+seem\s+(?:troubled|worried|upset|"
+        r"distressed)\b", re.I),
+]
+
+
+_BARE_GREETING_RE = re.compile(
+    r"^(?:שלום|היי|הי|הלו|hi|hello|hey)\b", re.I)
+
+
+def _drop_invented_worry_opener(text, user_text):
+    """Drop an opening sentence that claims to see/sense a
+    trouble the person never mentioned. The flagged sentence
+    is the reply's opener — either the first sentence itself
+    or the one right after a bare greeting ("שלום! ראיתי שיש
+    משהו שמעיק עליך."). No-op when no user text is supplied
+    (non-chat surfaces) or when the person DID state a
+    problem."""
+    if not text or user_text is None:
+        return text
+    if _PROBLEM_STATED_RE.search(user_text or ""):
+        return text
+    segs = _sentence_segments(text)
+    real = [i for i, (s, _) in enumerate(segs) if s.strip()]
+    if not real:
+        return text
+    candidates = [real[0]]
+    first_txt = segs[real[0]][0].strip()
+    if len(real) > 1 and len(first_txt) <= 40 and \
+            _BARE_GREETING_RE.match(first_txt):
+        candidates.append(real[1])
+    for idx in candidates:
+        if any(rx.search(segs[idx][0])
+               for rx in _INVENTED_WORRY_RES):
+            return "".join(
+                s + sep for i, (s, sep) in enumerate(segs)
+                if i != idx).strip()
+    return text
+
+
 def _sentence_segments(text):
     """Split into (sentence, separator-after) pairs, losslessly."""
     parts = _SENT_SEP_RE.split(text or "")
@@ -1949,13 +2025,14 @@ def _he_self_gender(text, writer_gender=None):
     return _HE_SELF_FEM_RE.sub(_self_fem_sub, out)
 
 
-def scrub_reply(text, writer_gender=None):
+def scrub_reply(text, writer_gender=None, user_text=None):
     """The full-text filter applied to every finished model reply."""
     out = _scrub_join(
         _sentence_segments(_truncate_glued_reply(text)),
         include_last=True)
-    out = _he_self_gender(
-        _drop_dangling_opener(out.strip()), writer_gender)
+    out = _drop_dangling_opener(out.strip())
+    out = _drop_invented_worry_opener(out, user_text)
+    out = _he_self_gender(out, writer_gender)
     if out:
         return out
     if has_hebrew(text or ""):
@@ -1963,13 +2040,15 @@ def scrub_reply(text, writer_gender=None):
     return _SCRUB_FALLBACK
 
 
-def scrub_prefix(text, writer_gender=None):
+def scrub_prefix(text, writer_gender=None, user_text=None):
     """Streaming form: the scrubbed text of all COMPLETE sentences
     so far — safe to emit as a delta; the tail is still growing."""
-    return _he_self_gender(_drop_dangling_opener(
+    out = _drop_dangling_opener(
         _scrub_join(
             _sentence_segments(_truncate_glued_reply(text)),
-            include_last=False)), writer_gender)
+            include_last=False))
+    out = _drop_invented_worry_opener(out, user_text)
+    return _he_self_gender(out, writer_gender)
 
 
 def scrub_field(text, writer_gender=None):
@@ -3060,11 +3139,17 @@ def _finish_model_turn(ctx, mode, reply, background):
     safety_hebrew = ctx.get("safety_hebrew", hebrew)
     safety_lang = ctx.get("safety_lang", banner_lang)
     safety_hotline = ctx.get("safety_hotline", hotline)
+    # The message that prompted this turn — the invented-worry
+    # guard (round 5) judges openers against what the person
+    # actually wrote.
+    user_text = (ctx["messages"][-1]["content"]
+                 if ctx.get("messages") else "")
 
     if mode == "info":
         if reply.startswith("[CRISIS]"):
             reply = reply[len("[CRISIS]"):].strip()
-        reply = scrub_reply(reply, ctx.get("writer_gender"))
+        reply = scrub_reply(
+            reply, ctx.get("writer_gender"), user_text)
         if ctx.get("need_professional"):
             reply = _ensure_referral(reply, safety_hebrew)
         _save_assistant_msg(uid, reply)
@@ -3109,7 +3194,8 @@ def _finish_model_turn(ctx, mode, reply, background):
     if mode == "crisis":
         if reply.startswith("[CRISIS]"):
             reply = reply[len("[CRISIS]"):].strip()
-        reply = scrub_reply(reply, ctx.get("writer_gender"))
+        reply = scrub_reply(
+            reply, ctx.get("writer_gender"), user_text)
         reply += crisis_resource_line(safety_hebrew, reply)
         _save_assistant_msg(uid, reply)
         return {"reply": reply, "crisis": True,
@@ -3130,7 +3216,7 @@ def _finish_model_turn(ctx, mode, reply, background):
             banner_lang = safety_lang
             _set_user_state(uid, crisis_mode=True, stepdown_v=False,
                             banner_v=True, lang_v=banner_lang)
-    reply = scrub_reply(reply, ctx.get("writer_gender"))
+    reply = scrub_reply(reply, ctx.get("writer_gender"), user_text)
     # Never end two replies in a row with the same closing line
     # (Tab fix) — compare against the previous stored reply.
     with db_lock:
@@ -3337,7 +3423,8 @@ def _chat_stream_events(uid, msg, background):
                     continue
             else:
                 visible = scrub_prefix(
-                    raw[skip:].lstrip(), ctx.get("writer_gender"))
+                    raw[skip:].lstrip(), ctx.get("writer_gender"),
+                    msg)
             if len(visible) > len(emitted_visible):
                 new = visible[len(emitted_visible):]
                 emitted_visible = visible
@@ -3359,7 +3446,7 @@ def _chat_stream_events(uid, msg, background):
     payload = _finish_model_turn(ctx, mode, raw, background)
     final = payload["reply"]
     visible = scrub_prefix(
-        raw[skip:].lstrip(), ctx.get("writer_gender"))
+        raw[skip:].lstrip(), ctx.get("writer_gender"), msg)
     if final.startswith(visible) and len(final) > len(visible):
         yield _sse({"type": "delta", "text": final[len(visible):]})
     yield _sse({"type": "done", **payload})
