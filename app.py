@@ -447,10 +447,12 @@ _MEDICAL_RES = [
                r"\bswollen\s+(?:throat|tongue)\b|"
                r"\bmy\s+(?:throat|tongue)\s+(?:is\s+)?swell\w*\b|"
                r"\btrouble\s+breathing\b|\bdifficulty\s+breathing\b|"
-               r"\bhard\s+to\s+breathe\b"),
+               r"\bhard\s+to\s+breathe\b|"
+               r"\bcan'?t\s+breathe\b|\bcannot\s+breathe\b"),
     re.compile(r"הגרון\s+(?:שלי\s+)?מתנפח|הלשון\s+(?:שלי\s+)?מתנפחת|"
                r"נפיחות\s+ב(?:גרון|לשון)|גרון\s+נפוח|לשון\s+נפוחה|"
                r"קשיי\s+נשימה|מתקשה\s+לנשום|"
+               r"קשה\s+לי\s+לנשום|לא\s+(?:יכול|מצליח)(?:ה)?\s+לנשום|"
                r"התנפח\s+לי\s+הגרון|התנפחה\s+לי\s+הלשון"),
     # Tab r14 item 2: bleeding that "won't stop" — the EN list
     # knew "won't stop bleeding" but not "the bleeding won't
