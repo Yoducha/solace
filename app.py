@@ -22,6 +22,7 @@ from datetime import datetime, timezone
 import httpx
 from fastapi import FastAPI, BackgroundTasks, HTTPException, Response
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
+from starlette.concurrency import run_in_threadpool
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -418,6 +419,64 @@ AVAILABILITY_ANSWER = (
 AVAILABILITY_ANSWER_HE = (
     "אני כאן כשתפתח את סולאס — מה עובר עליך?"
 )
+
+
+# Need-a-professional questions (Tab round 3): "אני צריך
+# פסיכולוג?" ("Do I need a psychologist?") never suggested a
+# professional at all. This is a different intent from "are YOU
+# a professional" (plain "No", above): the person is asking
+# about THEMSELVES, and the reply must carry the approved
+# referral line — appended deterministically when the model's
+# reply omitted it (see _finish_model_turn).
+REFERRAL_PHRASE_EN = "a doctor or a licensed mental health professional"
+REFERRAL_PHRASE_HE = "רופא או איש מקצוע מורשה בתחום בריאות הנפש"
+REFERRAL_APPEND_EN = (
+    "If outside support ever feels right, you can talk to "
+    "a doctor or a licensed mental health professional about it."
+)
+REFERRAL_APPEND_HE = (
+    "אם תרצה תמיכה מבחוץ, אפשר לדבר על זה עם "
+    "רופא או איש מקצוע מורשה בתחום בריאות הנפש."
+)
+_NEED_PROF_RES = [
+    re.compile(
+        r"\b(?:do|should|would|could)\s+i\s+(?:really\s+)?"
+        r"(?:need|see|get|find|talk\s+to|go\s+to)\s+"
+        r"(?:a\s+|an\s+|to\s+)?"
+        r"(?:therapist|psychologist|counselor|counsellor|"
+        r"psychiatrist|shrink|professional)\b", re.I),
+    re.compile(
+        r"\bi\s+(?:think\s+i\s+|really\s+|just\s+)?need\s+"
+        r"(?:a\s+|to\s+see\s+a\s+)?"
+        r"(?:therapist|psychologist|counselor|counsellor|"
+        r"professional)\b", re.I),
+    re.compile(r"\bdo\s+i\s+need\s+professional\s+help\b", re.I),
+    re.compile(
+        r"(?:צריך|צריכה|כדאי|מחפש|מחפשת)[^.!?\n]{0,15}?"
+        r"(?:פסיכולוג|פסיכולוגית|מטפל|מטפלת|איש\s+מקצוע|"
+        r"עזרה\s+מקצועית)"),
+    re.compile(
+        r"(?:פסיכולוג|מטפל)[^.!?\n]{0,12}?(?:צריך|כדאי)"),
+]
+
+
+def detect_need_professional(text):
+    """True when the person asks whether THEY need / should see
+    a professional (not whether Solace is one)."""
+    t = text or ""
+    return any(rx.search(t) for rx in _NEED_PROF_RES)
+
+
+def _ensure_referral(reply, hebrew):
+    """Guarantee the approved referral line is present (in the
+    message's language) without disturbing anything else."""
+    if hebrew:
+        if REFERRAL_PHRASE_HE in reply:
+            return reply
+        return reply + "\n\n" + REFERRAL_APPEND_HE
+    if REFERRAL_PHRASE_EN.lower() in reply.lower():
+        return reply
+    return reply + "\n\n" + REFERRAL_APPEND_EN
 
 
 def detect_availability_question(text):
@@ -2157,6 +2216,7 @@ def _prepare_turn(uid, msg):
         "banner": banner, "banner_lang": banner_lang,
         "user_count": user_count, "retracted": retracted,
         "returning": returning, "fallback_text": "",
+        "need_professional": detect_need_professional(msg),
     }
 
     # Completed overdose (Tab ruling): medical emergency FIRST —
@@ -2319,6 +2379,8 @@ def _finish_model_turn(ctx, mode, reply, background):
         if reply.startswith("[CRISIS]"):
             reply = reply[len("[CRISIS]"):].strip()
         reply = scrub_reply(reply)
+        if ctx.get("need_professional"):
+            reply = _ensure_referral(reply, safety_hebrew)
         _save_assistant_msg(uid, reply)
         return {"reply": reply, "crisis": False, "hotline": hotline,
                 "banner": banner, "banner_lang": banner_lang}
@@ -2382,6 +2444,11 @@ def _finish_model_turn(ctx, mode, reply, background):
         conn.close()
     if prow:
         reply = _drop_repeated_closer(reply, prow["content"])
+    if ctx.get("need_professional"):
+        # "Do I need a professional?" always carries the approved
+        # referral line (Tab round 3) — appended only if the
+        # model's own reply didn't already include it.
+        reply = _ensure_referral(reply, safety_hebrew)
     if crisis:
         reply += crisis_resource_line(safety_hebrew, reply)
     _save_assistant_msg(uid, reply)
@@ -2417,11 +2484,37 @@ def _chat_payload(uid, msg, background):
     return _finish_model_turn(ctx, mode, reply, background)
 
 
+def _fast_final_turn(uid, msg):
+    """Resolve a turn that pure-regex checks decide completely —
+    a keyword crisis or a completed overdose — with NO model
+    call anywhere in its path, or return None when the turn
+    needs the model. The async chat endpoints call this FIRST,
+    in the event loop, so the frozen crisis / emergency reply is
+    produced the moment the request arrives and never queues
+    behind other users' model calls (Tab round 3: with 10 users
+    at once the 988 reply took 2–5 s). _prepare_turn is only
+    regex + local SQLite on this path — milliseconds."""
+    if not (detect_crisis_keywords(msg) or detect_overdose(msg)):
+        return None
+    _, outcome = _prepare_turn(uid, msg)
+    if outcome[0] == "final":
+        return outcome[1]
+    return None
+
+
 @app.post("/api/chat")
-def chat(body: ChatIn, background: BackgroundTasks, response: Response):
+async def chat(body: ChatIn, background: BackgroundTasks,
+               response: Response):
     if body.user_id.strip():
         _set_uid_cookie(response, body.user_id.strip())
-    return _chat_payload(body.user_id, body.message, background)
+    uid = body.user_id.strip()
+    msg = body.message.strip()
+    if uid and msg:
+        fast = _fast_final_turn(uid, msg)
+        if fast is not None:
+            return fast
+    return await run_in_threadpool(
+        _chat_payload, body.user_id, body.message, background)
 
 
 def _anthropic_stream_chunks(system, messages):
@@ -2570,10 +2663,35 @@ def _chat_stream_events(uid, msg, background):
     yield _sse({"type": "done", **payload})
 
 
+async def _chat_stream_events_fast(uid, msg, background):
+    """Async front door for /api/chat/stream. A deterministic
+    final turn (keyword crisis, completed overdose) is yielded
+    immediately, in the event loop — no threadpool slot, no
+    model call ahead of it. Model turns delegate to the sync
+    generator, pulled chunk by chunk through the threadpool so
+    one user's slow stream never blocks the loop — or another
+    user's crisis reply."""
+    uid = (uid or "").strip()
+    msg = (msg or "").strip()
+    if uid and msg:
+        fast = _fast_final_turn(uid, msg)
+        if fast is not None:
+            yield _sse({"type": "delta", "text": fast["reply"]})
+            yield _sse({"type": "done", **fast})
+            return
+    gen = _chat_stream_events(uid, msg, background)
+    while True:
+        chunk = await run_in_threadpool(next, gen, None)
+        if chunk is None:
+            break
+        yield chunk
+
+
 @app.post("/api/chat/stream")
-def chat_stream(body: ChatIn, background: BackgroundTasks):
+async def chat_stream(body: ChatIn, background: BackgroundTasks):
     resp = StreamingResponse(
-        _chat_stream_events(body.user_id, body.message, background),
+        _chat_stream_events_fast(
+            body.user_id, body.message, background),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         background=background,
