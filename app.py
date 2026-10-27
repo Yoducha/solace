@@ -2327,7 +2327,7 @@ _HE_FEM_VERB_ALT = "|".join(_HE_FEM_VERB_MASC)
 _HE_FEM2P_RE = re.compile(
     r"(שאת|את)\s+(?:" + _HE_FEM_VERB_ALT + r")")
 _HE_FEM2P_LEFTOVER_RE = re.compile(
-    r"(שאת\b|תרצי|תרגישי|תקחי|קחי\b|"
+    r"(שאת\b|תרצי|תרגישי|תקחי|קחי\b|ספרי\s+לי|"
     r"את\s+(?:" + _HE_FEM_VERB_ALT + r"))")
 _HE_MASC_VERB_FEM = {v: k for k, v in _HE_FEM_VERB_MASC.items()
                      if v != k}
@@ -2337,6 +2337,7 @@ _HE_MASC2P_RE = re.compile(
 _HE_MASC2P_LEFTOVER_RE = re.compile(
     r"(שאתה\b|תרצה(?![\u0590-\u05FF])|תרגיש(?![\u0590-\u05FF])|"
     r"תקח(?![\u0590-\u05FF])|(?<![\u0590-\u05FF])קח(?![\u0590-\u05FF])|"
+    r"ספר\s+לי|"
     r"אתה\s+(?:" + _HE_MASC_VERB_ALT + r"))")
 
 
@@ -2356,6 +2357,7 @@ def _he_gender_consistency(body, target="m"):
             return pron + " " + _HE_MASC_VERB_FEM[verb]
 
         out = _HE_MASC2P_RE.sub(_verb_sub_f, body)
+        out = re.sub(r"ספר\s+לי", "ספרי לי", out)
         out = re.sub(r"תרצה(?![\u0590-\u05FF])", "תרצי", out)
         out = re.sub(r"תרגיש(?![\u0590-\u05FF])", "תרגישי", out)
         out = re.sub(r"תקח(?![\u0590-\u05FF])", "תקחי", out)
