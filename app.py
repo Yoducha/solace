@@ -2056,6 +2056,23 @@ _HE_SELF_START_RE = re.compile(
     r"(^|[.!?…]\s+)(" + "|".join(_HE_SELF_START_FORMS) + r")"
     r"(?=\s+(?:ש|ל|על|אותך|אותו|אותה))", re.M)
 
+# "Glad you came" without אני and NOT at a sentence start
+# (Tab round 6): the start-form rule above needs sentence
+# punctuation before it, so the greeting shapes that follow
+# a greeting word or a comma shipped feminine — "היי,
+# שמחה שבאת", "שלום, שמחה שהגעת", "אני כאן בשבילך, שמחה
+# שאתה כאן" (8 of 44 Hebrew replies). Wherever שמחה is
+# immediately followed by a ש־ clause (optionally via
+# מאוד / ממש / כל כך), it is Solace being glad — masculine.
+_HE_GLAD_THAT_RE = re.compile(
+    r"(^|[.!?…]\s+|,\s+|(?:שלום|היי|הי|הלו)[!,]?\s+)"
+    r"שמחה(?=\s+(?:ממש\s+|מאוד\s+|כל\s+כך\s+)?"
+    r"ש[\u0590-\u05FF])", re.M)
+
+
+def _glad_that_sub(m):
+    return m.group(1) + "שמח"
+
 
 def _self_start_sub(m):
     return m.group(1) + _HE_SELF_START_FORMS[m.group(2)]
@@ -2136,6 +2153,27 @@ def _resolve_slashes_for_writer(text, writer_gender):
     return _HE_SLASH_IMP_Y_RE.sub(r"\1", text)
 
 
+# "לספרי" is never the infinitive (Tab round 6): the model
+# writes "אפשר לספרי לי" and the round-5 slash resolver
+# could mint it for a woman from "לספר/י" — but the
+# infinitive of "to tell" is לספר for EVERY writer (the
+# feminine imperative is the bare ספרי, without the ל).
+# Where לספרי sits in the infinitive slot (before לי / לך /
+# עוד / על / את / מה … or at a sentence end), it ships as
+# לספר. Shared by the scrub layer and the grief gender
+# consistency, so no surface can ship it.
+_HE_LESAFERI_RE = re.compile(
+    r"לספרי(?=\s+(?:לי|לך|לו|לה|לנו|לכם|לכן|עוד|על|את|מה|"
+    r"קצת)(?![\u0590-\u05FF])|[.!?…\"']|\s*$)", re.M)
+
+
+def _fix_infinitive_y(text):
+    """לספרי in the infinitive slot -> לספר (Tab round 6)."""
+    if not text:
+        return text
+    return _HE_LESAFERI_RE.sub("לספר", text)
+
+
 def _he_self_gender(text, writer_gender=None):
     """Normalize Solace's OWN Hebrew gender in a model reply:
     slash forms lose the slash (masculine stem), and feminine
@@ -2150,9 +2188,18 @@ def _he_self_gender(text, writer_gender=None):
     out = out.replace("הוא/היא", "הוא").replace("היא/הוא", "הוא")
     out = _HE_SLASH_FORM_RE.sub(r"\1", out)
     out = _HE_SLASH_PAIR_RE.sub(_slash_pair_sub, out)
+    if writer_gender != "f":
+        # A bare feminine imperative addressed to a man /
+        # no-signal writer ships in its plain form (Tab
+        # round 6) — the grief layer has always done this;
+        # the general scrub now matches it. A woman keeps
+        # ספרי.
+        out = re.sub(r"ספרי\s+לי", "ספר לי", out)
+    out = _fix_infinitive_y(out)
     for rx, rep in _HE_SELF_PHRASE_RES:
         out = rx.sub(rep, out)
     out = _HE_SELF_START_RE.sub(_self_start_sub, out)
+    out = _HE_GLAD_THAT_RE.sub(_glad_that_sub, out)
     return _HE_SELF_FEM_RE.sub(_self_fem_sub, out)
 
 
@@ -2350,6 +2397,11 @@ _COMPANIONSHIP_RES = [
     re.compile(r"לבי\s+אית[ךכ]"),          # לבי איתך / איתכם
     re.compile(r"ליבי\s+אית[ךכ]"),         # ליבי איתך
     re.compile(r"הלב\s+שלי\s+אית[ךכ]"),    # הלב שלי איתך
+    # "Our heart is with you" (Tab round 6): הלב שלנו איתך
+    # shipped once on screen — the plural-possessive heart
+    # belongs to the same family as לבי / ליבנו.
+    re.compile(r"(?:ה)?לב\s+שלנו\s+(?:אית[ךכ]|אליך|אלייך)"),
+    re.compile(r"ליבנו\s+אית[ךכ]"),
     re.compile(r"ליבנו\s+(?:אליך|אלייך|אית[ךכ])"),
     re.compile(r"לבנו\s+(?:אליך|אלייך|אית[ךכ])"),
     re.compile(r"(?:ה)?מחשבות\s+(?:שלי|שלנו|שליי)\s+אית[ךכ]"),
@@ -2434,7 +2486,10 @@ _HE_MASC2P_RE = re.compile(
 _HE_MASC2P_LEFTOVER_RE = re.compile(
     r"(שאתה\b|תרצה(?![\u0590-\u05FF])|תרגיש(?![\u0590-\u05FF])|"
     r"תקח(?![\u0590-\u05FF])|(?<![\u0590-\u05FF])קח(?![\u0590-\u05FF])|"
-    r"ספר\s+לי|"
+    # The bare imperative only: inside לספר ("to tell")
+    # the same letters are the infinitive, correct for
+    # every gender — never a leftover (Tab round 6).
+    r"(?<![\u0590-\u05FF])ספר\s+לי|"
     r"אתה\s+(?:" + _HE_MASC_VERB_ALT + r"))")
 
 
@@ -2444,6 +2499,10 @@ def _he_gender_consistency(body, target="m"):
     the fixed opening's gender)."""
     if not body:
         return body
+    # לספרי in the infinitive slot is wrong for EVERY
+    # target (Tab round 6) — normalize before the gender
+    # rewrites, whose own ספרי forms are the imperative.
+    body = _fix_infinitive_y(body)
     if target == "f":
         if not _HE_MASC2P_LEFTOVER_RE.search(body):
             return body
@@ -2454,7 +2513,11 @@ def _he_gender_consistency(body, target="m"):
             return pron + " " + _HE_MASC_VERB_FEM[verb]
 
         out = _HE_MASC2P_RE.sub(_verb_sub_f, body)
-        out = re.sub(r"ספר\s+לי", "ספרי לי", out)
+        # Bare imperative only — the same letters inside
+        # לספר are the infinitive and stay (Tab round 6:
+        # this substitution was itself minting לספרי).
+        out = re.sub(r"(?<![\u0590-\u05FF])ספר\s+לי",
+                     "ספרי לי", out)
         out = re.sub(r"תרצה(?![\u0590-\u05FF])", "תרצי", out)
         out = re.sub(r"תרגיש(?![\u0590-\u05FF])", "תרגישי", out)
         out = re.sub(r"תקח(?![\u0590-\u05FF])", "תקחי", out)
@@ -3645,7 +3708,19 @@ def _chat_stream_events(uid, msg, background):
     if failed and not raw:
         # The model call failed before any text — mirror /api/chat.
         if mode == "normal":
-            payload = {"reply": "I'm having trouble connecting right now. Please try again in a moment — I'm still here.", "crisis": False, "hotline": ctx["hotline"], "banner": ctx["banner"], "banner_lang": ctx["banner_lang"]}
+            canned = ("I'm having trouble connecting right now. "
+                      "Please try again in a moment — I'm still "
+                      "here.")
+            if ctx.get("need_professional"):
+                # The referral guarantee covers this canned
+                # reply too (Tab round 6): round 5 ensured the
+                # /api/chat twin but not this one, and a FIRST
+                # message — a cold app, a slow first call — is
+                # exactly the turn that lands here.
+                canned = _ensure_referral(
+                    canned, ctx.get("safety_hebrew",
+                                     ctx["hebrew"]))
+            payload = {"reply": canned, "crisis": False, "hotline": ctx["hotline"], "banner": ctx["banner"], "banner_lang": ctx["banner_lang"]}
             yield _sse({"type": "delta", "text": payload["reply"]})
             yield _sse({"type": "done", **payload})
             return
@@ -3653,12 +3728,67 @@ def _chat_stream_events(uid, msg, background):
 
     if skip is None:
         skip = len("[CRISIS]") if raw.startswith("[CRISIS]") else 0
-    payload = _finish_model_turn(ctx, mode, raw, background)
+    try:
+        payload = _finish_model_turn(ctx, mode, raw, background)
+    except Exception:
+        # The finish step itself failed (Tab round 6): the
+        # stream must still END with a done payload — above
+        # all on a grief turn, where the client may already
+        # be holding the fixed opening and nothing else. The
+        # grief reply is opening + fallback here too, NEVER
+        # the opening alone; a need-professional turn keeps
+        # its referral line on this path as everywhere else.
+        _she = ctx.get("safety_hebrew", ctx["hebrew"])
+        if mode == "grief":
+            opening = ctx.get("grief_opening") or (
+                GRIEF_OPENING_HE if ctx.get("grief_hebrew")
+                else GRIEF_OPENING)
+            body = (GRIEF_FALLBACK_HE if ctx.get("grief_hebrew")
+                    else GRIEF_FALLBACK)
+            payload = {"reply": opening + "\n\n" + body,
+                       "crisis": False, "hotline": ctx["hotline"],
+                       "banner": ctx["banner"],
+                       "banner_lang": ctx["banner_lang"]}
+        elif mode == "crisis":
+            rep = ctx["fallback_text"]
+            if ctx.get("need_professional"):
+                rep = _ensure_referral(rep, _she)
+            rep += crisis_resource_line(_she, rep)
+            payload = {"reply": rep, "crisis": True,
+                       "hotline": ctx.get("safety_hotline",
+                                          ctx["hotline"]),
+                       "banner": True,
+                       "banner_lang": ctx.get("safety_lang",
+                                              ctx["banner_lang"])}
+        else:
+            rep = ctx["fallback_text"] if mode == "info" else (
+                "I'm having trouble connecting right now. "
+                "Please try again in a moment — I'm still "
+                "here.")
+            if ctx.get("need_professional"):
+                rep = _ensure_referral(rep, _she)
+            payload = {"reply": rep, "crisis": False,
+                       "hotline": ctx["hotline"],
+                       "banner": ctx["banner"],
+                       "banner_lang": ctx["banner_lang"]}
     final = payload["reply"]
     visible = scrub_prefix(
         raw[skip:].lstrip(), ctx.get("writer_gender"), msg)
     if final.startswith(visible) and len(final) > len(visible):
         yield _sse({"type": "delta", "text": final[len(visible):]})
+    elif ctx.get("need_professional"):
+        # The on-screen bubble is built from deltas: if the
+        # finished text diverged from the streamed prefix, the
+        # usual tail-delta cannot be computed — but the
+        # referral line must still REACH THE SCREEN (Tab
+        # round 6: the anxiety question as a first message
+        # lost it in 4 of 5 runs). Emit the appendix itself
+        # whenever the final carries it and the screen
+        # doesn't.
+        _app = (REFERRAL_APPEND_HE if ctx.get("safety_hebrew")
+                else REFERRAL_APPEND_EN)
+        if _app in final and _app not in visible:
+            yield _sse({"type": "delta", "text": "\n\n" + _app})
     yield _sse({"type": "done", **payload})
 
 
