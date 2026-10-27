@@ -273,6 +273,29 @@ p = chat(u, "Work was rough today, my boss yelled at me")
 check(p["crisis"] is False and p.get("banner") in (False, None),
       "I3 latch survived the normal question")
 
+# A walk-back is not-crisis BY RULE even when the risk
+# classifier insists otherwise (Tab's live run: the Hebrew
+# tiredness retraction after a latched crisis got a model
+# reply because the classifier escalated it past the fixed
+# clarify line).
+_orig_classify = solace.classify_risk
+solace.classify_risk = lambda t: True
+u = uid()
+chat(u, "אני רוצה למות")
+p = chat(u, "סליחה, התכוונתי שאני מת מעייפות, לא יותר")
+check(p["reply"] == solace._CLARIFY_HE["n"] and p["crisis"] is False,
+      "I3 hostile classifier overrode the HE walk-back: %r"
+      % p["reply"][:60])
+u = uid()
+chat(u, "I want to kill myself")
+p = chat(u, "no I'm safe, I was just venting")
+check(p["reply"] == solace.CLARIFY_REPLY and p["crisis"] is False,
+      "I3 hostile classifier overrode the EN walk-back: %r"
+      % p["reply"][:60])
+solace.classify_risk = _orig_classify
+check(solace.assess_risk("סליחה, התכוונתי שאני מת מעייפות") is False,
+      "I3 assess_risk escalates a walk-back")
+
 # =====================================================================
 # Item 4: yes/no questions — the first word matches the truth.
 # =====================================================================

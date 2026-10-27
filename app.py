@@ -2760,6 +2760,17 @@ def assess_risk(text):
         return False
     if detect_crisis_keywords(text):
         return True
+    if detect_clarification(text):
+        # A walk-back is not-crisis BY RULE (Tab r13 follow-up):
+        # the clarification detector's frames (joking / didn't
+        # mean it / I'm safe / התכוונתי ש…) are deterministic,
+        # and the live classifier was overriding them — a Hebrew
+        # "I meant I'm dead TIRED" retraction after a latched
+        # crisis got a model reply instead of the fixed clarify
+        # line, because the classifier escalated it first. The
+        # keyword layer above still wins for any message that
+        # carries a real crisis phrase alongside the walk-back.
+        return False
     if is_prescribed_med_statement(text):
         # Plain medication talk is not-crisis by rule (Tab round
         # 4) — the classifier never gets to escalate it.
@@ -4784,6 +4795,13 @@ def _prepare_turn(uid, msg):
     elif stuck_safe:
         risk = False
     elif idiom_safe:
+        risk = False
+    elif detect_clarification(msg):
+        # A walk-back (joking / didn't mean it / I'm safe /
+        # התכוונתי ש…) is not-crisis BY RULE: the classifier
+        # never gets to escalate it past the A2 clarification
+        # branch below (Tab r13: the live classifier did
+        # exactly that to a Hebrew tiredness retraction).
         risk = False
     else:
         # The classifier also runs for informational word questions, so
