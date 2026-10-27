@@ -613,7 +613,7 @@ VOICE_ANSWER = (
 )
 VOICE_ANSWER_HE = (
     "כן — יש לסולאס מצב קול: מקישים על ה־🎤 ואפשר לדבר בקול "
-    "במקום להקליד. Solace אף פעם לא מקבל או שומר את האודיו "
+    "במקום להקליד. סולאס אף פעם לא מקבל או שומר את האודיו "
     "שלך — רק את הטקסט של מה שאתה אומר."
 )
 
@@ -2113,6 +2113,25 @@ def _slash_pair_sub(m):
 # spelling ships, normalized here on every scrub surface.
 _HE_NAME_VARIANT = "סולייס"
 _HE_NAME_PINNED = "סולאס"
+_LATIN_NAME_RE = re.compile(r"\bSolace\b")
+
+
+def _he_name_in_hebrew(text):
+    """Inside Hebrew text the name is written סולאס, never
+    Latin "Solace" (Tab round 6) — including the approved
+    voice-privacy line, whose Hebrew form Tab re-pinned
+    this round. The rule is per-sentence: a Hebrew sentence
+    naming "Solace" ships סולאס; an English sentence keeps
+    "Solace" untouched."""
+    if not text or "Solace" not in text:
+        return text
+    segs = _sentence_segments(text)
+    parts = []
+    for seg, sep in segs:
+        if has_hebrew(seg):
+            seg = _LATIN_NAME_RE.sub(_HE_NAME_PINNED, seg)
+        parts.append(seg + sep)
+    return "".join(parts)
 
 # User-addressed imperative slash forms (Tab round 5):
 # "ספר/י לי" SHIPPED in round 4 — the suffix regexes only
@@ -2184,6 +2203,7 @@ def _he_self_gender(text, writer_gender=None):
     if not text or not has_hebrew(text):
         return text
     out = text.replace(_HE_NAME_VARIANT, _HE_NAME_PINNED)
+    out = _he_name_in_hebrew(out)
     out = _resolve_slashes_for_writer(out, writer_gender)
     out = out.replace("הוא/היא", "הוא").replace("היא/הוא", "הוא")
     out = _HE_SLASH_FORM_RE.sub(r"\1", out)

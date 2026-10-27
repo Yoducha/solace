@@ -265,7 +265,7 @@ if calls["n"] != 0:
 if "Solace never receives or stores your audio" \
         not in solace.VOICE_ANSWER:
     failures.append("VOICE EN privacy line not verbatim")
-if "Solace אף פעם לא מקבל או שומר את האודיו שלך" \
+if "סולאס אף פעם לא מקבל או שומר את האודיו שלך" \
         not in solace.VOICE_ANSWER_HE:
     failures.append("VOICE HE privacy line not verbatim")
 denial = ("I'm text-only, so I can't receive audio. "
