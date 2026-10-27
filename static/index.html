@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content">
 <meta name="description" content="A private AI companion for reflection and self-help.">
 <title>Solace — A private AI companion for reflection and self-help</title>
 <style>
@@ -23,7 +23,18 @@
   body {
     margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Georgia, serif;
     background: var(--bg); color: var(--ink);
-    min-height: 100dvh; display: flex; flex-direction: column;
+    /* App shell: the height tracks the VISUAL viewport (the JS
+       tracker keeps --app-h in sync with visualViewport.height),
+       so when the on-screen keyboard opens, the shell shrinks to
+       the visible area instead of being covered by it — the
+       message list stays above the composer, and the composer
+       sits right on top of the keyboard. 100dvh is the fallback
+       before JS runs. Each screen scrolls inside the shell. */
+    height: 100vh;
+    height: 100dvh;
+    height: var(--app-h, 100dvh);
+    display: flex; flex-direction: column;
+    overflow: hidden; overscroll-behavior-y: none;
   }
   /* Header + crisis banner stick together at the top: the banner
      stays pinned directly under the header while messages scroll
@@ -61,6 +72,22 @@
   .disclaimer.compact .disc-full { display: none; }
   .disclaimer.compact .disc-short { display: inline; }
   .disclaimer.compact .x { display: none; }
+  /* Keyboard open (body.kb, toggled by the visual-viewport tracker
+     in the script): the header row compacts to one slim line, the
+     disclaimer drops to its short one-line form, and the rows that
+     sit UNDER the composer (the Rehearse button row, the footer
+     links) plus the rehearsal voice bar hide — so the composer is
+     the last element on screen, glued to the top of the keyboard,
+     and the message list keeps the rest of the visible area. */
+  body.kb header { padding: 4px 10px; }
+  body.kb header .brand { font-size: 15px; }
+  body.kb header .brand small { display: none; }
+  body.kb .disclaimer { font-size: 10.5px; padding: 4px 34px 4px 10px; }
+  body.kb .disclaimer .disc-full { display: none; }
+  body.kb .disclaimer .disc-short { display: inline; }
+  body.kb .disclaimer .x { display: none; }
+  body.kb .chat-actions, body.kb #chat-footer-links { display: none; }
+  body.kb #rh-voicebar { display: none; }
   /* One-line header on phones: icon-only buttons, short crisis pill */
   @media (max-width: 640px) {
     header { padding: 8px 10px; }
@@ -85,10 +112,10 @@
   #crisis-banner strong { display: block; margin-bottom: 4px; }
   #crisis-banner a { color: var(--danger-ink); font-weight: 700; }
   #crisis-banner[dir="rtl"] { text-align: right; }
-  main { flex: 1; display: flex; flex-direction: column; max-width: 640px; width: 100%; margin: 0 auto; }
+  main { flex: 1; display: flex; flex-direction: column; min-height: 0; max-width: 640px; width: 100%; margin: 0 auto; }
 
   /* Welcome / intake */
-  #welcome { padding: 28px 20px; display: flex; flex-direction: column; gap: 18px; }
+  #welcome { padding: 28px 20px; display: flex; flex-direction: column; gap: 18px; flex: 1; min-height: 0; overflow-y: auto; }
   #welcome h1 { font-size: 30px; margin: 6px 0 0; font-weight: 700; }
   #welcome p.tagline { color: var(--muted); font-size: 14px; line-height: 1.55; margin: -8px 0 0; }
   #welcome p.audience { color: var(--ink); font-size: 16px; line-height: 1.6; margin: -6px 0 0; }
@@ -197,7 +224,7 @@
   .btn.secondary { background: var(--sage); }
   .btn.ghost { background: none; color: var(--clay); border: 1px solid var(--line); }
   #rehearse { display: none; flex: 1; flex-direction: column; min-height: 0; }
-  .rh-scroll { overflow-y: auto; padding: 22px 20px; display: flex; flex-direction: column; gap: 16px; }
+  .rh-scroll { overflow-y: auto; padding: 22px 20px; display: flex; flex-direction: column; gap: 16px; flex: 1; min-height: 0; }
   .rh-scroll h2 { font-size: 24px; margin: 2px 0 0; }
   .rh-scroll p.lead { color: var(--muted); font-size: 16px; line-height: 1.6; margin: 0; }
   .rh-top { display: flex; align-items: center; gap: 12px; padding: 10px 14px; border-bottom: 1px solid var(--line); background: var(--card); }
@@ -963,6 +990,70 @@ function scrollToLatest(el) {
   requestAnimationFrame(doIt);
   setTimeout(doIt, 120);
 }
+
+// ---- Visual-viewport shell (iPhone keyboard fix) ----
+// The shell height (--app-h on <html>) tracks the VISUAL viewport.
+// When the on-screen keyboard opens, iOS Safari does not resize
+// the layout viewport — the keyboard simply covers the bottom of
+// the page, which buried the chat under the header and composer.
+// Now the shell shrinks to exactly the visible area: the message
+// list keeps the space above the composer, the composer lands
+// right on top of the keyboard, and body.kb compacts the header
+// to one line (CSS above). On every size change, and whenever the
+// keyboard opens or closes, the newest message in whichever chat
+// is on screen is scrolled back into view — no Done tap needed.
+(function () {
+  const vv = window.visualViewport;
+  const rootEl = document.documentElement;
+  let lastH = -1;
+  let kbOpen = false;
+  function isShown(el) { return !!(el && el.offsetParent !== null); }
+  function scrollChatsToLatest() {
+    const box = document.getElementById('messages');
+    if (box && isShown(box) && box.lastElementChild) {
+      scrollToLatest(box.lastElementChild);
+    }
+    const rh = document.getElementById('rh-messages');
+    if (rh && isShown(rh) && rh.lastElementChild) {
+      scrollToLatest(rh.lastElementChild);
+      rh.scrollTop = rh.scrollHeight;
+    }
+  }
+  function syncViewport() {
+    const h = vv ? vv.height : window.innerHeight;
+    if (Math.abs(h - lastH) < 1) return;
+    lastH = h;
+    rootEl.style.setProperty('--app-h', h + 'px');
+    // The keyboard counts as open when the visible height is well
+    // below the layout height (URL-bar movement alone is small).
+    const kb = !!vv && (window.innerHeight - h > 120);
+    if (kb !== kbOpen) {
+      kbOpen = kb;
+      document.body.classList.toggle('kb', kb);
+      requestAnimationFrame(scrollChatsToLatest);
+      setTimeout(scrollChatsToLatest, 180);
+    } else if (kb) {
+      requestAnimationFrame(scrollChatsToLatest);
+    }
+  }
+  if (vv) {
+    vv.addEventListener('resize', syncViewport);
+    vv.addEventListener('scroll', syncViewport);
+  }
+  window.addEventListener('resize', syncViewport);
+  window.addEventListener('orientationchange', function () {
+    setTimeout(syncViewport, 250);
+  });
+  // Focusing a text field starts the keyboard opening; re-pin the
+  // newest message once the keyboard has settled.
+  ['input', 'rh-input'].forEach(function (id) {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener('focus', function () {
+      setTimeout(scrollChatsToLatest, 350);
+    });
+  });
+  syncViewport();
+})();
 
 function addMsg(text, who) {
   const d = document.createElement('div');
