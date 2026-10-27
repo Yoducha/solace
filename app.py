@@ -1670,11 +1670,44 @@ _HE_SELF_FEM_MASC = {
     "מסוגלת": "מסוגל", "אומרת": "אומר", "שואלת": "שואל",
     "כותבת": "כותב", "מדברת": "מדבר", "מבקשת": "מבקש",
     "מספרת": "מספר", "צריכה": "צריך", "עייפה": "עייף",
-    "זקוקה": "זקוק",
+    "זקוקה": "זקוק", "עוזרת": "עוזר", "מקשיבה": "מקשיב",
+    "מעדיפה": "מעדיף", "מציעה": "מציע", "מאמינה": "מאמין",
+    "קוראת": "קורא", "פותחת": "פותח", "ממשיכה": "ממשיך",
+    "נשארת": "נשאר", "חוזרת": "חוזר",
 }
+# Round 5: the middle slot now also carries negation and
+# small adverbs — "אני לא יכולה" slipped past round 4
+# because the regex demanded the form directly after אני
+# (or אני ממש). Middle words are preserved verbatim.
 _HE_SELF_FEM_RE = re.compile(
-    r"אני\s+(?:ממש\s+)?("
+    r"(אני)\s+((?:(?:ממש|לא|גם|רק|כבר)\s+){0,2})("
     + "|".join(_HE_SELF_FEM_MASC) + r")(?![\u0590-\u05FF])")
+
+# Self-reference WITHOUT an explicit אני (Tab round 5):
+# "שמחה שפנית" ("(I'm) glad you reached out"), "עוזרת AI"
+# ("a (female) AI assistant"), a sentence-initial "מצטערת
+# על…" / "שמחה לשמוע". These shapes are Solace describing
+# ITSELF; each is rewritten to the masculine.
+_HE_SELF_PHRASE_RES = [
+    (re.compile(r"שמחה\s+שפנית"), "שמח שפנית"),
+    (re.compile(r"עוזרת\s+(AI|בינה)"), r"עוזר \1"),
+]
+_HE_SELF_START_FORMS = {
+    "שמחה": "שמח", "מצטערת": "מצטער", "מבינה": "מבין",
+    "מרגישה": "מרגיש", "מקשיבה": "מקשיב",
+}
+_HE_SELF_START_RE = re.compile(
+    r"(^|[.!?…]\s+)(" + "|".join(_HE_SELF_START_FORMS) + r")"
+    r"(?=\s+(?:ש|ל|על|אותך|אותו|אותה))", re.M)
+
+
+def _self_start_sub(m):
+    return m.group(1) + _HE_SELF_START_FORMS[m.group(2)]
+
+
+def _self_fem_sub(m):
+    return (m.group(1) + " " + (m.group(2) or "")
+            + _HE_SELF_FEM_MASC[m.group(3)])
 _HE_SLASH_FORM_RE = re.compile(
     r"([\u0590-\u05FF]{2,})/(ה|ת|ית)(?![\u0590-\u05FF])")
 _HE_SLASH_PAIR_RE = re.compile(
@@ -1701,27 +1734,79 @@ def _slash_pair_sub(m):
     return m.group(0)
 
 
-def _he_self_gender(text):
+# Solace's Hebrew name (Tab round 5): the app's shipped
+# Hebrew strings spell it סולאס (identity + availability
+# answers). The model sometimes writes סולייס instead — one
+# spelling ships, normalized here on every scrub surface.
+_HE_NAME_VARIANT = "סולייס"
+_HE_NAME_PINNED = "סולאס"
+
+# User-addressed imperative slash forms (Tab round 5):
+# "ספר/י לי" SHIPPED in round 4 — the suffix regexes only
+# knew ה/ת/ית, never the imperative י. Slash imperatives now
+# resolve by the WRITER's detected gender: a woman writing
+# gets the י form ("ספרי לי"), everyone else the bare stem
+# ("ספר לי"). Full-pair variants (כתוב/כתבי, אתה/את) resolve
+# to the feminine side only for a feminine writer; Solace's
+# OWN slash pairs (שמח/שמחה) are never gendered-variant
+# shaped (the feminine side ends in ה) and keep resolving
+# to the masculine below.
+_HE_SLASH_IMP_Y_RE = re.compile(
+    r"([\u0590-\u05FF]{2,})/י(?![\u0590-\u05FF])")
+_HE_SLASH_PAIR_ANY_RE = re.compile(
+    r"([\u0590-\u05FF]{2,})/([\u0590-\u05FF]{2,})"
+    r"(?![\u0590-\u05FF])")
+
+
+def _resolve_slashes_for_writer(text, writer_gender):
+    """Resolve USER-addressed slash forms toward the writer's
+    gender before the generic (masculine) slash stripping."""
+    if writer_gender == "f":
+        text = _HE_SLASH_IMP_Y_RE.sub(r"\1י", text)
+
+        def _pick_fem(m):
+            a, b = m.group(1), m.group(2)
+            common = 0
+            for p, q in zip(a, b):
+                if p != q:
+                    break
+                common += 1
+            if common >= 2 and abs(len(a) - len(b)) <= 2 and (
+                    b.endswith("י") or b in ("את", "שאת")):
+                return b
+            return m.group(0)
+
+        return _HE_SLASH_PAIR_ANY_RE.sub(_pick_fem, text)
+    return _HE_SLASH_IMP_Y_RE.sub(r"\1", text)
+
+
+def _he_self_gender(text, writer_gender=None):
     """Normalize Solace's OWN Hebrew gender in a model reply:
     slash forms lose the slash (masculine stem), and feminine
     first-person forms after אני become masculine. Text with
-    no Hebrew passes through untouched."""
+    no Hebrew passes through untouched. `writer_gender`
+    (round 5) only steers USER-addressed imperative slashes —
+    Solace's own forms are masculine regardless."""
     if not text or not has_hebrew(text):
         return text
-    out = _HE_SLASH_FORM_RE.sub(r"\1", text)
+    out = text.replace(_HE_NAME_VARIANT, _HE_NAME_PINNED)
+    out = _resolve_slashes_for_writer(out, writer_gender)
+    out = out.replace("הוא/היא", "הוא").replace("היא/הוא", "הוא")
+    out = _HE_SLASH_FORM_RE.sub(r"\1", out)
     out = _HE_SLASH_PAIR_RE.sub(_slash_pair_sub, out)
-    return _HE_SELF_FEM_RE.sub(
-        lambda m: m.group(0).split()[0] + " "
-        + ("ממש " if "ממש" in m.group(0) else "")
-        + _HE_SELF_FEM_MASC[m.group(1)], out)
+    for rx, rep in _HE_SELF_PHRASE_RES:
+        out = rx.sub(rep, out)
+    out = _HE_SELF_START_RE.sub(_self_start_sub, out)
+    return _HE_SELF_FEM_RE.sub(_self_fem_sub, out)
 
 
-def scrub_reply(text):
+def scrub_reply(text, writer_gender=None):
     """The full-text filter applied to every finished model reply."""
     out = _scrub_join(
         _sentence_segments(_truncate_glued_reply(text)),
         include_last=True)
-    out = _he_self_gender(_drop_dangling_opener(out.strip()))
+    out = _he_self_gender(
+        _drop_dangling_opener(out.strip()), writer_gender)
     if out:
         return out
     if has_hebrew(text or ""):
@@ -1729,20 +1814,21 @@ def scrub_reply(text):
     return _SCRUB_FALLBACK
 
 
-def scrub_prefix(text):
+def scrub_prefix(text, writer_gender=None):
     """Streaming form: the scrubbed text of all COMPLETE sentences
     so far — safe to emit as a delta; the tail is still growing."""
     return _he_self_gender(_drop_dangling_opener(
         _scrub_join(
             _sentence_segments(_truncate_glued_reply(text)),
-            include_last=False)))
+            include_last=False)), writer_gender)
 
 
-def scrub_field(text):
+def scrub_field(text, writer_gender=None):
     """Debrief-field form: like scrub_reply but may return "" so the
     caller can substitute its own neutral default."""
     return _he_self_gender(_scrub_join(
-        _sentence_segments(text), include_last=True).strip())
+        _sentence_segments(text), include_last=True).strip(),
+        writer_gender)
 
 
 _CONDOLENCE_LEAD_RE = re.compile(
@@ -2073,7 +2159,7 @@ def _grief_stream_visible(raw_text, opening, started,
     needs the second sentence to know the first was the model's
     own repeat, and emitting that first sentence live is what
     glued two replies together on screen."""
-    scrubbed = scrub_prefix(raw_text)
+    scrubbed = scrub_prefix(raw_text, writer_gender)
     if not started:
         segs = [s for s, _ in _sentence_segments(scrubbed) if s.strip()]
         if len(segs) < 2:
@@ -2631,6 +2717,11 @@ def _prepare_turn(uid, msg):
         "returning": returning, "fallback_text": "",
         "need_professional": detect_need_professional(msg),
         "med_statement": med_safe,
+        # The writer's own gender, when their Hebrew reveals it
+        # (Tab round 5): steers user-addressed slash resolution
+        # in the scrub layer on every chat surface.
+        "writer_gender": detect_writer_gender_he(msg) if hebrew
+        else None,
     }
 
     # Completed overdose (Tab ruling): medical emergency FIRST —
@@ -2760,8 +2851,7 @@ def _prepare_turn(uid, msg):
         # opening, in the model's instructions, and in the
         # deterministic cleanup. No signal -> the opening's
         # gender governs, exactly as rounds 2-3 pinned.
-        writer_gender = detect_writer_gender_he(msg) if hebrew \
-            else None
+        writer_gender = ctx["writer_gender"]
         if hebrew:
             gsys += _grief_gender_note(
                 detect_grief_kin_he(msg), writer_gender)
@@ -2814,7 +2904,7 @@ def _finish_model_turn(ctx, mode, reply, background):
     if mode == "info":
         if reply.startswith("[CRISIS]"):
             reply = reply[len("[CRISIS]"):].strip()
-        reply = scrub_reply(reply)
+        reply = scrub_reply(reply, ctx.get("writer_gender"))
         if ctx.get("need_professional"):
             reply = _ensure_referral(reply, safety_hebrew)
         _save_assistant_msg(uid, reply)
@@ -2840,7 +2930,8 @@ def _finish_model_turn(ctx, mode, reply, background):
             GRIEF_OPENING_HE if ctx.get("grief_hebrew")
             else GRIEF_OPENING)
         body = _grief_clean_body(
-            scrub_field(reply.strip()), opening,
+            scrub_field(reply.strip(),
+                        ctx.get("grief_writer_gender")), opening,
             ctx.get("grief_writer_gender"))
         if not body:
             # The continuation was ONLY a second opening (Tab
@@ -2858,7 +2949,7 @@ def _finish_model_turn(ctx, mode, reply, background):
     if mode == "crisis":
         if reply.startswith("[CRISIS]"):
             reply = reply[len("[CRISIS]"):].strip()
-        reply = scrub_reply(reply)
+        reply = scrub_reply(reply, ctx.get("writer_gender"))
         reply += crisis_resource_line(safety_hebrew, reply)
         _save_assistant_msg(uid, reply)
         return {"reply": reply, "crisis": True,
@@ -2879,7 +2970,7 @@ def _finish_model_turn(ctx, mode, reply, background):
             banner_lang = safety_lang
             _set_user_state(uid, crisis_mode=True, stepdown_v=False,
                             banner_v=True, lang_v=banner_lang)
-    reply = scrub_reply(reply)
+    reply = scrub_reply(reply, ctx.get("writer_gender"))
     # Never end two replies in a row with the same closing line
     # (Tab fix) — compare against the previous stored reply.
     with db_lock:
@@ -3085,7 +3176,8 @@ def _chat_stream_events(uid, msg, background):
                     grief_frozen = True
                     continue
             else:
-                visible = scrub_prefix(raw[skip:].lstrip())
+                visible = scrub_prefix(
+                    raw[skip:].lstrip(), ctx.get("writer_gender"))
             if len(visible) > len(emitted_visible):
                 new = visible[len(emitted_visible):]
                 emitted_visible = visible
@@ -3106,7 +3198,8 @@ def _chat_stream_events(uid, msg, background):
         skip = len("[CRISIS]") if raw.startswith("[CRISIS]") else 0
     payload = _finish_model_turn(ctx, mode, raw, background)
     final = payload["reply"]
-    visible = scrub_prefix(raw[skip:].lstrip())
+    visible = scrub_prefix(
+        raw[skip:].lstrip(), ctx.get("writer_gender"))
     if final.startswith(visible) and len(final) > len(visible):
         yield _sse({"type": "delta", "text": final[len(visible):]})
     yield _sse({"type": "done", **payload})
