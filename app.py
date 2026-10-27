@@ -268,6 +268,43 @@ def is_prescribed_med_statement(text):
     return any(rx.search(t) for rx in _MED_STATEMENT_RES)
 
 
+# "Feeling stuck in life" (Tab round 6): "אני מרגיש תקוע
+# בחיים" got the FULL frozen suicide reply in 3 of 4 runs —
+# the regex layers passed it (correctly), then the classifier
+# escalated an ordinary, non-crisis feeling. Like the
+# prescribed-med guard, a plain stuck-in-life statement is
+# not-crisis BY RULE: evaluated before the classifier, which
+# is skipped for it. The keyword layer still runs first and
+# wins — a genuine crisis phrase in the same message routes
+# to crisis before this guard is ever consulted — and any
+# self-harm / ingestion wording disqualifies the statement.
+_STUCK_RES = [
+    re.compile(
+        r"(?:מרגיש(?:ה)?|אני)[^.!?\n]{0,15}?תקוע(?:ה)?"),
+    re.compile(r"תקוע(?:ה)?\s+בחיים"),
+    re.compile(r"\bi\s+(?:feel\s+|am\s+feeling\s+|have\s+been\s+"
+               r"feeling\s+)?stuck\b", re.I),
+    re.compile(r"\bfeel(?:ing)?\s+stuck\b", re.I),
+    re.compile(r"\bstuck\s+in\s+(?:my\s+)?life\b", re.I),
+]
+_STUCK_UNSAFE_RE = re.compile(
+    r"(למות|להתאבד|לפגוע\s+בעצמ|לסיים\s+עם\s+זה|לסיים\s+את\s+"
+    r"החיים|אין\s+(?:לי\s+)?טעם\s+לחיות|לא\s+רוצה\s+לחיות|"
+    r"בלע|יותר\s+מדי\s+כדורים|"
+    r"\bkill\b|\bsuicid|\bself[-\s]?harm\b|\bhurt\s+myself\b|"
+    r"\bend\s+(?:it|my\s+life)\b|\bi\s+want\s+to\s+die\b)",
+    re.I)
+
+
+def is_stuck_in_life_statement(text):
+    """True for a plain 'I feel stuck (in life)' statement —
+    no self-harm, overdose or risk wording anywhere."""
+    t = text or ""
+    if _STUCK_UNSAFE_RE.search(t):
+        return False
+    return any(rx.search(t) for rx in _STUCK_RES)
+
+
 EMERGENCY_RESPONSE = (
     "Call 911 right now — this is a medical emergency, and getting "
     "help fast matters more than anything else. If you can, tell "
@@ -1273,6 +1310,10 @@ def assess_risk(text):
     if is_prescribed_med_statement(text):
         # Plain medication talk is not-crisis by rule (Tab round
         # 4) — the classifier never gets to escalate it.
+        return False
+    if is_stuck_in_life_statement(text):
+        # "Feeling stuck in life" is not-crisis by rule (Tab
+        # round 6) — the classifier never gets to escalate it.
         return False
     return classify_risk(text)
 
@@ -2938,7 +2979,12 @@ def _prepare_turn(uid, msg):
     # the classifier's 4-of-9 false escalations end here. A
     # keyword crisis phrase in the same message still wins.
     med_safe = is_prescribed_med_statement(msg)
-    emergency = detect_overdose(msg) and not med_safe
+    # "Feeling stuck in life" is not-crisis BY RULE (Tab round
+    # 6): it disarms the classifier exactly like the med guard.
+    # A keyword crisis phrase in the same message still wins.
+    stuck_safe = is_stuck_in_life_statement(msg)
+    emergency = detect_overdose(msg) and not med_safe \
+        and not stuck_safe
     info_q = (not kw_risk) and is_informational_word_question(msg)
     if kw_risk:
         risk = True
@@ -2950,6 +2996,8 @@ def _prepare_turn(uid, msg):
         risk = False
     elif med_safe:
         risk = False
+    elif stuck_safe:
+        risk = False
     else:
         # The classifier also runs for informational word questions, so
         # anything ambiguous or first-person still escalates; only a
@@ -2959,6 +3007,22 @@ def _prepare_turn(uid, msg):
     in_crisis_mode = bool(profile.get("crisis_mode"))
     stepdown = bool(profile.get("crisis_stepdown"))
     banner = bool(profile.get("crisis_banner"))
+    # A deterministically-not-crisis turn (a prescribed-med
+    # statement, a feeling-stuck statement) WINS OVER THE
+    # LATCH (Tab round 6): the false alarm had left the chat
+    # in crisis mode, and the next ordinary message — "לקחתי
+    # את הכדורים שלי" — was answered with the מד״א 101
+    # emergency reply. Such a turn is answered NORMALLY, and
+    # the latch it disproves is cleared, so the chat is a
+    # normal chat again from this message on. (A fresh risk
+    # signal or a completed overdose was already handled
+    # above and never reaches this bypass.)
+    if in_crisis_mode and (med_safe or stuck_safe) \
+            and not risk and not emergency:
+        _set_user_state(uid, crisis_mode=False, stepdown_v=False,
+                        lang_v=safety_lang)
+        in_crisis_mode = False
+        stepdown = False
     # Banner language follows the current message whenever a crisis
     # is active or a fresh signal arrives; the stored value is only
     # the fallback for ordinary turns with the banner still up.
@@ -2996,6 +3060,7 @@ def _prepare_turn(uid, msg):
         "returning": returning, "fallback_text": "",
         "need_professional": detect_need_professional(msg),
         "med_statement": med_safe,
+        "stuck_statement": stuck_safe,
         # The writer's own gender, when their Hebrew reveals it
         # (Tab round 5): steers user-addressed slash resolution
         # in the scrub layer on every chat surface.
@@ -3174,6 +3239,19 @@ def _prepare_turn(uid, msg):
             "with [CRISIS], do not safety-interrogate, and do "
             "not treat it as an emergency."
         )
+    if stuck_safe:
+        # Same rule for "feeling stuck" (Tab round 6): an
+        # ordinary feeling, cleared deterministically — the
+        # model must not re-escalate it with its own marker.
+        system += (
+            "\n\nNOTE: the person said they feel stuck in "
+            "life — a common, painful but NON-crisis feeling, "
+            "NOT a sign of suicidal intent. Respond to it "
+            "normally and warmly, and explore what feels "
+            "stuck; do NOT begin with [CRISIS], do not "
+            "safety-interrogate, and do not treat it as an "
+            "emergency."
+        )
     return ctx, ("model", "normal", system)
 
 
@@ -3274,8 +3352,10 @@ def _finish_model_turn(ctx, mode, reply, background):
         # A prescribed-medication statement is not-crisis BY
         # RULE (Tab round 4): the model's own marker cannot
         # re-escalate it into a latch, a banner or a hotline
-        # footer.
-        if not ctx["retracted"] and not ctx.get("med_statement"):
+        # footer. The same holds for a feeling-stuck statement
+        # (Tab round 6).
+        if not ctx["retracted"] and not ctx.get("med_statement") \
+                and not ctx.get("stuck_statement"):
             crisis = True
             banner = True
             banner_lang = safety_lang
