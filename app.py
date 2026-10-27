@@ -1669,13 +1669,36 @@ _HE_SELF_FEM_MASC = {
     "שומעת": "שומע", "יודעת": "יודע", "חושבת": "חושב",
     "מסוגלת": "מסוגל", "אומרת": "אומר", "שואלת": "שואל",
     "כותבת": "כותב", "מדברת": "מדבר", "מבקשת": "מבקש",
-    "מספרת": "מספר",
+    "מספרת": "מספר", "צריכה": "צריך", "עייפה": "עייף",
+    "זקוקה": "זקוק",
 }
 _HE_SELF_FEM_RE = re.compile(
     r"אני\s+(?:ממש\s+)?("
     + "|".join(_HE_SELF_FEM_MASC) + r")(?![\u0590-\u05FF])")
 _HE_SLASH_FORM_RE = re.compile(
     r"([\u0590-\u05FF]{2,})/(ה|ת|ית)(?![\u0590-\u05FF])")
+_HE_SLASH_PAIR_RE = re.compile(
+    r"([\u0590-\u05FF]{2,})/([\u0590-\u05FF]{2,})")
+
+
+def _slash_pair_sub(m):
+    """Full-form slash pair ("שמח/שמחה", "אתה/את"): when the
+    two words are one stem and its gendered variant (a shared
+    prefix of 2+ letters), keep the first — the masculine, in
+    the order models write them. The first word may carry up
+    to two glued prefix letters ("כשאתה/את"). Unrelated pairs
+    ("יום/לילה") are untouched."""
+    a, b = m.group(1), m.group(2)
+    for drop in (0, 1, 2):
+        x = a[drop:]
+        common = 0
+        for p, q in zip(x, b):
+            if p != q:
+                break
+            common += 1
+        if common >= 2 and len(x) - common <= 2:
+            return a
+    return m.group(0)
 
 
 def _he_self_gender(text):
@@ -1686,6 +1709,7 @@ def _he_self_gender(text):
     if not text or not has_hebrew(text):
         return text
     out = _HE_SLASH_FORM_RE.sub(r"\1", text)
+    out = _HE_SLASH_PAIR_RE.sub(_slash_pair_sub, out)
     return _HE_SELF_FEM_RE.sub(
         lambda m: m.group(0).split()[0] + " "
         + ("ממש " if "ממש" in m.group(0) else "")
@@ -1722,7 +1746,8 @@ def scrub_field(text):
 
 
 _CONDOLENCE_LEAD_RE = re.compile(
-    r"(אני (?:ממש )?מצטער|משתתף בצער|תנחומיי|שלא תדעו עוד צער|"
+    r"(אני (?:ממש |כל כך )?מצטער(?:ת)?|משתתף בצער|תנחומיי|"
+    r"שלא תדעו עוד צער|"
     r"i'?m so sorry|i am so sorry|sorry for your loss|"
     r"my condolences)",
     re.I,
@@ -1784,7 +1809,8 @@ def _strip_opening_echo(body, opening):
 # these AFTER the body's opening sentences means a second reply
 # was glued on (Tab round 3).
 _SECOND_REPLY_LEAD_RE = re.compile(
-    r"(אני (?:ממש )?מצטער (?:לשמוע|על האובדן)|משתתף בצער|"
+    r"(אני (?:ממש |כל כך )?מצטער(?:ת)? (?:לשמוע|על (?:ה)?אובדנ)|"
+    r"משתתף בצער|"
     r"תנחומיי|שלא תדעו עוד צער|"
     r"i'?m so sorry (?:to hear|for your loss)|my condolences)",
     re.I,
@@ -1834,9 +1860,11 @@ def _cut_second_reply_block(body, opening):
 # ones are dropped.)
 _OPENER_SENTENCE_RES = [
     # condolence on the loss, any wording that names it
+    # (אובדנ with a regular nun: possessives — אובדנך, אובדנו —
+    # respell the final ן, the r9 final-nun trap)
     re.compile(
         r"(?:מצטער|מצטערת)[^.!?\n]{0,30}?"
-        r"(?:אובדן|לשמוע|צער|שאיבדת)"),
+        r"(?:אובדן|אובדנ|לשמוע|צער|שאיבדת)"),
     re.compile(r"משתתף בצער|תנחומיי|שלא תדעו עוד צער"),
     re.compile(
         r"\bsorry\s+(?:for\s+your\s+loss|to\s+hear)\b", re.I),
@@ -2558,6 +2586,7 @@ def _prepare_turn(uid, msg):
         "user_count": user_count, "retracted": retracted,
         "returning": returning, "fallback_text": "",
         "need_professional": detect_need_professional(msg),
+        "med_statement": med_safe,
     }
 
     # Completed overdose (Tab ruling): medical emergency FIRST —
@@ -2707,6 +2736,18 @@ def _prepare_turn(uid, msg):
         has_prior=user_count > 1, returning=returning,
         summary_date=summary_date,
     )
+    if med_safe:
+        # The model must not re-escalate what the rules have
+        # already cleared (Tab round 4, live evidence): its own
+        # [CRISIS] marker was the remaining false-alarm channel.
+        system += (
+            "\n\nNOTE: the person mentioned taking their own "
+            "prescribed medication, as directed — ordinary "
+            "medication talk, NOT a crisis or overdose signal. "
+            "Respond to it normally and warmly; do NOT begin "
+            "with [CRISIS], do not safety-interrogate, and do "
+            "not treat it as an emergency."
+        )
     return ctx, ("model", "normal", system)
 
 
@@ -2784,7 +2825,11 @@ def _finish_model_turn(ctx, mode, reply, background):
     crisis = False
     if reply.startswith("[CRISIS]"):
         reply = reply[len("[CRISIS]"):].strip()
-        if not ctx["retracted"]:
+        # A prescribed-medication statement is not-crisis BY
+        # RULE (Tab round 4): the model's own marker cannot
+        # re-escalate it into a latch, a banner or a hotline
+        # footer.
+        if not ctx["retracted"] and not ctx.get("med_statement"):
             crisis = True
             banner = True
             banner_lang = safety_lang

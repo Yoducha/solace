@@ -133,6 +133,16 @@ if solace.GRIEF_FALLBACK_HE not in rep:
 if "דני" in rep:
     failures.append("OPENER E2E kept the glued opener: %r" % rep)
 
+# Live-evidence shape: the model opened with its own
+# feminine condolence ("אני כל כך מצטערת על אובדנך.") — the
+# possessive respells the final nun (אובדנך), which the
+# first patterns missed.
+out = solace._grief_clean_body(
+    "אני כל כך מצטערת על אובדנך. קחי את הזמן שאת צריכה.",
+    solace.GRIEF_OPENING_HE_WF, "f")
+if out != "קחי את הזמן שאת צריכה.":
+    failures.append("OPENER live condolence kept: %r" % out)
+
 print("2. grief second opening: Tab's two examples stripped, "
       "opener-only -> fallback, mid-reply lines untouched")
 
@@ -323,6 +333,24 @@ try:
 finally:
     solace.classify_risk = _real_classifier
 
+# Live-evidence addendum: in production the false alarm also
+# arrived through the MODEL's own [CRISIS] marker (its system
+# prompt tells it to mark perceived risk). The rule covers
+# that channel too: the marker is stripped, nothing latches.
+MODEL_TEXT[0] = "[CRISIS]\nStub model reply."
+uid = new_user()
+r = chat(uid, "לקחתי את הכדורים שלי")
+if r["crisis"] or r["banner"]:
+    failures.append("MED marker latched a crisis: %r" % r)
+if "988" in r["reply"] or "101" in r["reply"] \
+        or "Stub model reply." not in r["reply"]:
+    failures.append("MED marker reply wrong: %r" % r["reply"])
+MODEL_TEXT[0] = "Stub model reply."
+r = chat(uid, "תודה, אני בסדר")
+if r["crisis"]:
+    failures.append("MED marker left the user latched: %r" % r)
+MODEL_TEXT[0] = "Stub model reply."
+
 print("5. medication statement: guard by rule, classifier "
       "skipped even when it would say RISK, positives intact")
 
@@ -343,6 +371,20 @@ user_fem = "שאלה טובה. את מרגישה את זה חזק היום."
 if solace.scrub_reply(user_fem) != user_fem:
     failures.append("SELF-GENDER touched user address: %r"
                     % solace.scrub_reply(user_fem))
+# Live-evidence shapes: "אני צריכה" (the most common self
+# form) and FULL-form slash pairs (שמח/שמחה, אתה/את).
+out = solace.scrub_reply("אני צריכה לשאול אותך משהו ישיר.")
+if "אני צריך" not in out or "צריכה" in out:
+    failures.append("SELF-GENDER צריכה kept: %r" % out)
+out = solace.scrub_reply("אני שמח/שמחה שכתבת לי. כשאתה/את אומר.")
+if "/" in out or "שמחה" in out:
+    failures.append("SELF-GENDER full slash pair shipped: %r" % out)
+if "אני שמח" not in out or "כשאתה אומר" not in out:
+    failures.append("SELF-GENDER pair normalize wrong: %r" % out)
+unrelated = "קבענו לדבר על זה יום/לילה אחד."
+if solace.scrub_reply(unrelated) != unrelated:
+    failures.append("SELF-GENDER touched an unrelated pair: %r"
+                    % solace.scrub_reply(unrelated))
 # Hotline sentences still pass through verbatim.
 res_he = "בישראל אפשר להתקשר לער״ן במספר 1201 בכל שעה. אני כאן איתך."
 if solace.scrub_reply(res_he) != res_he:
