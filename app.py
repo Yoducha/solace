@@ -233,6 +233,41 @@ def detect_overdose(text):
     return False
 
 
+# Prescribed-medication statements (Tab round 4): "לקחתי את
+# הכדורים שלי" ("I took my pills") triggered the FULL suicide
+# reply in 4 of 9 runs — the regex layer passed it (correctly),
+# then the probabilistic classifier escalated it. A plain
+# medication-taking statement is now classified NOT-crisis BY
+# RULE: the guard is evaluated before the overdose detector and
+# before the classifier, and the classifier is skipped for it.
+# Any quantity / overdose / risk word anywhere in the message
+# disqualifies the statement — safety first.
+_MED_STATEMENT_RES = [
+    re.compile(
+        r"(?:לקחתי|נטלתי|שתיתי)[^.!?\n]{0,25}?(?:את\s+)?"
+        r"(?:הכדורים|הגלולות|התרופות|התרופה|הכדור)\s+"
+        r"שלי(?![\u0590-\u05FF])"),
+    re.compile(
+        r"\b(?:i\s+)?took\s+my\s+"
+        r"(?:pills?|medication|meds|medicine|tablets?)\b", re.I),
+]
+_MED_UNSAFE_RE = re.compile(
+    r"(הרבה|המון|מלא|יותר\s+מדי|בקבוק|חופן|כל\s+הכדורים|"
+    r"כל\s+הגלולות|בלע|למות|להתאבד|לפגוע|לסיים\s+עם\s+זה|"
+    r"\btoo\s+many\b|\bhandful\b|\bbottle\b|\boverdose\b|"
+    r"\ball\s+(?:the|my)\b|\bkill\b|\bdie\b|\bsuicid)",
+    re.I)
+
+
+def is_prescribed_med_statement(text):
+    """True for a plain 'I took my (prescribed) pills/medication'
+    statement — no quantity, overdose or risk wording anywhere."""
+    t = text or ""
+    if _MED_UNSAFE_RE.search(t):
+        return False
+    return any(rx.search(t) for rx in _MED_STATEMENT_RES)
+
+
 EMERGENCY_RESPONSE = (
     "Call 911 right now — this is a medical emergency, and getting "
     "help fast matters more than anything else. If you can, tell "
@@ -358,6 +393,21 @@ _IDENTITY_Q_RES = [
         r"יכול(?:ה)?\s+להיות\s+(?:ה)?(?:מטפל|פסיכולוג)\s+שלי")),
     ("therapy", re.compile(
         r"תהיה\s+(?:ה)?(?:מטפל|פסיכולוג)\s+שלי")),
+    # Diagnosis requests (Tab round 4): "Can you diagnose me?"
+    # is the same family — a plain deterministic "No", this time
+    # PLUS the referral line, like a real suggestion. Zero model
+    # calls, so no dangling "What I can do…" can follow either.
+    ("diagnose", re.compile(
+        r"^\s*(?:can|could|will|would)\s+you\s+(?:please\s+)?"
+        r"diagnose\s+me\b", re.I)),
+    ("diagnose", re.compile(r"\bdiagnose\s+me\b", re.I)),
+    ("diagnose", re.compile(
+        r"^\s*do\s+i\s+have\s+(?!to\b)[^.!?\n]{0,60}[.!?]?$",
+        re.I)),
+    ("diagnose", re.compile(
+        r"(?:אתה|את)\s+יכול(?:ה)?\s+לאבחן\s+אותי")),
+    ("diagnose", re.compile(r"תאבחן\s+אותי")),
+    ("diagnose", re.compile(r"לאבחן\s+אותי")),
 ]
 
 IDENTITY_ANSWERS = {
@@ -377,6 +427,19 @@ IDENTITY_ANSWERS = {
     ("professional", True): (
         "לא. אני סולאס — מלווה בינה מלאכותית להרהור ולתמיכה "
         "עצמית, לא איש מקצוע מורשה."
+    ),
+    ("diagnose", False): (
+        "No. I can't tell you whether you have a condition or "
+        "what it might be — I'm Solace, an AI companion for "
+        "reflection and self-help. For a question like that, the "
+        "right person to talk to is a doctor or a licensed "
+        "mental health professional."
+    ),
+    ("diagnose", True): (
+        "לא. אני לא יכול לומר אם יש לך מצב כלשהו או מה הוא — "
+        "אני סולאס, מלווה בינה מלאכותית להרהור ולתמיכה עצמית. "
+        "לשאלה כזאת, הכתובת הנכונה היא רופא או איש מקצוע "
+        "מורשה בתחום בריאות הנפש."
     ),
 }
 
@@ -467,16 +530,48 @@ def detect_need_professional(text):
     return any(rx.search(t) for rx in _NEED_PROF_RES)
 
 
+# A referral phrase inside a "can't tell you / can't decide"
+# sentence is NOT a suggestion (Tab round 4): "אני לא יכול
+# להגיד לך אם אתה צריך רופא או איש מקצוע…" mentions the words
+# while refusing to suggest anything. Such an occurrence does
+# not count as the referral being present.
+_REFERRAL_NEGATED_RES = [
+    re.compile(
+        r"(לא\s+יכול(?:ה)?\s+(?:להגיד|לקבוע|לדעת|לומר|להחליט)|"
+        r"אין\s+לי\s+דרך\s+(?:לדעת|לקבוע)|"
+        r"לא\s+בסמכותי)"),
+    re.compile(
+        r"\b(?:can'?t|cannot|couldn'?t)\s+"
+        r"(?:tell\s+you|decide|say|determine)\b", re.I),
+    re.compile(r"\bnot\s+(?:able|the\s+one)\s+to\s+"
+               r"(?:tell\s+you|decide|say)\b", re.I),
+]
+
+
+def _referral_present(reply, hebrew):
+    """True when the approved referral phrase appears as a real
+    suggestion — an occurrence inside a negated / can't-decide
+    clause does not count."""
+    phrase = REFERRAL_PHRASE_HE if hebrew else REFERRAL_PHRASE_EN
+    hay = reply if hebrew else reply.lower()
+    needle = phrase if hebrew else phrase.lower()
+    if needle not in hay:
+        return False
+    for seg, _sep in _sentence_segments(reply):
+        s = seg if hebrew else seg.lower()
+        if needle in s and not any(
+                rx.search(seg) for rx in _REFERRAL_NEGATED_RES):
+            return True
+    return False
+
+
 def _ensure_referral(reply, hebrew):
     """Guarantee the approved referral line is present (in the
     message's language) without disturbing anything else."""
-    if hebrew:
-        if REFERRAL_PHRASE_HE in reply:
-            return reply
-        return reply + "\n\n" + REFERRAL_APPEND_HE
-    if REFERRAL_PHRASE_EN.lower() in reply.lower():
+    if _referral_present(reply, hebrew):
         return reply
-    return reply + "\n\n" + REFERRAL_APPEND_EN
+    return reply + "\n\n" + (
+        REFERRAL_APPEND_HE if hebrew else REFERRAL_APPEND_EN)
 
 
 def detect_availability_question(text):
@@ -572,6 +667,22 @@ GRIEF_OPENING_HE_F = (
     "ואין דרך נכונה להתאבל. אני כאן איתך — קח את כל הזמן שאתה צריך. "
     "כשתרצה, אשמח לשמוע עליה."
 )
+# Feminine-WRITER variants (Tab round 4): when the person
+# writing is a woman ("אני מתגעגעת"), the fixed opening must
+# address HER in feminine forms (קחי… שאת צריכה… כשתרצי) —
+# round 3 forced everything to the masculine and misgendered
+# her in every reply. Solace's own forms (אני ממש מצטער) stay
+# masculine — that is Solace speaking about itself.
+GRIEF_OPENING_HE_WF = (
+    "אני ממש מצטער על האובדן שלך. לאבד מישהו שאוהבים משנה הכול, "
+    "ואין דרך נכונה להתאבל. אני כאן איתך — קחי את כל הזמן שאת צריכה. "
+    "כשתרצי, אשמח לשמוע עליו."
+)
+GRIEF_OPENING_HE_WF_F = (
+    "אני ממש מצטער על האובדן שלך. לאבד מישהו שאוהבים משנה הכול, "
+    "ואין דרך נכונה להתאבל. אני כאן איתך — קחי את כל הזמן שאת צריכה. "
+    "כשתרצי, אשמח לשמוע עליה."
+)
 _GRIEF_KIN_HE_F = re.compile(
     r"(אמא|סבתא|אחותי|אחות\s+שלי|אשתי|הבת\s+שלי|בת\s+שלי|חברה\s+שלי)")
 _GRIEF_KIN_HE_M = re.compile(
@@ -590,12 +701,52 @@ def detect_grief_kin_he(text):
     return None
 
 
-def grief_opening_for(hebrew, msg):
-    """The exact fixed opening for this grief turn: Hebrew gets the
-    gender-correct pronoun for the person who died."""
+# Writer-gender detection (Tab round 4): a Hebrew writer
+# genders THEMSELVES in self-referential forms — מתגעגעת /
+# צריכה / מרגישה (feminine) vs מתגעגע / צריך / מרגיש
+# (masculine). The first such signal in the message wins;
+# no signal -> None (the reply then follows the fixed
+# opening's gender, as rounds 2-3 pinned). Word-edge lookarounds
+# keep צריכה from matching inside צריך and the like.
+_HE_WRITER_FEM = (
+    "מתגעגעת", "צריכה", "מרגישה", "שמחה", "עייפה", "אלמנה",
+    "יכולה", "חושבת", "יודעת", "מבקשת", "מספרת", "כותבת",
+    "מדברת", "אומרת", "שואלת", "מסוגלת", "נמצאת", "מוכנה",
+    "בטוחה", "עצובה", "מצטערת", "אוהבת", "שומעת",
+)
+_HE_WRITER_MASC = (
+    "מתגעגע", "צריך", "מרגיש", "שמח", "עייף", "אלמן",
+    "יכול", "חושב", "יודע", "מבקש", "מספר", "כותב",
+    "מדבר", "אומר", "שואל", "מסוגל", "נמצא", "מוכן",
+    "בטוח", "עצוב", "מצטער", "אוהב", "שומע",
+)
+_HE_WRITER_GENDER_RE = re.compile(
+    r"(?<![\u0590-\u05FF])(?:"
+    + "|".join(_HE_WRITER_FEM + _HE_WRITER_MASC)
+    + r")(?![\u0590-\u05FF])")
+
+
+def detect_writer_gender_he(text):
+    """'f' / 'm' / None — the writer's own gender, from the
+    first self-referential gendered form in their message."""
+    t = text or ""
+    m = _HE_WRITER_GENDER_RE.search(t)
+    if not m:
+        return None
+    return "f" if m.group(0) in _HE_WRITER_FEM else "m"
+
+
+def grief_opening_for(hebrew, msg, writer_gender=None):
+    """The exact fixed opening for this grief turn: Hebrew gets
+    the gender-correct pronoun for the person who died, and —
+    when the writer's gender is known — address forms in the
+    WRITER's gender (Tab round 4)."""
     if not hebrew:
         return GRIEF_OPENING
-    if detect_grief_kin_he(msg) == "f":
+    kin_f = detect_grief_kin_he(msg) == "f"
+    if writer_gender == "f":
+        return GRIEF_OPENING_HE_WF_F if kin_f else GRIEF_OPENING_HE_WF
+    if kin_f:
         return GRIEF_OPENING_HE_F
     return GRIEF_OPENING_HE
 # Continuation used only if the model call fails on a grief turn.
@@ -624,50 +775,61 @@ GRIEF_NOTE = (
 # feminine fixed opening. The note pins the deceased's gender,
 # the addressee forms used by the fixed opening, and bans the
 # slash-hedge (מקשיב/ה) and separator lines.
-_GRIEF_GENDER_NOTES = {
+_GRIEF_KIN_NOTES = {
     "f": (
-        "\n\nHEBREW GRAMMAR — CRITICAL for this reply: the person "
-        "who died is a WOMAN. Refer to her ONLY in feminine forms "
-        "(היא, עליה, הייתה, שלה) — never עליו, הוא, היה or ממנו "
-        "about her. Address the person you are speaking with in "
-        "masculine singular, exactly as the opening line does "
-        "(קח את הזמן, כשתרצה). Never use slash forms such as "
-        "מקשיב/ה — choose the one matching form and stay with it. "
-        "Never write a separator line such as ---: write ONE "
-        "continuous reply that continues from the opening line."
+        "the person who died is a WOMAN. Refer to her ONLY in "
+        "feminine forms (היא, עליה, הייתה, שלה) — never עליו, "
+        "הוא, היה or ממנו about her."
     ),
     "m": (
-        "\n\nHEBREW GRAMMAR — CRITICAL for this reply: the person "
-        "who died is a MAN. Refer to him ONLY in masculine forms "
-        "(הוא, עליו, היה, שלו) — never עליה, היא, הייתה or ממנה "
-        "about him. Address the person you are speaking with in "
-        "masculine singular, exactly as the opening line does "
-        "(קח את הזמן, כשתרצה). Never use slash forms such as "
-        "מקשיב/ה — choose the one matching form and stay with it. "
-        "Never write a separator line such as ---: write ONE "
-        "continuous reply that continues from the opening line."
+        "the person who died is a MAN. Refer to him ONLY in "
+        "masculine forms (הוא, עליו, היה, שלו) — never עליה, "
+        "היא, הייתה or ממנה about him."
     ),
     None: (
-        "\n\nHEBREW GRAMMAR — CRITICAL for this reply: keep ONE "
-        "consistent gender for the person who died (the forms of "
-        "the opening line govern), address the person you are "
-        "speaking with exactly as the opening line does, and "
-        "never use slash forms such as מקשיב/ה. Never write a "
-        "separator line such as ---: write ONE continuous reply "
-        "that continues from the opening line."
+        "keep ONE consistent gender for the person who died "
+        "(the forms of the opening line govern)."
     ),
 }
 
-# Tab round 3: whatever the kin note above says, the person is
-# addressed in ONE gender throughout — if a second-person form
-# is ever uncertain, a gender-neutral construction (infinitive
-# or noun form) is used instead of switching gender mid-reply.
-for _gk in _GRIEF_GENDER_NOTES:
-    _GRIEF_GENDER_NOTES[_gk] += (
-        " Address the person in ONE gender from start to finish; "
-        "if a second-person form is uncertain, use a "
-        "gender-neutral construction (an infinitive or a noun "
-        "form) — never switch gender mid-reply."
+# Addressee instruction (Tab round 4): follows the WRITER's
+# gender when the writer's own message revealed it; otherwise
+# the opening line's forms govern, as before.
+_GRIEF_ADDRESSEE_NOTES = {
+    "f": (
+        "Address the person you are speaking with in FEMININE "
+        "singular, exactly as the opening line does (קחי את "
+        "הזמן, שאת צריכה, כשתרצי)."
+    ),
+    "m": (
+        "Address the person you are speaking with in "
+        "masculine singular, exactly as the opening line does "
+        "(קח את הזמן, כשתרצה)."
+    ),
+    None: (
+        "Address the person you are speaking with exactly as "
+        "the opening line does."
+    ),
+}
+
+
+def _grief_gender_note(kin, writer_gender):
+    """The Hebrew-grief grammar directive for one turn: the
+    deceased's gender (kin), the addressee's gender (the
+    writer's own, when known), one gender throughout, no slash
+    forms, no separator lines, ONE continuous reply."""
+    return (
+        "\n\nHEBREW GRAMMAR — CRITICAL for this reply: "
+        + _GRIEF_KIN_NOTES[kin] + " "
+        + _GRIEF_ADDRESSEE_NOTES[writer_gender]
+        + " Never use slash forms such as מקשיב/ה — choose "
+        "the one matching form and stay with it. Never write "
+        "a separator line such as ---: write ONE continuous "
+        "reply that continues from the opening line. Address "
+        "the person in ONE gender from start to finish; if a "
+        "second-person form is uncertain, use a gender-neutral "
+        "construction (an infinitive or a noun form) — never "
+        "switch gender mid-reply."
     )
 
 # System prompt used for follow-up turns while crisis mode is latched:
@@ -1000,6 +1162,10 @@ def assess_risk(text):
     Runs BEFORE any normal model call, on every user message."""
     if detect_crisis_keywords(text):
         return True
+    if is_prescribed_med_statement(text):
+        # Plain medication talk is not-crisis by rule (Tab round
+        # 4) — the classifier never gets to escalate it.
+        return False
     return classify_risk(text)
 
 
@@ -1417,7 +1583,8 @@ def _scrub_join(segs, include_last):
             tail = seg.rstrip().rstrip("\"'”’)]")
             if not tail or tail[-1] not in ".!?…":
                 break
-        if _sentence_banned(seg) or _sentence_availability_claim(seg):
+        if _sentence_banned(seg) or _sentence_availability_claim(seg) \
+                or _sentence_dangling(seg):
             continue
         out.append(seg + sep)
     return "".join(out)
@@ -1431,6 +1598,26 @@ def _scrub_join(segs, include_last):
 # fragment sentence.
 _DANGLING_OPENER_RE = re.compile(
     r"^\s*what\s+i\s+\*?can\*?\s+do\b", re.I)
+
+
+def _sentence_dangling(seg):
+    """True for a "What I *can* do…" fragment ANYWHERE in a reply
+    (Tab round 4): the filter removed the sentence that carried
+    the refusal, and the fragment now also surfaces mid-reply,
+    after a greeting ("Welcome, … I'm glad you're here. What I
+    *can* do…") — the round-3 backstop only caught it at the
+    reply's start. A COMPLETE sentence ("What I can do is
+    listen, for as long as you need.") is legitimate and stays:
+    the dangling shape never completes with "do is …" or a
+    colon list."""
+    s = (seg or "").strip()
+    if not _DANGLING_OPENER_RE.match(s):
+        return False
+    if re.search(r"\bdo\s+is\b", s, re.I):
+        return False
+    if re.search(r"\bdo\s*:", s):
+        return False
+    return True
 
 
 def _drop_dangling_opener(text, keep_if_only=False):
@@ -1464,12 +1651,53 @@ def _truncate_glued_reply(text):
     return text[:m.start()].rstrip()
 
 
+# Solace's own Hebrew gender (Tab round 4): Solace speaks
+# about ITSELF in masculine forms — the fixed strings already
+# do ("אני ממש מצטער" in the grief opening and the spouse
+# route) — but model replies flipped (שמח / שמחה / שמח/ה).
+# Self-referential feminine forms are rewritten to the
+# masculine, and gender slash forms are banned in shipped
+# output outright (normalized to the masculine stem). Only
+# clearly self-referential forms are touched: "אני שמחה"
+# (Solace speaking) becomes "אני שמח", while forms addressed
+# to the user ("את מרגישה") are the grief layer's business,
+# never this one's.
+_HE_SELF_FEM_MASC = {
+    "שמחה": "שמח", "מצטערת": "מצטער", "מבינה": "מבין",
+    "מרגישה": "מרגיש", "יכולה": "יכול", "נמצאת": "נמצא",
+    "מוכנה": "מוכן", "בטוחה": "בטוח", "אוהבת": "אוהב",
+    "שומעת": "שומע", "יודעת": "יודע", "חושבת": "חושב",
+    "מסוגלת": "מסוגל", "אומרת": "אומר", "שואלת": "שואל",
+    "כותבת": "כותב", "מדברת": "מדבר", "מבקשת": "מבקש",
+    "מספרת": "מספר",
+}
+_HE_SELF_FEM_RE = re.compile(
+    r"אני\s+(?:ממש\s+)?("
+    + "|".join(_HE_SELF_FEM_MASC) + r")(?![\u0590-\u05FF])")
+_HE_SLASH_FORM_RE = re.compile(
+    r"([\u0590-\u05FF]{2,})/(ה|ת|ית)(?![\u0590-\u05FF])")
+
+
+def _he_self_gender(text):
+    """Normalize Solace's OWN Hebrew gender in a model reply:
+    slash forms lose the slash (masculine stem), and feminine
+    first-person forms after אני become masculine. Text with
+    no Hebrew passes through untouched."""
+    if not text or not has_hebrew(text):
+        return text
+    out = _HE_SLASH_FORM_RE.sub(r"\1", text)
+    return _HE_SELF_FEM_RE.sub(
+        lambda m: m.group(0).split()[0] + " "
+        + ("ממש " if "ממש" in m.group(0) else "")
+        + _HE_SELF_FEM_MASC[m.group(1)], out)
+
+
 def scrub_reply(text):
     """The full-text filter applied to every finished model reply."""
     out = _scrub_join(
         _sentence_segments(_truncate_glued_reply(text)),
         include_last=True)
-    out = _drop_dangling_opener(out.strip())
+    out = _he_self_gender(_drop_dangling_opener(out.strip()))
     if out:
         return out
     if has_hebrew(text or ""):
@@ -1480,17 +1708,17 @@ def scrub_reply(text):
 def scrub_prefix(text):
     """Streaming form: the scrubbed text of all COMPLETE sentences
     so far — safe to emit as a delta; the tail is still growing."""
-    return _drop_dangling_opener(
+    return _he_self_gender(_drop_dangling_opener(
         _scrub_join(
             _sentence_segments(_truncate_glued_reply(text)),
-            include_last=False))
+            include_last=False)))
 
 
 def scrub_field(text):
     """Debrief-field form: like scrub_reply but may return "" so the
     caller can substitute its own neutral default."""
-    return _scrub_join(
-        _sentence_segments(text), include_last=True).strip()
+    return _he_self_gender(_scrub_join(
+        _sentence_segments(text), include_last=True).strip())
 
 
 _CONDOLENCE_LEAD_RE = re.compile(
@@ -1593,21 +1821,88 @@ def _cut_second_reply_block(body, opening):
     return body
 
 
-# Hebrew gender consistency (Tab round 3): the model's grief
-# continuation addressed the person as masculine in one half
-# ("קח… שאתה צריך") and feminine in the other ("שאת מרגישה…
-# תרצי"). The fixed opening addresses the person in masculine
-# forms, so unambiguous feminine SECOND-PERSON forms in the
-# continuation are rewritten to the masculine forms (forms about
-# the person who died — היא, עליה, שלה — are never touched).
-# Anything still carrying a feminine second-person marker after
-# the rewrite loses its sentence: one reply, one gender.
+# Second-opening stripper (Tab round 4): even with the
+# round-2/3 cleanup, the model's Hebrew grief continuation
+# still OPENED with its own opener in 8 of 8 runs — a presence
+# line with the person's name ("אני כאן איתך, דני.") or a
+# fresh condolence in a new wording ("עמוק מאוד מצטער על
+# אובדן אביך."). The FIXED opening already does condolence +
+# presence + take-your-time, so any sentence performing those
+# functions among the continuation's opening sentences is a
+# second opening and goes. (Mid-reply sentences are safe: only
+# the first few sentences are scanned, and only opener-shaped
+# ones are dropped.)
+_OPENER_SENTENCE_RES = [
+    # condolence on the loss, any wording that names it
+    re.compile(
+        r"(?:מצטער|מצטערת)[^.!?\n]{0,30}?"
+        r"(?:אובדן|לשמוע|צער|שאיבדת)"),
+    re.compile(r"משתתף בצער|תנחומיי|שלא תדעו עוד צער"),
+    re.compile(
+        r"\bsorry\s+(?:for\s+your\s+loss|to\s+hear)\b", re.I),
+    re.compile(r"\bmy\s+condolences\b", re.I),
+    # presence openers ("I'm here with you" — incl. a name)
+    re.compile(r"אני\s+כאן\s+(?:איתך|בשבילך|לצידך)"),
+    re.compile(r"\bi'?m\s+here\s+with\s+you\b", re.I),
+    re.compile(r"\bi\s+am\s+here\s+with\s+you\b", re.I),
+]
+
+
+def _is_opener_sentence(seg):
+    s = (seg or "").strip()
+    if not s:
+        return False
+    if any(rx.search(s) for rx in _OPENER_SENTENCE_RES):
+        return True
+    # A bare short greeting ("שלום דני.") opens a new reply too.
+    if len(s) <= 40 and re.match(
+            r"^(?:שלום|היי|הי|הלו)\b", s):
+        return True
+    if len(s) <= 40 and re.match(
+            r"^(?:hi|hello|hey)\b", s, re.I):
+        return True
+    return False
+
+
+def _strip_continuation_openers(body):
+    """Drop opener-shaped sentences (condolence / presence /
+    greeting) among the continuation's first three sentences."""
+    if not body:
+        return body
+    segs = _sentence_segments(body)
+    real = [i for i, (s, _) in enumerate(segs) if s.strip()]
+    if not real:
+        return body
+    drop = set()
+    for i in real[:3]:
+        if _is_opener_sentence(segs[i][0]):
+            drop.add(i)
+    if not drop:
+        return body
+    return "".join(
+        s + sep for i, (s, sep) in enumerate(segs)
+        if i not in drop).strip()
+
+
+# Hebrew gender consistency (Tab round 3, target made
+# bidirectional in round 4): the model's grief continuation
+# flipped the addressee's gender mid-reply ("קח… שאתה צריך"
+# in one half, "שאת מרגישה… תרצי" in the other). Unambiguous
+# SECOND-PERSON forms are rewritten toward the TARGET gender
+# — the writer's own gender when their message revealed it
+# (round 4: a woman writing is addressed as a woman), else
+# the fixed opening's masculine. Forms about the person who
+# died (היא, עליה, שלה / הוא, עליו, שלו) are never touched.
+# A sentence still carrying the wrong gender's marker after
+# the rewrite is dropped rather than shipped misgendered:
+# one reply, one gender.
 _HE_FEM_VERB_MASC = {
     "מרגישה": "מרגיש", "צריכה": "צריך", "יכולה": "יכול",
     "חושבת": "חושב", "יודעת": "יודע", "נמצאת": "נמצא",
     "מסוגלת": "מסוגל", "אומרת": "אומר", "שואלת": "שואל",
     "כותבת": "כותב", "מדברת": "מדבר", "מבקשת": "מבקש",
-    "מספרת": "מספר", "רוצה": "רוצה",
+    "מספרת": "מספר", "רוצה": "רוצה", "עוברת": "עובר",
+    "מבינה": "מבין",
 }
 _HE_FEM_VERB_ALT = "|".join(_HE_FEM_VERB_MASC)
 _HE_FEM2P_RE = re.compile(
@@ -1615,46 +1910,82 @@ _HE_FEM2P_RE = re.compile(
 _HE_FEM2P_LEFTOVER_RE = re.compile(
     r"(שאת\b|תרצי|תרגישי|תקחי|קחי\b|"
     r"את\s+(?:" + _HE_FEM_VERB_ALT + r"))")
+_HE_MASC_VERB_FEM = {v: k for k, v in _HE_FEM_VERB_MASC.items()
+                     if v != k}
+_HE_MASC_VERB_ALT = "|".join(_HE_MASC_VERB_FEM)
+_HE_MASC2P_RE = re.compile(
+    r"(שאתה|אתה)\s+(?:" + _HE_MASC_VERB_ALT + r")")
+_HE_MASC2P_LEFTOVER_RE = re.compile(
+    r"(שאתה\b|תרצה(?![\u0590-\u05FF])|תרגיש(?![\u0590-\u05FF])|"
+    r"תקח(?![\u0590-\u05FF])|(?<![\u0590-\u05FF])קח(?![\u0590-\u05FF])|"
+    r"אתה\s+(?:" + _HE_MASC_VERB_ALT + r"))")
 
 
-def _he_gender_consistency(body):
-    if not body or not _HE_FEM2P_LEFTOVER_RE.search(body):
+def _he_gender_consistency(body, target="m"):
+    """Normalize the continuation's second-person forms toward
+    `target` ("f" = the writer is a woman, "m" = masculine —
+    the fixed opening's gender)."""
+    if not body:
         return body
+    if target == "f":
+        if not _HE_MASC2P_LEFTOVER_RE.search(body):
+            return body
 
-    def _verb_sub(m):
-        verb = m.group(0).split(None, 1)[1]
-        return m.group(1) + " " + _HE_FEM_VERB_MASC[verb]
+        def _verb_sub_f(m):
+            verb = m.group(0).split(None, 1)[1]
+            pron = "שאת" if m.group(1) == "שאתה" else "את"
+            return pron + " " + _HE_MASC_VERB_FEM[verb]
 
-    out = _HE_FEM2P_RE.sub(_verb_sub, body)
-    out = re.sub(r"תרצי", "תרצה", out)
-    out = re.sub(r"תרגישי", "תרגיש", out)
-    out = re.sub(r"תקחי", "תקח", out)
-    out = re.sub(r"קחי\b", "קח", out)
-    out = re.sub(r"ספרי\s+לי", "ספר לי", out)
-    out = re.sub(r"שאת\b", "שאתה", out)
+        out = _HE_MASC2P_RE.sub(_verb_sub_f, body)
+        out = re.sub(r"תרצה(?![\u0590-\u05FF])", "תרצי", out)
+        out = re.sub(r"תרגיש(?![\u0590-\u05FF])", "תרגישי", out)
+        out = re.sub(r"תקח(?![\u0590-\u05FF])", "תקחי", out)
+        out = re.sub(r"(?<![\u0590-\u05FF])קח(?![\u0590-\u05FF])",
+                     "קחי", out)
+        out = re.sub(r"שאתה\b", "שאת", out)
+        leftover = _HE_MASC2P_LEFTOVER_RE
+    else:
+        if not _HE_FEM2P_LEFTOVER_RE.search(body):
+            return body
+
+        def _verb_sub(m):
+            verb = m.group(0).split(None, 1)[1]
+            return m.group(1) + " " + _HE_FEM_VERB_MASC[verb]
+
+        out = _HE_FEM2P_RE.sub(_verb_sub, body)
+        out = re.sub(r"תרצי", "תרצה", out)
+        out = re.sub(r"תרגישי", "תרגיש", out)
+        out = re.sub(r"תקחי", "תקח", out)
+        out = re.sub(r"קחי\b", "קח", out)
+        out = re.sub(r"ספרי\s+לי", "ספר לי", out)
+        out = re.sub(r"שאת\b", "שאתה", out)
+        leftover = _HE_FEM2P_LEFTOVER_RE
     segs = _sentence_segments(out)
     kept = [(s, sep) for s, sep in segs
-            if not _HE_FEM2P_LEFTOVER_RE.search(s)]
+            if not leftover.search(s)]
     if len(kept) != len(segs):
         out = "".join(s + sep for s, sep in kept).strip()
     return out
 
 
-def _grief_clean_body(body, opening):
+def _grief_clean_body(body, opening, writer_gender=None):
     """The deterministic cleanup every grief continuation passes
     through (sync, stream-visible, saved text): no divider seams,
-    no echoed opening, no leading condolence pile-up, no glued-on
-    second reply, one consistent gender of address — so the
-    final reply is the fixed opening + ONE continuation."""
+    no echoed opening, no leading condolence pile-up, no second
+    opening sentence, no glued-on second reply, one consistent
+    gender of address — so the final reply is the fixed opening
+    + ONE continuation."""
     if not body:
         return body
     body = _DIVIDER_LINE_RE.sub("", body)
     body = re.sub(r"\n{3,}", "\n\n", body).strip()
     body = _strip_opening_echo(body, opening)
     body = _strip_dup_condolence(body)
+    body = _strip_continuation_openers(body)
     body = _cut_second_reply_block(body, opening)
     if opening and has_hebrew(opening):
-        body = _he_gender_consistency(body)
+        body = _he_gender_consistency(
+            body, "f" if writer_gender == "f" else "m")
     body = body.strip()
     if opening and body and body in opening:
         # Nothing left but a fragment of the opening itself.
@@ -1662,7 +1993,8 @@ def _grief_clean_body(body, opening):
     return body
 
 
-def _grief_stream_visible(raw_text, opening, started):
+def _grief_stream_visible(raw_text, opening, started,
+                          writer_gender=None):
     """The visible continuation during a grief STREAM: the scrubbed
     prefix, cleaned exactly like the final body. Held back ("")
     until two complete sentences exist — the condolence strip
@@ -1674,7 +2006,8 @@ def _grief_stream_visible(raw_text, opening, started):
         segs = [s for s, _ in _sentence_segments(scrubbed) if s.strip()]
         if len(segs) < 2:
             return "", False
-    return _grief_clean_body(scrubbed, opening), True
+    return _grief_clean_body(
+        scrubbed, opening, writer_gender), True
 
 
 def _same_theme_judge(deleted_text, cand_text):
@@ -2162,7 +2495,13 @@ def _prepare_turn(uid, msg):
     safety_lang = "he" if safety_hebrew else "en"
     safety_hotline = "1201" if safety_hebrew else "988"
     kw_risk = detect_crisis_keywords(msg)
-    emergency = detect_overdose(msg)
+    # A plain prescribed-medication statement ("לקחתי את
+    # הכדורים שלי") is not-crisis BY RULE (Tab round 4): it
+    # disarms the overdose detector and skips the classifier —
+    # the classifier's 4-of-9 false escalations end here. A
+    # keyword crisis phrase in the same message still wins.
+    med_safe = is_prescribed_med_statement(msg)
+    emergency = detect_overdose(msg) and not med_safe
     info_q = (not kw_risk) and is_informational_word_question(msg)
     if kw_risk:
         risk = True
@@ -2171,6 +2510,8 @@ def _prepare_turn(uid, msg):
         # consulted — and NO model call may precede the 911 /
         # מד״א 101 reply (Tab round 3: the crisis reply must not
         # wait behind model work).
+        risk = False
+    elif med_safe:
         risk = False
     else:
         # The classifier also runs for informational word questions, so
@@ -2341,10 +2682,20 @@ def _prepare_turn(uid, msg):
             has_prior=user_count > 1, returning=returning,
             summary_date=summary_date,
         ) + GRIEF_NOTE
+        # The writer's own gender (Tab round 4): a woman writing
+        # ("אני מתגעגעת") is addressed as a woman — in the fixed
+        # opening, in the model's instructions, and in the
+        # deterministic cleanup. No signal -> the opening's
+        # gender governs, exactly as rounds 2-3 pinned.
+        writer_gender = detect_writer_gender_he(msg) if hebrew \
+            else None
         if hebrew:
-            gsys += _GRIEF_GENDER_NOTES[detect_grief_kin_he(msg)]
+            gsys += _grief_gender_note(
+                detect_grief_kin_he(msg), writer_gender)
         ctx["grief_hebrew"] = hebrew
-        ctx["grief_opening"] = grief_opening_for(hebrew, msg)
+        ctx["grief_writer_gender"] = writer_gender
+        ctx["grief_opening"] = grief_opening_for(
+            hebrew, msg, writer_gender)
         ctx["fallback_text"] = (
             (ctx["grief_opening"] + " " + GRIEF_FALLBACK_HE) if hebrew
             else (GRIEF_OPENING + " " + GRIEF_FALLBACK)
@@ -2403,7 +2754,15 @@ def _finish_model_turn(ctx, mode, reply, background):
         opening = ctx.get("grief_opening") or (
             GRIEF_OPENING_HE if ctx.get("grief_hebrew")
             else GRIEF_OPENING)
-        body = _grief_clean_body(scrub_field(reply.strip()), opening)
+        body = _grief_clean_body(
+            scrub_field(reply.strip()), opening,
+            ctx.get("grief_writer_gender"))
+        if not body:
+            # The continuation was ONLY a second opening (Tab
+            # round 4) — the reply is the fixed opening + the
+            # grief fallback line, never the opening alone.
+            body = (GRIEF_FALLBACK_HE if ctx.get("grief_hebrew")
+                    else GRIEF_FALLBACK)
         reply = opening + ("\n\n" + body if body else "")
         _save_assistant_msg(uid, reply)
         if ctx["user_count"] == 3 or ctx["user_count"] % 5 == 0:
@@ -2630,7 +2989,8 @@ def _chat_stream_events(uid, msg, background):
                 # payload stays authoritative and replaces the
                 # bubble, exactly as elsewhere.
                 visible, grief_started = _grief_stream_visible(
-                    raw[skip:].lstrip(), opening, grief_started)
+                    raw[skip:].lstrip(), opening, grief_started,
+                    ctx.get("grief_writer_gender"))
                 if grief_frozen or not visible.startswith(
                         emitted_visible):
                     grief_frozen = True
