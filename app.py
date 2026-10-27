@@ -280,6 +280,18 @@ _NEVER_CRISIS_RES = [
     re.compile(r"\b(?:could|would)\s+kill\s+for\s+(?:a|an|some)\b"),
     re.compile(r"\bkill\s+the\s+lights\b"),
     re.compile(r"\bdead\s+tired\b"),
+    # "can't take it anymore" tied to a mundane external cause
+    # ("with this noise upstairs") is overwhelm about the cause,
+    # not a self-harm statement (Part B line 33). Normalization
+    # strips punctuation, so the cause is a short word run that
+    # stops before any word that could open a crisis clause —
+    # a real crisis clause in the same message still fires the
+    # keyword layer on the rest; "with my life / myself" is
+    # self-referential and excluded.
+    re.compile(r"\bcan'?t\s+take\s+(?:it|this)\s+anymore\s+with\s+"
+               r"(?:this|the|my)\b(?!\s*(?:life|myself)\b)"
+               r"(?:\s+(?!i\b|want\b|die\b|kill\b|end\b|hurt\b|"
+               r"myself\b)[a-z]+){0,4}"),
     re.compile(r"\bdrop[-\s]?dead\s+gorgeous\b"),
     re.compile(r"\bi(?:'m| am)\s+(?:so\s+)?dead\s+(?:meat|tired)\b"),
     # A1's explicit list: drowning (in work), at the end of my

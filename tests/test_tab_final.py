@@ -92,6 +92,21 @@ for sel in (".hdr-btn { min-height: 44px", ".chip { min-height: 44px",
     if sel not in idx:
         failures.append("A19 tap-target rule missing: %s" % sel)
 
+# ---- A1: "can't take it anymore" idiom (Part B line 33) --------
+# Tied to a mundane external cause it is overwhelm, not a crisis;
+# bare, self-referential, or followed by a real crisis clause it
+# must NOT be cleared.
+if not solace.is_never_crisis_idiom(
+        "I can't take it anymore with this noise upstairs"):
+    failures.append("A1 line-33 idiom not cleared")
+if solace.is_never_crisis_idiom("I can't take it anymore"):
+    failures.append("A1 bare 'can't take it anymore' wrongly cleared")
+if solace.is_never_crisis_idiom("I can't take it anymore with my life"):
+    failures.append("A1 self-referential cause wrongly cleared")
+if solace.is_never_crisis_idiom(
+        "I can't take it anymore with this noise, I want to die"):
+    failures.append("A1 real crisis clause after idiom wrongly cleared")
+
 # ---- A17: the client busy state --------------------------------
 if "function setChatBusy" not in idx or "send.disabled = busy" not in idx:
     failures.append("A17 Send/mic busy state missing")
