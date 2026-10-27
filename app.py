@@ -43,6 +43,15 @@ CRISIS_PATTERNS = [
     r"end my life",
     r"take my own life",
     r"end it all",
+    # Tab FINAL order A2: a stated plan / intent counts even
+    # without method words — "ending it tonight", "ending it
+    # all", "thinking of ending it … I have a plan". ("Ending
+    # it" about a relationship carries none of these frames.)
+    r"ending it all",
+    r"(?:ending|end) it (?:tonight|today|soon)\b",
+    r"(?:thinking of|planning to|going to) (?:ending|end) it\b",
+    r"לסיים את זה (?:הלילה|היום)",
+    r"חושב לסיים את זה",
     r"suicid\w*",
     r"suisid\w*",
     r"self[\s-]?harm",
@@ -165,6 +174,311 @@ FIXED_CRISIS_RESPONSE_HE = (
     "או לשלוח HOME ל־741741. אם אתה בסכנה מיידית, התקשר למד״א במספר 101. "
     "אני כאן איתך — אתה רוצה לספר לי מה עובר עליך?"
 )
+
+# =====================================================================
+# Tab FINAL ORDER (Oct 27) — the deterministic layer this order adds.
+# Where it conflicts with earlier rounds, THIS section governs.
+# =====================================================================
+
+# ---- A5/A14: the Hebrew crisis reply in three writer-gender versions.
+# The masculine version IS the frozen string above (byte-identical,
+# hash pin unchanged): it already opens in the «טוב שסיפרת לי» family
+# the order's A14 rewrite names. The feminine and neutral versions
+# carry the same content with the writer addressed in their own
+# gender — or, while no gender is known, in forms that address no
+# gender at all (no אתה and no את forms toward the writer).
+FIXED_CRISIS_RESPONSE_HE_F = (
+    "אני ממש שמח שסיפרת לי על זה. חשוב לי לוודא שאת בטוחה עכשיו. "
+    "האם את חושבת לפעול על פי המחשבות האלה הלילה? את לא צריכה לעבור את זה לבד — "
+    "בישראל אפשר להתקשר לער״ן, קו הסיוע הנפשי, במספר 1201 (זמין 24/7). "
+    "בארה״ב אפשר להתקשר או לשלוח הודעה ל־988 (קו החיים למניעת התאבדות, 24/7), "
+    "או לשלוח HOME ל־741741. אם את בסכנה מיידית, התקשרי למד״א במספר 101. "
+    "אני כאן איתך — את רוצה לספר לי מה עובר עלייך?"
+)
+FIXED_CRISIS_RESPONSE_HE_N = (
+    "אני ממש שמח שסיפרת לי על זה. חשוב לי לוודא שהכול בטוח עכשיו. "
+    "האם יש מחשבות לפעול על פי המחשבות האלה הלילה? לא צריך לעבור את זה לבד — "
+    "בישראל אפשר להתקשר לער״ן, קו הסיוע הנפשי, במספר 1201 (זמין 24/7). "
+    "בארה״ב אפשר להתקשר או לשלוח הודעה ל־988 (קו החיים למניעת התאבדות, 24/7), "
+    "או לשלוח HOME ל־741741. אם יש סכנה מיידית, צריך להתקשר למד״א במספר 101. "
+    "אני כאן — אפשר לספר לי מה עובר עכשיו?"
+)
+
+
+def crisis_reply_he(gender):
+    """The fixed Hebrew crisis reply for the writer's stored
+    gender (A5): 'f' feminine, 'm' masculine (the frozen string),
+    anything else the neutral version."""
+    if gender == "f":
+        return FIXED_CRISIS_RESPONSE_HE_F
+    if gender == "m":
+        return FIXED_CRISIS_RESPONSE_HE
+    return FIXED_CRISIS_RESPONSE_HE_N
+
+
+# ---- A4: normalization used by every new detector below. Matching
+# only — the person's own words are never rewritten by it.
+_NIQQUD_RE = re.compile(r"[\u0591-\u05C7]")
+_REPEAT_LETTER_RE = re.compile(r"([a-zA-Z\u0590-\u05FF])\1{2,}")
+
+
+def _norm_match(text):
+    """Lowercase, niqqud stripped, punctuation folded to spaces,
+    repeated letters collapsed, slang expanded (kms / unalive) —
+    so a typo, a stretched letter or a slang spelling of a crisis
+    word still matches the detectors (A4)."""
+    t = _NIQQUD_RE.sub("", (text or "").lower())
+    t = (t.replace("״", '"').replace("׳", "'")
+         .replace("’", "'").replace("‘", "'"))
+    t = _REPEAT_LETTER_RE.sub(r"\1", t)
+    t = re.sub(r"[^\w\s']", " ", t, flags=re.UNICODE)
+    t = re.sub(r"\s+", " ", t).strip()
+    t = re.sub(r"\bkms\b", "kill myself", t)
+    t = re.sub(r"\bunalive\s+myself\b", "kill myself", t)
+    t = re.sub(r"\bunalive\b", "suicide", t)
+    return t
+
+
+# ---- A1: NEVER-CRISIS idioms. Checked BEFORE the classifier (and
+# before the keyword layer's verdict is trusted): a message that is
+# plainly an idiom, a joke frame, a song lyric, a quote, or a
+# school / work topic is NOT a crisis, however dark its words are.
+# Crisis turns on only on a stated intent, wish, plan or means of
+# self-harm in the person's own voice.
+_NEVER_CRISIS_RES = [
+    # English idiom / hyperbole frames
+    re.compile(r"\bdying\s+(?:of\s+)?(?:laughter|laughing)\b"),
+    re.compile(r"\bi(?:'m| am)\s+dying\s+(?:here\s+)?(?:laughing|of\s+laughter)\b"),
+    re.compile(r"\bwant\s+to\s+die\s+laughing\b"),
+    re.compile(r"\bgoing\s+to\s+die\s+laughing\b"),
+    re.compile(r"\bthis\s+(?:song|track|beat|video)\s+is\s+killing\s+me\b"),
+    re.compile(r"\bkill(?:ing)?\s+me\s+(?:laughing|with\s+laughter)\b"),
+    re.compile(r"\b(?:could|would)\s+kill\s+for\s+(?:a|an|some)\b"),
+    re.compile(r"\bkill\s+the\s+lights\b"),
+    re.compile(r"\bdead\s+tired\b"),
+    re.compile(r"\bdrop[-\s]?dead\s+gorgeous\b"),
+    re.compile(r"\bi(?:'m| am)\s+(?:so\s+)?dead\s+(?:meat|tired)\b"),
+    # joke / lyric / quote / school frames around dark words
+    re.compile(r"\b(?:lyric|song|quote|quoting|homework|essay|assignment|"
+               r"schoolwork|book report)\b[^.!?\n]{0,60}?"
+               r"\b(?:suicid\w*|kill\s+(?:myself|himself|herself|themselves)|die)\b"),
+    re.compile(r"\b(?:suicid\w*|kill\s+myself)\b[^.!?\n]{0,60}?"
+               r"\b(?:lyric|song|quote|homework|essay|assignment|school)\b"),
+    re.compile(r"\bit\s+was\s+a\s+joke\b|\bi\s+was\s+joking\b|"
+               r"\bjust\s+joking\b|\bjust\s+kidding\b"),
+    # Hebrew idiom frames: laughing to death, "I'm finished" as
+    # overwhelm, and the same joke / school frames.
+    re.compile(r"(?:אני\s+)?מת\s+(?:מ)?צחוק"),
+    re.compile(r"מרגיש\s+שאני\s+מת\s+מצחוק"),
+    re.compile(r"כשאני\s+צוחק\s+אני\s+מרגיש\s+שאני\s+מת"),
+    re.compile(r"אני\s+גמור\s*$|קשה\s+לי\s+אני\s+גמור"),
+    re.compile(r"(?:שיר|מילים\s+של\s+שיר|ציטוט|שיעורי\s+בית|עבודה\s+לבית\s+הספר|חיבור)"
+               r"[^.!?\n]{0,40}?(?:להתאבד|התאבדות|למות|להרוג\s+את\s+עצמי)"),
+    re.compile(r"(?:זה\s+היה\s+)?בצחוק|רק\s+צחקתי|סתם\s+צחקתי"),
+]
+
+
+def is_never_crisis_idiom(text):
+    """A1: True when the message is plainly an idiom / joke / lyric /
+    quote / school frame — never a crisis, whatever its words.
+    The idiom must account for the dark words: if crisis keywords
+    remain OUTSIDE the idiom's span, the message is not cleared."""
+    n = _norm_match(text)
+    matched = False
+    rest = n
+    for rx in _NEVER_CRISIS_RES:
+        if rx.search(rest):
+            matched = True
+            rest = rx.sub(" ", rest)
+    if not matched:
+        return False
+    return not detect_crisis_keywords(rest)
+
+
+# ---- A3: MEDICAL EMERGENCY — a deterministic check of its own,
+# run BEFORE the suicide check. First line is the call to 911 /
+# מד״א 101; no "tonight?" question, banner on, under a second
+# (no model call anywhere near it).
+_MEDICAL_RES = [
+    # can't breathe / choking
+    re.compile(r"\bcan'?t\s+breathe\b|\bcannot\s+breathe\b|"
+               r"\bstruggling\s+to\s+breathe\b|\bi'?m\s+choking\b"),
+    re.compile(r"לא\s+(?:מצליח|יכול)\s+לנשום|קשה\s+לי\s+לנשום|אני\s+נחנק"),
+    # chest pain
+    re.compile(r"\bchest\s+pain\b|\bpain\s+in\s+my\s+chest\b|"
+               r"\bchest\s+(?:hurts|is\s+tight)\b"),
+    re.compile(r"כאב\s+(?:ב)?חזה|כאבים\s+בחזה|לחץ\s+בחזה"),
+    # unconscious / won't wake
+    re.compile(r"\bunconscious\b|\bpassed\s+out\b|"
+               r"\bwon'?t\s+wake\s+up\b|\bnot\s+waking\s+up\b|"
+               r"\bisn'?t\s+waking\s+up\b"),
+    re.compile(r"מחוסר\s+הכרה|לא\s+מתעורר|התעלף|התעלפה"),
+    # seizure
+    re.compile(r"\bseizure\b|\bconvuls"),
+    re.compile(r"פרכוס|עוויתות"),
+    # heavy bleeding
+    re.compile(r"\bbleeding\s+(?:heavily|badly|a\s+lot)\b|"
+               r"\bwon'?t\s+stop\s+bleeding\b|\bblood\s+everywhere\b"),
+    re.compile(r"דימום\s+חזק|מדמם\s+הרבה|הדימום\s+לא\s+עוצר"),
+    # severe allergic reaction
+    re.compile(r"\ballergic\s+reaction\b|\banaphylax|"
+               r"\bthroat\s+is\s+closing\b|\blips?\s+(?:are\s+)?swelling\b"),
+    re.compile(r"תגובה\s+אלרגית|הגרון\s+נסגר|השפתיים\s+מתנפחות"),
+    # overdose as a word (completed ingestion is detected separately)
+    re.compile(r"\boverdose\b|\boverdosed\b"),
+    re.compile(r"מנת\s+יתר|הרעלת\s+תרופות"),
+]
+
+
+def detect_medical_emergency(text):
+    """A3: 'ingestion' for a completed ingestion / overdose,
+    'medical' for another medical emergency, else None. Runs on
+    the normalized text so typos and slang cannot slip past it.
+    A plain prescribed-medication statement is guarded out by the
+    caller, exactly as on the overdose path."""
+    n = _norm_match(text)
+    if any(rx.search(n) for rx in _MEDICAL_RES):
+        # An ingestion word rides the medical path too — the
+        # Poison Control line joins the reply below.
+        if re.search(r"\boverdose\b|\boverdosed\b", n) \
+                or "מנת יתר" in n or "הרעלת תרופות" in n:
+            return "ingestion"
+        return "medical"
+    if detect_overdose(text):
+        return "ingestion"
+    return None
+
+
+MEDICAL_RESPONSE = (
+    "Call 911 right now — this sounds like a medical emergency. "
+    "Please make that call now; I'll be here when you're able to "
+    "come back."
+)
+MEDICAL_RESPONSE_INGESTION = (
+    "Call 911 right now — this sounds like a medical emergency. "
+    "You can also call Poison Control at 1-800-222-1222. Please "
+    "call now; I'll be here when you're able to come back."
+)
+_MEDICAL_HE = {
+    "m": (
+        "התקשר למד״א במספר 101 עכשיו ממש — זה נשמע כמו מצב חירום "
+        "רפואי. בבקשה להתקשר עכשיו — אני כאן כשאפשר יהיה לחזור."
+    ),
+    "f": (
+        "התקשרי למד״א במספר 101 עכשיו ממש — זה נשמע כמו מצב חירום "
+        "רפואי. בבקשה להתקשר עכשיו — אני כאן כשאפשר יהיה לחזור."
+    ),
+    "n": (
+        "צריך להתקשר למד״א במספר 101 עכשיו ממש — זה נשמע כמו מצב "
+        "חירום רפואי. בבקשה להתקשר עכשיו — אני כאן כשאפשר יהיה לחזור."
+    ),
+}
+
+
+def medical_reply(kind, hebrew, gender):
+    if hebrew:
+        return _MEDICAL_HE.get(gender or "", _MEDICAL_HE["n"])
+    return (MEDICAL_RESPONSE_INGESTION if kind == "ingestion"
+            else MEDICAL_RESPONSE)
+
+
+# ---- A2: clarification / denial. When a latched person clarifies
+# ("I was joking", "I don't want to die", "I'm safe"), the latch
+# and the banner come OFF and the reply is this brief fixed line —
+# no check-in question, no crisis text.
+CLARIFY_REPLY = (
+    "Thank you for telling me — I'm glad to hear that. "
+    "I'm here whenever you want to talk."
+)
+_CLARIFY_HE = {
+    "m": "טוב שסיפרת לי — אני שמח לשמוע. אני כאן מתי שתרצה לדבר.",
+    "f": "טוב שסיפרת לי — אני שמח לשמוע. אני כאן מתי שתרצי לדבר.",
+    "n": "טוב שסיפרת לי — אני שמח לשמוע. אני כאן בכל זמן שמתאים לדבר.",
+}
+
+# The ONE gentle check-in owed on the turn after a true crisis
+# (A2): prepended by code to that turn's normal reply, once.
+CHECKIN_LINE = "I'm glad you're here — how are you doing right now?"
+_CHECKIN_HE = {
+    "m": "אני שמח שאנחנו מדברים — איך אתה מרגיש עכשיו?",
+    "f": "אני שמח שאנחנו מדברים — איך את מרגישה עכשיו?",
+    "n": "אני שמח שאנחנו מדברים — איך ההרגשה עכשיו?",
+}
+
+_CLARIFY_RES = [
+    re.compile(r"\bi\s+(?:was|am)\s+(?:just\s+)?joking\b|"
+               r"\bi\s+was\s+kidding\b|\bjust\s+kidding\b", re.I),
+    re.compile(r"\bi\s+don'?t\s+(?:mean|want)\s+"
+               r"(?:it|to\s+die|that)\b", re.I),
+    re.compile(r"\bi\s+didn'?t\s+mean\s+it\b", re.I),
+    re.compile(r"\bi(?:'m| am)\s+not\s+(?:suicidal|going\s+to\s+"
+               r"(?:hurt|kill)\s+myself)\b", re.I),
+    re.compile(r"\bi\s+won'?t\s+(?:do\s+anything|hurt\s+myself)\b",
+               re.I),
+    re.compile(r"\bi(?:'m| am)\s+(?:safe|fine|okay|ok)\b", re.I),
+    re.compile(r"\bnot\s+like\s+that\b", re.I),
+    re.compile(r"אני\s+לא\s+מתכוון|לא\s+באמת|אני\s+בטוח|"
+               r"אני\s+לא\s+אעשה\s+(?:כלום|שום\s+דבר)|"
+               r"התכוונתי\s+בצחוק|אני\s+בסדר"),
+]
+
+
+def detect_clarification(text):
+    """A2: the person walks the crisis back — a joke frame, a
+    denial of intent, or an explicit 'I'm safe / I'm fine'."""
+    if detect_retraction(text):
+        return True
+    n = _norm_match(text)
+    return any(rx.search(n) for rx in _CLARIFY_RES)
+
+
+# A latched turn that is only a fragment or a continuation of the
+# crisis ("I don't know what to do", "ok", "yes") stays IN the
+# crisis flow; anything with real new content is the person moving
+# to a new topic (A2), which clears the latch.
+_LATCH_FRAGMENT_RES = [
+    re.compile(r"^\s*(?:i\s+don'?t\s+know.*|i\s+dunno|ok|okay|yes|"
+               r"yeah|no|nope|maybe|i\s+guess.*|help.*|please.*|"
+               r"thanks?.*|thank\s+you.*)\s*[.!?]*\s*$", re.I),
+    re.compile(r"^\s*(?:אני\s+לא\s+יודע.*|לא\s+יודע.*|טוב|כן|לא|"
+               r"אולי|עזרה.*|בבקשה.*|תודה.*)\s*[.!?…]*\s*$"),
+]
+
+
+def _is_latch_fragment(text):
+    n = (text or "").strip()
+    if len(n.split()) <= 2:
+        return True
+    return any(rx.search(n) for rx in _LATCH_FRAGMENT_RES)
+
+
+# ---- A13: a content-free greeting gets the TEMPLATE reply — the
+# person's name when known, the ONE fixed self-description, and
+# one open question. Never a model improvisation about the person.
+_GREETING_RE = re.compile(
+    r"^\s*(?:hi+|hello|hey+|שלום|היי+|הי|מה\s+קורה|מה\s+נשמע|"
+    r"what'?s\s+up|good\s+(?:morning|evening|afternoon))"
+    r"(?:\s+(?:there|solace|סולאס))?\s*[.!?]*\s*$", re.I)
+
+GREETING_SELF_EN = "an AI companion for reflection and self-help"
+GREETING_SELF_HE = "מלווה בינה מלאכותית להרהור ולתמיכה עצמית"
+
+
+def is_content_free_greeting(text):
+    return bool(_GREETING_RE.search((text or "").strip()))
+
+
+def greeting_reply(name, hebrew, gender):
+    if hebrew:
+        who = (" " + name) if name else ""
+        q = {"m": "מה עובר עליך היום?",
+             "f": "מה עובר עלייך היום?",
+             "n": "מה חדש היום?"}.get(gender or "", "מה חדש היום?")
+        return "שלום%s — אני סולאס, %s. %s" % (who, GREETING_SELF_HE, q)
+    who = (" " + name) if name else ""
+    return ("Hi%s — I'm Solace, %s. What's on your mind today?"
+            % (who, GREETING_SELF_EN))
+
 
 # Completed overdose / poisoning (Tab ruling, Oct 26): someone who
 # has ALREADY swallowed pills is a medical emergency — the reply
@@ -713,13 +1027,605 @@ def _referral_present(reply, hebrew):
     return False
 
 
-def _ensure_referral(reply, hebrew):
+def _ensure_referral(reply, hebrew, gender=None):
     """Guarantee the approved referral line is present (in the
     message's language) without disturbing anything else."""
     if _referral_present(reply, hebrew):
         return reply
-    return reply + "\n\n" + (
-        REFERRAL_APPEND_HE if hebrew else REFERRAL_APPEND_EN)
+    return reply + "\n\n" + _referral_append(hebrew, gender)
+
+
+# ---- Tab FINAL order A10: on the labeled paths the referral line
+# is added BY CODE, as its own separate sentence, exactly once.
+# Any model sentence that refers to a professional is removed
+# WHOLE and replaced by the line — code never splices words into
+# a sentence (the "לפנות ל רופא" bug class).
+REFERRAL_APPEND_HE_F = (
+    "אם תרצי תמיכה מבחוץ, אפשר לדבר על זה עם "
+    "רופא או איש מקצוע מורשה בתחום בריאות הנפש."
+)
+REFERRAL_APPEND_HE_N = (
+    "אם מתאים, אפשר לדבר על זה עם "
+    "רופא או איש מקצוע מורשה בתחום בריאות הנפש."
+)
+
+
+def _referral_append(hebrew, gender=None):
+    if not hebrew:
+        return REFERRAL_APPEND_EN
+    if gender == "f":
+        return REFERRAL_APPEND_HE_F
+    if gender == "m":
+        return REFERRAL_APPEND_HE
+    return REFERRAL_APPEND_HE_N
+
+
+_PROF_SENTENCE_RE = re.compile(
+    r"(therapist|psychologist|counsel|psychiatr|licensed\s+"
+    r"professional|mental\s+health\s+professional|"
+    r"\ba\s+professional\b|רופא|מטפל|מטפלת|פסיכולוג|מוסמך|"
+    r"איש\s+מקצוע|אשת\s+מקצוע)", re.I)
+
+
+def _append_referral_once(reply, hebrew, gender=None):
+    """A10: strip every sentence that refers to a professional,
+    then append the approved referral line as its own sentence,
+    exactly once, at the end."""
+    segs = _sentence_segments(reply or "")
+    kept = [(s, sep) for s, sep in segs
+            if not _PROF_SENTENCE_RE.search(s)]
+    base = "".join(s + sep for s, sep in kept).strip()
+    line = _referral_append(hebrew, gender)
+    return (base + "\n\n" + line) if base else line
+
+
+# ---- Tab FINAL order A8/A9: ONE intent classification for every
+# message; each label has ONE approved deterministic answer.
+# Deterministic patterns first (below + the identity / voice /
+# availability detectors), then the model classifier's intent.
+_MEDICATION_Q_RES = [
+    re.compile(r"\b(?:should|can|may)\s+i\s+(?:take|stop|start|"
+               r"increase|decrease|change|skip)\b[^.!?\n]{0,40}?"
+               r"\b(?:medication|medicine|pill|dose|mg|prozac|zoloft|"
+               r"lexapro|xanax|ritalin|adderall|ssri|antidepressant)",
+               re.I),
+    re.compile(r"\bhow\s+(?:many|much)\b[^.!?\n]{0,30}?"
+               r"\b(?:mg|pills?|tablets?|dose)\b", re.I),
+    re.compile(r"\bwhat\s+dose\b|\bdosage\b|\bdouble\s+my\s+dose\b",
+               re.I),
+    re.compile(r"\bcan\s+i\s+stop\s+(?:taking|my)\b", re.I),
+    re.compile(r"(?:להפסיק|לעצור|להעלות|להוריד|לשנות)\s+"
+               r"(?:את\s+)?(?:התרופה|המינון|כדורים)"),
+    re.compile(r"כמה\s+(?:מ\"ג|מ״ג|כדורים|מיליגרם)"),
+    re.compile(r"(?:מינון|תרופה)[^.!?\n]{0,20}?"
+               r"(?:להפסיק|להעלות|להוריד|לשנות|לקחת)"),
+]
+
+MEDICATION_ANSWER = (
+    "No — I can't advise on medication: not on doses, not on "
+    "starting or stopping, and not on whether a medication is "
+    "right for you. Decisions like that belong with a doctor who "
+    "knows you."
+)
+MEDICATION_ANSWER_HE = (
+    "לא — אני לא יכול לייעץ בנוגע לתרופות: לא על מינונים, לא על "
+    "התחלה או הפסקה של תרופה, ולא אם תרופה מתאימה. החלטות כאלה "
+    "שייכות לרופא שמכיר את המצב."
+)
+
+SEEKING_ANSWER = (
+    "Reaching out for support is a good step, and I'm glad you're "
+    "thinking about it. I can listen here and help you think "
+    "things through — and for anything serious or ongoing, a "
+    "person who knows your situation can help in ways I can't."
+)
+SEEKING_ANSWER_HE = (
+    "לפנות לתמיכה זה צעד טוב, ואני שמח שזה עולה. אני יכול להקשיב "
+    "כאן ולעזור לחשוב על הדברים — ובכל דבר רציני או מתמשך, אדם "
+    "שמכיר את המצב יכול לעזור בדרכים שאני לא יכול."
+)
+
+HUMAN_ANSWER = (
+    "No — I'm not a person. I'm Solace, an AI companion for "
+    "reflection and self-help."
+)
+HUMAN_ANSWER_HE = (
+    "לא — אני לא בן אדם. אני סולאס, מלווה בינה מלאכותית להרהור "
+    "ולתמיכה עצמית."
+)
+
+# The ONE approved privacy sentence (kept exactly as approved);
+# the referral line joins it by code, per A10.
+PRIVACY_ANSWER = (
+    "Your chats aren't shared with other people or used to "
+    "advertise to you. See the privacy page for details."
+)
+PRIVACY_ANSWER_HE = (
+    "השיחות שלך לא משותפות עם אנשים אחרים ולא משמשות כדי לפרסם "
+    "לך. לפרטים נוספים, ראו את עמוד הפרטיות."
+)
+
+# A12: the approved availability answer — no claim about Solace's
+# hours at all; the hotlines' hours may be stated, and are.
+AVAILABILITY_ANSWER_V2 = (
+    "I don't keep set hours, and I can't promise to be here at "
+    "any specific time — I'm Solace, an AI companion for "
+    "reflection and self-help. If you need support right away, "
+    "the 988 line in the US and ERAN at 1201 in Israel are "
+    "answered day and night."
+)
+_AVAILABILITY_HE = {
+    "m": (
+        "אין לי שעות קבועות, ואני לא יכול להבטיח להיות כאן בזמן "
+        "מסוים — אני סולאס, מלווה בינה מלאכותית להרהור ולתמיכה "
+        "עצמית. אם צריך תמיכה מיד, קו 988 בארה״ב וער״ן 1201 "
+        "בישראל עונים ביום ובלילה."
+    ),
+    "f": (
+        "אין לי שעות קבועות, ואני לא יכול להבטיח להיות כאן בזמן "
+        "מסוים — אני סולאס, מלווה בינה מלאכותית להרהור ולתמיכה "
+        "עצמית. אם צריך תמיכה מיד, קו 988 בארה״ב וער״ן 1201 "
+        "בישראל עונים ביום ובלילה."
+    ),
+    "n": (
+        "אין לי שעות קבועות, ואי אפשר להבטיח שאהיה כאן בזמן "
+        "מסוים — אני סולאס, מלווה בינה מלאכותית להרהור ולתמיכה "
+        "עצמית. אם צריך תמיכה מיד, קו 988 בארה״ב וער״ן 1201 "
+        "בישראל עונים ביום ובלילה."
+    ),
+}
+
+# Labels whose approved answer carries the referral line (A10).
+_REFERRAL_LABELS = {
+    "therapist", "replace", "licensed", "diagnose", "medication",
+    "seeking", "human", "privacy",
+}
+
+
+def detect_medication_question(text):
+    n = _norm_match(text)
+    return any(rx.search(n) for rx in _MEDICATION_Q_RES)
+
+
+_HUMAN_Q_RES = [
+    re.compile(r"\bare\s+you\s+(?:a\s+)?(?:real\s+)?"
+               r"(?:person|human)\b", re.I),
+    re.compile(r"\bare\s+you\s+real\b", re.I),
+    re.compile(r"\bam\s+i\s+talking\s+to\s+(?:a\s+)?"
+               r"(?:real\s+)?(?:person|human|robot|bot|machine)\b",
+               re.I),
+    re.compile(r"\bwho\s+am\s+i\s+(?:really\s+)?talking\s+to\b",
+               re.I),
+    re.compile(r"(?:אתה|את)\s+(?:בן\s+אדם|אדם\s+אמיתי|"
+               r"איש\s+אמיתי)\s*\??"),
+    re.compile(r"(?:עם\s+מי|מול\s+מי)\s+אני\s+(?:מדבר|מדברת)"),
+]
+
+_PRIVACY_Q_RES = [
+    re.compile(r"\bwho\s+(?:can|will|might)\s+(?:see|read)\s+"
+               r"(?:this|my|our)\b", re.I),
+    re.compile(r"\bis\s+this\s+(?:private|confidential|secret)\b",
+               re.I),
+    re.compile(r"\bprivacy\b[^.!?\n]{0,30}\?", re.I),
+    re.compile(r"\bdo\s+you\s+(?:share|sell)\s+(?:my|our)\b", re.I),
+    re.compile(r"\bcan\s+anyone\s+(?:see|read)\b", re.I),
+    re.compile(r"מי\s+(?:יכול|עלול)\s+(?:לראות|לקרוא)"),
+    re.compile(r"(?:האם|אם)\s+זה\s+(?:פרטי|חסוי)"),
+    re.compile(r"מי\s+רואה\s+את\s+זה"),
+]
+
+
+def _question_shaped(text):
+    """Cheap gate for the model intent backstop: a question mark,
+    a question-word opening, or a short message."""
+    t = (text or "").strip()
+    if "?" in t or "？" in t:
+        return True
+    if len(t.split()) <= 8:
+        return True
+    return bool(re.match(
+        r"(?:are|can|could|do|does|is|should|would|will|what|who|"
+        r"how|when|why|האם|אפשר|כמה|מה|מי|למה|מתי)\b", t, re.I))
+
+
+# Unambiguous first names for gender inference (A5: Part B's own
+# cases — a writer named מיכל is addressed as a woman, דני as a
+# man — even before a first-person form appears). Unisex names
+# are deliberately absent: no signal, neutral forms.
+_NAME_GENDER_F = {
+    "מיכל", "שרה", "רחל", "לאה", "נועה", "יעל", "תמר", "מרים",
+    "חנה", "אסתר", "רבקה", "דבורה", "אביגיל", "הילה",
+    "Michal", "Sarah", "Rachel", "Leah",
+}
+_NAME_GENDER_M = {
+    "דני", "דוד", "משה", "אברהם", "יעקב", "יוסף", "אהרון",
+    "שלמה", "יצחק", "אלון", "אבי", "יוסי", "חיים", "אלי",
+    "Danny", "David", "Moshe", "Daniel",
+}
+
+
+def _gender_from_name(name):
+    n = (name or "").strip()
+    if not n:
+        return None
+    first = n.split()[0]
+    if first in _NAME_GENDER_F:
+        return "f"
+    if first in _NAME_GENDER_M:
+        return "m"
+    return None
+
+
+def detect_intent_label(text):
+    """The deterministic half of the ONE intent classifier (A8):
+    a fixed label or None. The model half runs in the same call
+    as the risk classifier when these patterns don't fire."""
+    t = text or ""
+    identity_q = detect_identity_question(t)
+    if identity_q == "therapy":
+        # "Can you be my therapist?" is REPLACE; "Is this
+        # therapy?" is THERAPIST — both take the plain No.
+        if re.search(r"\bbe\s+my\b|\bbecome\s+my\b|להיות\s+"
+                     r"(?:ה)?(?:מטפל|פסיכולוג)\s+שלי", t, re.I):
+            return "replace"
+        return "therapist"
+    if identity_q == "professional":
+        return "licensed"
+    if identity_q == "diagnose":
+        return "diagnose"
+    if detect_medication_question(t):
+        return "medication"
+    if any(rx.search(t) for rx in _HUMAN_Q_RES):
+        return "human"
+    if any(rx.search(t) for rx in _PRIVACY_Q_RES):
+        return "privacy"
+    if detect_voice_question(t):
+        return "voice"
+    if detect_availability_question(t):
+        return "availability"
+    if detect_need_professional(t):
+        return "seeking"
+    return None
+
+
+def label_answer(label, hebrew, gender=None, name=None):
+    """The ONE approved deterministic answer for a label (A8),
+    with the referral line appended by code where A10 requires
+    it. Returns None for an unknown label."""
+    if label == "therapist":
+        ans = IDENTITY_ANSWERS[("therapy", hebrew)]
+        if hebrew:
+            ans = _gendered_identity_he("therapy", gender)
+    elif label == "replace":
+        ans = (
+            "לא — אני לא יכול להיות המטפל שלך. אני סולאס, מלווה "
+            "בינה מלאכותית להרהור ולתמיכה עצמית, ואני לא תופס "
+            "מקום של איש מקצוע."
+            if hebrew else
+            "No — I can't be your therapist. I'm Solace, an AI "
+            "companion for reflection and self-help, and I don't "
+            "take the place of a professional."
+        )
+        if hebrew:
+            ans = _gendered_identity_he("replace", gender)
+    elif label == "licensed":
+        ans = IDENTITY_ANSWERS[("professional", hebrew)]
+        if hebrew:
+            ans = _gendered_identity_he("licensed", gender)
+    elif label == "diagnose":
+        if hebrew:
+            ans = _gendered_identity_he("diagnose", gender)
+        else:
+            # Referral-free form: the line is appended by code
+            # below, exactly once (A10) — the IDENTITY_ANSWERS
+            # original embeds its own referral sentence.
+            ans = (
+                "No. I can't tell you whether you have a "
+                "condition or what it might be — I'm Solace, an "
+                "AI companion for reflection and self-help."
+            )
+    elif label == "medication":
+        ans = MEDICATION_ANSWER_HE if hebrew else MEDICATION_ANSWER
+    elif label == "seeking":
+        ans = SEEKING_ANSWER_HE if hebrew else SEEKING_ANSWER
+    elif label == "human":
+        ans = HUMAN_ANSWER_HE if hebrew else HUMAN_ANSWER
+    elif label == "privacy":
+        ans = PRIVACY_ANSWER_HE if hebrew else PRIVACY_ANSWER
+    elif label == "voice":
+        ans = VOICE_ANSWER_HE if hebrew else VOICE_ANSWER
+        if hebrew:
+            ans = _voice_answer_he(gender)
+    elif label == "availability":
+        ans = (_AVAILABILITY_HE.get(gender or "", _AVAILABILITY_HE["n"])
+               if hebrew else AVAILABILITY_ANSWER_V2)
+    else:
+        return None
+    if label in _REFERRAL_LABELS:
+        # A10: the referral line is added BY CODE as its own
+        # sentence, exactly once. The label templates above are
+        # referral-free by construction, so this is a plain
+        # append — never a splice, never a strip.
+        ans = ans + "\n\n" + _referral_append(hebrew, gender)
+    return ans
+
+
+# A9 output guard: a number + unit about a substance in a model
+# reply means dosing content slipped through — the whole reply
+# is replaced by the deterministic medication answer.
+_DOSE_ADVICE_RE = re.compile(
+    r"\b\d+(?:\.\d+)?\s*(?:mg|milligrams?|ml|grams?|tablets?|"
+    r"pills?|capsules?|doses?)\b", re.I)
+_SUBSTANCE_RE = re.compile(
+    r"(medication|medicine|pill|tablet|dose|dosage|drug|prozac|"
+    r"zoloft|lexapro|xanax|ritalin|adderall|antidepressant|ssri|"
+    r"תרופ|כדור|מינון|מ\"ג|מ״ג)", re.I)
+
+
+def has_dose_advice(reply):
+    return bool(_DOSE_ADVICE_RE.search(reply or "")
+                and _SUBSTANCE_RE.search(reply or ""))
+
+
+# A12 output guard: a sentence claiming SOLACE is available any
+# time / 24-7 / day or night never ships. Sentences about a
+# hotline's hours are fine and stay.
+_AVAIL_CLAIM_RE = re.compile(
+    r"\b(?:i'?m|i\s+am|solace\s+is)\b[^.!?\n]{0,40}?"
+    r"\b(?:24\s*/\s*7|any\s?time|always\s+(?:available|here|on)|"
+    r"whenever\s+you\s+(?:need|want)|day\s+or\s+night|"
+    r"around\s+the\s+clock)\b", re.I)
+_AVAIL_CLAIM_HE_RE = re.compile(
+    r"(?:אני|סולאס)[^.!?\n]{0,30}?"
+    r"(?:זמין\s+תמיד|בכל\s+שעה|מסביב\s+לשעון|מתי\s+שתרצה|"
+    r"זמינה\s+תמיד)")
+
+
+def strip_availability_claims(reply):
+    if not reply:
+        return reply
+    segs = _sentence_segments(reply)
+    kept = []
+    for s, sep in segs:
+        if re.search(r"988|1201|741741|hotline|ער\"ן|ער״ן|קו\s", s):
+            kept.append((s, sep))
+            continue
+        if _AVAIL_CLAIM_RE.search(s) or _AVAIL_CLAIM_HE_RE.search(s):
+            continue
+        kept.append((s, sep))
+    if len(kept) == len(segs):
+        return reply
+    return "".join(s + sep for s, sep in kept).strip()
+
+
+# ---- A5: gendered versions of the fixed Hebrew identity answers.
+# Only the writer-addressed forms change; Solace's own forms stay
+# masculine (A6). Where a version needs no gendered form, the
+# neutral wording serves every gender.
+_IDENTITY_HE_GENDERED = {
+    "therapy": {
+        "m": ("לא — זה לא טיפול. אני סולאס, מלווה בינה מלאכותית "
+              "להרהור ולתמיכה עצמית, כאן כדי לדבר איתך על מה "
+              "שעובר עליך."),
+        "f": ("לא — זה לא טיפול. אני סולאס, מלווה בינה מלאכותית "
+              "להרהור ולתמיכה עצמית, כאן כדי לדבר איתך על מה "
+              "שעובר עלייך."),
+        "n": ("לא — זה לא טיפול. אני סולאס, מלווה בינה מלאכותית "
+              "להרהור ולתמיכה עצמית, כאן כדי לדבר על מה שעובר "
+              "עכשיו."),
+    },
+    "replace": {
+        "m": ("לא — אני לא יכול להיות המטפל שלך. אני סולאס, "
+              "מלווה בינה מלאכותית להרהור ולתמיכה עצמית, ואני "
+              "לא תופס מקום של איש מקצוע."),
+        "f": ("לא — אני לא יכול להיות המטפל שלך. אני סולאס, "
+              "מלווה בינה מלאכותית להרהור ולתמיכה עצמית, ואני "
+              "לא תופס מקום של איש מקצוע."),
+        "n": ("לא — אני לא יכול להיות המטפל שלך. אני סולאס, "
+              "מלווה בינה מלאכותית להרהור ולתמיכה עצמית, ואני "
+              "לא תופס מקום של איש מקצוע."),
+    },
+    "licensed": {
+        "m": ("לא. אני סולאס — מלווה בינה מלאכותית להרהור "
+              "ולתמיכה עצמית, לא איש מקצוע מורשה."),
+        "f": ("לא. אני סולאס — מלווה בינה מלאכותית להרהור "
+              "ולתמיכה עצמית, לא איש מקצוע מורשה."),
+        "n": ("לא. אני סולאס — מלווה בינה מלאכותית להרהור "
+              "ולתמיכה עצמית, לא איש מקצוע מורשה."),
+    },
+    "diagnose": {
+        "m": ("לא. אני לא יכול לומר אם יש לך מצב כלשהו או מה "
+              "הוא — אני סולאס, מלווה בינה מלאכותית להרהור "
+              "ולתמיכה עצמית."),
+        "f": ("לא. אני לא יכול לומר אם יש לך מצב כלשהו או מה "
+              "הוא — אני סולאס, מלווה בינה מלאכותית להרהור "
+              "ולתמיכה עצמית."),
+        "n": ("לא. אני לא יכול לומר אם יש מצב כלשהו או מה הוא — "
+              "אני סולאס, מלווה בינה מלאכותית להרהור ולתמיכה "
+              "עצמית."),
+    },
+}
+
+
+def _gendered_identity_he(kind, gender):
+    versions = _IDENTITY_HE_GENDERED.get(kind)
+    if not versions:
+        return IDENTITY_ANSWERS[(kind, True)]
+    return versions.get(gender or "", versions["n"])
+
+
+def _voice_answer_he(gender):
+    """A5: the Hebrew voice answer — the voice-privacy line's
+    writer-addressed tail follows the writer's gender; the
+    masculine version is the Tab-pinned string, byte-identical."""
+    if gender == "f":
+        return VOICE_ANSWER_HE.replace(
+            "של מה שאתה אומר", "של מה שאת אומרת")
+    if gender == "m":
+        return VOICE_ANSWER_HE
+    return VOICE_ANSWER_HE.replace(
+        "של מה שאתה אומר", "של מה שנאמר")
+
+
+# ---- A5 morphology: a paradigm of second-person present-tense
+# pairs (masculine, feminine, infinitive). The post-generation
+# check works off the PARADIGM, not phrase lists: any sentence
+# whose second-person forms belong to the wrong gender is
+# rewritten through the paradigm; for a writer of unknown gender
+# the forms are neutralized through the infinitive frame.
+_HE_VERB_PARADIGM = [
+    # (masculine, feminine, infinitive)
+    ("מרגיש", "מרגישה", "להרגיש"), ("צריך", "צריכה", "להצטרך"),
+    ("יכול", "יכולה", "להיות מסוגל"), ("חושב", "חושבת", "לחשוב"),
+    ("יודע", "יודעת", "לדעת"), ("נמצא", "נמצאת", "להימצא"),
+    ("מסוגל", "מסוגלת", "להיות מסוגל"), ("אומר", "אומרת", "לומר"),
+    ("שואל", "שואלת", "לשאול"), ("כותב", "כותבת", "לכתוב"),
+    ("מדבר", "מדברת", "לדבר"), ("מבקש", "מבקשת", "לבקש"),
+    ("מספר", "מספרת", "לספר"), ("רוצה", "רוצה", "לרצות"),
+    ("עובר", "עוברת", "לעבור"), ("מבין", "מבינה", "להבין"),
+    ("מרגיש", "מרגישה", "להרגיש"), ("שומע", "שומעת", "לשמוע"),
+    ("רואה", "רואה", "לראות"), ("זוכר", "זוכרת", "לזכור"),
+    ("מתמודד", "מתמודדת", "להתמודד"), ("חווה", "חווה", "לחוות"),
+    ("נושם", "נושמת", "לנשום"), ("ישן", "ישנה", "לישון"),
+    ("אוכל", "אוכלת", "לאכול"), ("שותה", "שותה", "לשתות"),
+    ("עובד", "עובדת", "לעבוד"), ("לומד", "לומדת", "ללמוד"),
+    ("מנסה", "מנסה", "לנסות"), ("מחפש", "מחפשת", "לחפש"),
+    ("מקווה", "מקווה", "לקוות"), ("פוחד", "פוחדת", "לפחד"),
+    ("דואג", "דואגת", "לדאוג"), ("מתגעגע", "מתגעגעת", "להתגעגע"),
+    ("סובל", "סובלת", "לסבול"), ("בוכה", "בוכה", "לבכות"),
+    ("צוחק", "צוחקת", "לצחוק"), ("קורא", "קוראת", "לקרוא"),
+    ("כותב", "כותבת", "לכתוב"), ("שומר", "שומרת", "לשמור"),
+]
+_HE_M2F = {m: f for m, f, _i in _HE_VERB_PARADIGM if m != f}
+_HE_F2M = {f: m for m, f, _i in _HE_VERB_PARADIGM if m != f}
+_HE_M2INF = {m: i for m, f, i in _HE_VERB_PARADIGM}
+_HE_F2INF = {f: i for m, f, i in _HE_VERB_PARADIGM}
+_HE_M_ALT = "|".join(sorted(_HE_M2F, key=len, reverse=True))
+_HE_F_ALT = "|".join(sorted(_HE_F2M, key=len, reverse=True))
+# Second-person frames: pronoun (+optional ש־) + paradigm verb.
+_HE_ADDR_M_RE = re.compile(
+    r"(שאתה|אתה)\s+(" + _HE_M_ALT + r")")
+_HE_ADDR_F_RE = re.compile(
+    r"(שאת|את)\s+(" + _HE_F_ALT + r")")
+# Imperative pairs (m, f) beyond the paradigm.
+_HE_IMP_PAIRS = [
+    ("תקח", "תקחי"), ("תרגיש", "תרגישי"), ("תרצה", "תרצי"),
+    ("תכתוב", "תכתבי"), ("תדבר", "תדברי"), ("תשאל", "תשאלי"),
+    ("תבקש", "תבקשי"), ("תנסה", "תנסי"), ("תבוא", "תבואי"),
+]
+_HE_IMP_M2F = {m: f for m, f in _HE_IMP_PAIRS}
+_HE_IMP_F2M = {f: m for m, f in _HE_IMP_PAIRS}
+_HE_IMP_M_ALT = "|".join(_HE_IMP_M2F)
+_HE_IMP_F_ALT = "|".join(_HE_IMP_F2M)
+
+
+def _he_wrong_gender_markers(seg, target):
+    """Morphological check (A5): unambiguous second-person forms
+    of the OTHER gender in one sentence."""
+    if target == "f":
+        return bool(_HE_ADDR_M_RE.search(seg)
+                    or re.search(r"(?<![\u0590-\u05FF])(?:"
+                                 + _HE_IMP_M_ALT
+                                 + r")(?![\u0590-\u05FF])", seg)
+                    or re.search(r"שאתה\b", seg))
+    if target == "m":
+        return bool(_HE_ADDR_F_RE.search(seg)
+                    or re.search(r"(?<![\u0590-\u05FF])(?:"
+                                 + _HE_IMP_F_ALT
+                                 + r")(?![\u0590-\u05FF])", seg)
+                    or re.search(r"שאת\b", seg))
+    # neutral: ANY gendered second-person address is a marker
+    return bool(_HE_ADDR_M_RE.search(seg) or _HE_ADDR_F_RE.search(seg)
+                or re.search(r"שאתה\b|שאת\b", seg))
+
+
+def _he_rewrite_gender_sentence(seg, target):
+    """Rewrite one sentence's second-person forms toward the
+    target through the paradigm. For the neutral target the
+    pronoun drops and the verb becomes its infinitive frame
+    ('אפשר …'), so no אתה / את address remains."""
+    if target == "f":
+        out = _HE_ADDR_M_RE.sub(
+            lambda m: ("שאת" if m.group(1) == "שאתה" else "את")
+            + " " + _HE_M2F[m.group(2)], seg)
+        out = re.sub(r"(?<![\u0590-\u05FF])(" + _HE_IMP_M_ALT
+                     + r")(?![\u0590-\u05FF])",
+                     lambda m: _HE_IMP_M2F[m.group(1)], out)
+        # Bare pronouns outside the paradigm frames swap too —
+        # אתה / שאתה are unambiguous address forms.
+        out = re.sub(r"שאתה\b", "שאת", out)
+        out = re.sub(r"(?<![\u0590-\u05FF])אתה\b", "את", out)
+        return out
+    if target == "m":
+        out = _HE_ADDR_F_RE.sub(
+            lambda m: ("שאתה" if m.group(1) == "שאת" else "אתה")
+            + " " + _HE_F2M[m.group(2)], seg)
+        out = re.sub(r"(?<![\u0590-\u05FF])(" + _HE_IMP_F_ALT
+                     + r")(?![\u0590-\u05FF])",
+                     lambda m: _HE_IMP_F2M[m.group(1)], out)
+        out = re.sub(r"שאת\b", "שאתה", out)
+        return out
+    # neutral: pronoun+verb -> "אפשר + infinitive" (or a bare
+    # infinitive after ש־); bare gendered imperatives -> infinitive.
+    def _neut(m):
+        verb = m.group(2)
+        inf = _HE_M2INF.get(verb) or _HE_F2INF.get(verb)
+        if not inf:
+            return m.group(0)
+        if m.group(1).startswith("ש"):
+            return "שאפשר " + inf
+        return "אפשר " + inf
+
+    out = _HE_ADDR_M_RE.sub(_neut, seg)
+    out = _HE_ADDR_F_RE.sub(_neut, out)
+    # Leftover gendered pronouns outside the paradigm frames:
+    # the ש־ forms keep their ש, a bare אתה drops out.
+    out = re.sub(r"שאתה\b|שאת\b", "ש", out)
+    out = re.sub(r"(?<![\u0590-\u05FF])אתה\s+", "", out)
+    return out
+
+
+def he_gender_repair(text, gender):
+    """The A5 post-generation morphology pass for chat replies:
+    every sentence's second-person forms are checked against the
+    writer's stored gender ('m' / 'f'), or neutralized while the
+    gender is unknown (None / ''). Sentences that still carry the
+    wrong gender after the paradigm rewrite are dropped rather
+    than shipped misgendered."""
+    if not text or not has_hebrew(text):
+        return text
+    target = gender if gender in ("m", "f") else "n"
+    segs = _sentence_segments(text)
+    out_segs = []
+    changed = False
+    for s, sep in segs:
+        if s.strip() and _he_wrong_gender_markers(s, target):
+            fixed = _he_rewrite_gender_sentence(s, target)
+            changed = True
+            if _he_wrong_gender_markers(fixed, target):
+                continue  # unfixable — dropped, never shipped wrong
+            out_segs.append((fixed, sep))
+        else:
+            out_segs.append((s, sep))
+    if not changed:
+        return text
+    out = "".join(s + sep for s, sep in out_segs).strip()
+    return out or text
+
+
+# A15: no "/" between Hebrew letters ever ships. Any slash pair
+# the named resolvers didn't know is resolved generically —
+# feminine takes the second form, everyone else the first.
+_HE_SLASH_ANY_RE = re.compile(
+    r"([\u0590-\u05FF]+)/([\u0590-\u05FF]+)")
+
+
+def strip_hebrew_slashes(text, writer_gender=None):
+    if not text or "/" not in text:
+        return text
+    return _HE_SLASH_ANY_RE.sub(
+        lambda m: m.group(2) if writer_gender == "f" else m.group(1),
+        text)
 
 
 def detect_availability_question(text):
@@ -831,6 +1737,19 @@ GRIEF_OPENING_HE_WF_F = (
     "ואין דרך נכונה להתאבל. אני כאן איתך — קחי את כל הזמן שאת צריכה. "
     "כשתרצי, אשמח לשמוע עליה."
 )
+# Neutral-writer variants (Tab FINAL order A5): while the writer's
+# gender is unknown, the opening addresses no gender at all —
+# impersonal frames instead of קח / שאתה צריך / כשתרצה.
+GRIEF_OPENING_HE_N = (
+    "אני ממש מצטער על האובדן שלך. לאבד מישהו שאוהבים משנה הכול, "
+    "ואין דרך נכונה להתאבל. אני כאן איתך — אפשר לקחת את כל הזמן "
+    "שצריך. כשמתאים, אשמח לשמוע עליו."
+)
+GRIEF_OPENING_HE_N_F = (
+    "אני ממש מצטער על האובדן שלך. לאבד מישהו שאוהבים משנה הכול, "
+    "ואין דרך נכונה להתאבל. אני כאן איתך — אפשר לקחת את כל הזמן "
+    "שצריך. כשמתאים, אשמח לשמוע עליה."
+)
 _GRIEF_KIN_HE_F = re.compile(
     r"(אמא|סבתא|אחותי|אחות\s+שלי|אשתי|הבת\s+שלי|בת\s+שלי|חברה\s+שלי)")
 _GRIEF_KIN_HE_M = re.compile(
@@ -894,13 +1813,16 @@ def grief_opening_for(hebrew, msg, writer_gender=None):
     kin_f = detect_grief_kin_he(msg) == "f"
     if writer_gender == "f":
         return GRIEF_OPENING_HE_WF_F if kin_f else GRIEF_OPENING_HE_WF
-    if kin_f:
-        return GRIEF_OPENING_HE_F
-    return GRIEF_OPENING_HE
+    if writer_gender == "m":
+        if kin_f:
+            return GRIEF_OPENING_HE_F
+        return GRIEF_OPENING_HE
+    # A5: unknown writer gender -> the neutral opening.
+    return GRIEF_OPENING_HE_N_F if kin_f else GRIEF_OPENING_HE_N
 # Continuation used only if the model call fails on a grief turn.
 GRIEF_FALLBACK = (
-    "I'm here — we don't have to figure anything out right now. "
-    "We can just sit with this for a while."
+    "I'm here. There's nothing to figure out right now — it's "
+    "okay to just sit with this for a while."
 )
 GRIEF_FALLBACK_HE = (
     "אני כאן — לא צריך להבין הכול עכשיו. אפשר פשוט להיות עם זה קצת."
@@ -1196,6 +2118,18 @@ def init_db():
             conn.execute(
                 "ALTER TABLE users ADD COLUMN crisis_lang TEXT DEFAULT 'en'"
             )
+        # Tab FINAL order (A5/A2): the writer's own gender, once
+        # their Hebrew reveals it, is stored per user and steers
+        # every user-addressed form from then on; crisis_checkin
+        # records that the ONE gentle post-crisis check-in is owed.
+        if "writer_gender" not in cols:
+            conn.execute(
+                "ALTER TABLE users ADD COLUMN writer_gender TEXT DEFAULT ''"
+            )
+        if "crisis_checkin" not in cols:
+            conn.execute(
+                "ALTER TABLE users ADD COLUMN crisis_checkin INTEGER DEFAULT 0"
+            )
         # Tab fix: tombstones carry their deletion time, so a theme
         # the person raises again AFTER deleting it can come back,
         # while a memory rewrite can never resurrect it on its own.
@@ -1339,6 +2273,46 @@ def classify_risk(text):
         return out.strip().upper().startswith("RISK")
     except Exception:
         return False
+
+
+INTENT_CLASSIFIER_SYSTEM = (
+    "You classify one message to a support companion app. Reply "
+    "with exactly one label: THERAPIST (asking if it is therapy "
+    "or a therapist), REPLACE (asking it to be their therapist), "
+    "LICENSED (asking about license/credentials), DIAGNOSE "
+    "(asking for a diagnosis), MEDICATION (asking for medication "
+    "advice, doses, starting or stopping), SEEKING (asking if "
+    "they should get professional help), HUMAN (asking if it is "
+    "a real person), PRIVACY (asking who can see the chat), "
+    "VOICE (asking about voice/speaking), AVAILABILITY (asking "
+    "if it is available 24/7 or when), or NONE."
+)
+_INTENT_LABEL_WORDS = {
+    "THERAPIST": "therapist", "REPLACE": "replace",
+    "LICENSED": "licensed", "DIAGNOSE": "diagnose",
+    "MEDICATION": "medication", "SEEKING": "seeking",
+    "HUMAN": "human", "PRIVACY": "privacy", "VOICE": "voice",
+    "AVAILABILITY": "availability",
+}
+
+
+def classify_intent_model(text):
+    """The model half of the ONE intent classifier (A8): runs on
+    every message the deterministic patterns didn't label. Fails
+    to None — a missed label falls back to the normal flow."""
+    if os.environ.get("CRISIS_CLASSIFIER", "on").lower() == "off":
+        return None
+    try:
+        out = call_anthropic(
+            SUMMARY_MODEL,
+            INTENT_CLASSIFIER_SYSTEM,
+            [{"role": "user", "content": text}],
+            max_tokens=6,
+        )
+        word = (out or "").strip().upper().split()[0].strip(".:")
+        return _INTENT_LABEL_WORDS.get(word)
+    except Exception:
+        return None
 
 
 def assess_risk(text):
@@ -2231,6 +3205,10 @@ def scrub_reply(text, writer_gender=None, user_text=None):
     out = _drop_dangling_opener(out.strip())
     out = _drop_invented_worry_opener(out, user_text)
     out = _he_self_gender(out, writer_gender)
+    # A15 + A5: no Hebrew slash pair ever ships, and second-person
+    # forms match the writer's stored gender (neutral until known).
+    out = strip_hebrew_slashes(out, writer_gender)
+    out = he_gender_repair(out, writer_gender)
     if out:
         return out
     if has_hebrew(text or ""):
@@ -2246,15 +3224,19 @@ def scrub_prefix(text, writer_gender=None, user_text=None):
             _sentence_segments(_truncate_glued_reply(text)),
             include_last=False))
     out = _drop_invented_worry_opener(out, user_text)
-    return _he_self_gender(out, writer_gender)
+    out = _he_self_gender(out, writer_gender)
+    out = strip_hebrew_slashes(out, writer_gender)
+    return he_gender_repair(out, writer_gender)
 
 
 def scrub_field(text, writer_gender=None):
     """Debrief-field form: like scrub_reply but may return "" so the
     caller can substitute its own neutral default."""
-    return _he_self_gender(_scrub_join(
+    out = _he_self_gender(_scrub_join(
         _sentence_segments(text), include_last=True).strip(),
         writer_gender)
+    out = strip_hebrew_slashes(out, writer_gender)
+    return he_gender_repair(out, writer_gender)
 
 
 _CONDOLENCE_LEAD_RE = re.compile(
@@ -2435,7 +3417,41 @@ _COMPANIONSHIP_RES = [
     re.compile(r"\bmy\s+thoughts\s+are\s+with\s+you\b", re.I),
     re.compile(r"\bwe(?:'re|\s+are)\s+(?:all\s+)?here\s+"
                r"(?:with|for)\s+you\b", re.I),
+    # A7: Solace never says "we" for itself in grief — no
+    # "we're with you", no "our hearts".
+    re.compile(r"\bwe(?:'re|\s+are)\s+(?:right\s+)?with\s+you\b",
+               re.I),
+    re.compile(r"\bour\s+(?:hearts?|thoughts)\b[^.!?\n]{0,30}?"
+               r"\bwith\s+you\b", re.I),
 ]
+
+# A7: the grief continuation contains NO sympathy / condolence
+# language at all — the fixed opening already said it. The
+# lexicon runs over EVERY sentence of the continuation, not just
+# its openers (earlier rounds stripped leads only, and mid-body
+# condolences kept shipping).
+_SYMPATHY_ANY_RE = re.compile(
+    r"(sorry\s+for\s+your\s+loss|sorry\s+to\s+hear|"
+    r"my\s+(?:deepest\s+)?condolences|deepest\s+sympath|"
+    r"i'?m\s+so\s+sorry\s+(?:for|about|to\s+hear)|"
+    r"מצטער(?:ת)?\s+(?:מאוד\s+|ממש\s+)?(?:על\s+(?:ה)?אובדן|לשמוע)|"
+    r"משתתפ(?:ת|ים)?\s+בצער|תנחומיי|שלא\s+תדעו\s+עוד\s+צער|"
+    r"מנחם\s+את|משתתף\s+בצערך)",
+    re.I,
+)
+
+
+def _strip_sympathy_sentences(body):
+    """A7: remove every sentence carrying sympathy / condolence
+    language from a grief continuation, wherever it appears."""
+    if not body:
+        return body
+    segs = _sentence_segments(body)
+    kept = [(s, sep) for s, sep in segs
+            if not _SYMPATHY_ANY_RE.search(s)]
+    if len(kept) == len(segs):
+        return body
+    return "".join(s + sep for s, sep in kept).strip()
 
 
 def _strip_companionship_lines(body):
@@ -2584,10 +3600,15 @@ def _grief_clean_body(body, opening, writer_gender=None):
     body = _strip_dup_condolence(body)
     body = _strip_continuation_openers(body)
     body = _strip_companionship_lines(body)
+    body = _strip_sympathy_sentences(body)
     body = _cut_second_reply_block(body, opening)
-    if opening and has_hebrew(opening):
-        body = _he_gender_consistency(
-            body, "f" if writer_gender == "f" else "m")
+    if opening and has_hebrew(opening) \
+            and writer_gender in ("f", "m"):
+        body = _he_gender_consistency(body, writer_gender)
+    elif opening and has_hebrew(opening):
+        # A5: unknown writer gender — the continuation is
+        # neutralized, never defaulted to masculine.
+        body = he_gender_repair(body, None)
     body = body.strip()
     if opening and body and body in opening:
         # Nothing left but a fragment of the opening itself.
@@ -2996,6 +4017,14 @@ def save_profile(body: ProfileIn, response: Response):
     uid = body.user_id.strip() or uuid.uuid4().hex[:16]
     name = body.name.strip()
     notes = body.notes.strip()
+    # A13: an empty concern is OMITTED from the profile the model
+    # receives — never stored as an empty "weighing on them"
+    # segment, and a "not specified" mood is dropped with it.
+    notes = re.sub(
+        r"\s*What is weighing on them:\s*$", "", notes)
+    notes = re.sub(
+        r"Feeling right now:\s*not specified\.?\s*", "", notes
+    ).strip(" .")
     with db_lock:
         conn = _conn()
         existing = conn.execute(
@@ -3037,7 +4066,7 @@ def _save_assistant_msg(uid, text):
 
 
 def _set_user_state(uid, crisis_mode=None, stepdown_v=None, banner_v=None,
-                    lang_v=None):
+                    lang_v=None, gender_v=None, checkin_v=None):
     sets, vals = [], []
     if crisis_mode is not None:
         sets.append("crisis_mode=?")
@@ -3051,6 +4080,12 @@ def _set_user_state(uid, crisis_mode=None, stepdown_v=None, banner_v=None,
     if lang_v is not None:
         sets.append("crisis_lang=?")
         vals.append(lang_v)
+    if gender_v is not None:
+        sets.append("writer_gender=?")
+        vals.append(gender_v)
+    if checkin_v is not None:
+        sets.append("crisis_checkin=?")
+        vals.append(1 if checkin_v else 0)
     if not sets:
         return
     vals.append(uid)
@@ -3122,10 +4157,34 @@ def _prepare_turn(uid, msg):
     # 6): it disarms the classifier exactly like the med guard.
     # A keyword crisis phrase in the same message still wins.
     stuck_safe = is_stuck_in_life_statement(msg)
+    # Tab FINAL order A1: a NEVER-CRISIS idiom (joke / lyric /
+    # quote / school frame) is not-crisis BY RULE, checked before
+    # the classifier — the classifier never gets to escalate it.
+    idiom_safe = is_never_crisis_idiom(msg)
+    # Tab FINAL order A3: the MEDICAL-EMERGENCY check is separate
+    # and runs BEFORE the suicide check — but a plain prescribed-
+    # medication statement is guarded out of it, as before.
+    medical_kind = None if med_safe else detect_medical_emergency(msg)
     emergency = detect_overdose(msg) and not med_safe \
         and not stuck_safe
+    # Tab FINAL order A5: the writer's gender — detected from
+    # this message's first-person Hebrew, inferred from a known
+    # first name, or read from the stored value; stored the
+    # moment it is learned, and it steers every fixed string and
+    # scrub decision below. Neutral forms until it is known.
+    stored_gender = (profile.get("writer_gender") or "") or None
+    detected_gender = detect_writer_gender_he(msg)
+    if not detected_gender:
+        detected_gender = _gender_from_name(profile.get("name"))
+    writer_gender = detected_gender or stored_gender
+    if detected_gender and detected_gender != stored_gender:
+        _set_user_state(uid, gender_v=detected_gender)
     info_q = (not kw_risk) and is_informational_word_question(msg)
-    if kw_risk:
+    if idiom_safe:
+        # A1 wins over the keyword layer: the idiom accounts for
+        # the dark words in the message (checked in the detector).
+        risk = False
+    elif kw_risk:
         risk = True
     elif emergency:
         # The emergency branch below returns before risk is ever
@@ -3133,9 +4192,14 @@ def _prepare_turn(uid, msg):
         # מד״א 101 reply (Tab round 3: the crisis reply must not
         # wait behind model work).
         risk = False
+    elif medical_kind:
+        # A3: the medical branch below returns first, too.
+        risk = False
     elif med_safe:
         risk = False
     elif stuck_safe:
+        risk = False
+    elif idiom_safe:
         risk = False
     else:
         # The classifier also runs for informational word questions, so
@@ -3156,8 +4220,9 @@ def _prepare_turn(uid, msg):
     # normal chat again from this message on. (A fresh risk
     # signal or a completed overdose was already handled
     # above and never reaches this bypass.)
-    if in_crisis_mode and (med_safe or stuck_safe) \
-            and not risk and not emergency:
+    if in_crisis_mode and (med_safe or stuck_safe or idiom_safe) \
+            and not risk and not emergency and not medical_kind \
+            and not detect_clarification(msg):
         _set_user_state(uid, crisis_mode=False, stepdown_v=False,
                         lang_v=safety_lang)
         in_crisis_mode = False
@@ -3200,12 +4265,32 @@ def _prepare_turn(uid, msg):
         "need_professional": detect_need_professional(msg),
         "med_statement": med_safe,
         "stuck_statement": stuck_safe,
-        # The writer's own gender, when their Hebrew reveals it
-        # (Tab round 5): steers user-addressed slash resolution
-        # in the scrub layer on every chat surface.
-        "writer_gender": detect_writer_gender_he(msg) if hebrew
-        else None,
+        # The writer's own gender (Tab round 5, FINAL order A5):
+        # stored per user, neutral until known — steers every
+        # gendered fixed string and the scrub layer's morphology.
+        "writer_gender": writer_gender,
+        # A2: the ONE gentle check-in line owed on the first
+        # normal turn after a true crisis (set in the latch
+        # block below); prepended by code in _finish_model_turn.
+        "checkin_line": None,
     }
+
+    # Tab FINAL order A3: MEDICAL EMERGENCY — checked BEFORE the
+    # suicide path. First line is the call to 911 / מד״א 101, no
+    # "tonight?" question, banner on, no model call. (A completed
+    # ingestion lands here too, with the Poison Control line.)
+    if medical_kind:
+        _set_user_state(uid, crisis_mode=True, stepdown_v=False,
+                        banner_v=True, lang_v=safety_lang)
+        reply = medical_reply(medical_kind, safety_hebrew,
+                              writer_gender)
+        _save_assistant_msg(uid, reply)
+        return ctx, ("final", {"reply": reply, "crisis": True,
+                               "hotline": safety_hotline,
+                               "banner": True,
+                               "banner_lang": safety_lang,
+                               "writer_gender": writer_gender or "",
+                               "reply_lang": safety_lang})
 
     # Completed overdose (Tab ruling): medical emergency FIRST —
     # lead with 911 / מד״א 101, not the suicide question. Same latch
@@ -3227,55 +4312,72 @@ def _prepare_turn(uid, msg):
     # Hebrew for Hebrew conversations (re-test fix #8).
     if risk:
         banner_lang = safety_lang
+        # A2: a TRUE crisis sets the latch — and owes exactly one
+        # gentle check-in on the following normal turn.
         _set_user_state(uid, crisis_mode=True, stepdown_v=False,
-                        banner_v=True, lang_v=banner_lang)
+                        banner_v=True, lang_v=banner_lang,
+                        checkin_v=True)
         spouse = detect_spouse_loss(msg)
         if spouse:
             # Widow route (Tab ruling): the reply names the loss;
             # the frozen reply serves every other crisis.
             base = spouse_crisis_response(spouse, safety_hebrew)
         else:
-            base = (FIXED_CRISIS_RESPONSE_HE if safety_hebrew
+            # A5: the Hebrew crisis reply follows the writer's
+            # stored gender (masculine = the frozen string).
+            base = (crisis_reply_he(writer_gender) if safety_hebrew
                     else FIXED_CRISIS_RESPONSE)
         reply = base + crisis_resource_line(safety_hebrew, base)
         _save_assistant_msg(uid, reply)
         return ctx, ("final", {"reply": reply, "crisis": True,
                                "hotline": safety_hotline, "banner": True,
-                               "banner_lang": banner_lang})
+                               "banner_lang": banner_lang,
+                               "writer_gender": writer_gender or "",
+                               "reply_lang": safety_lang})
 
-    # Direct identity question ("Is this therapy?" / "Are you a
-    # psychologist?" / Hebrew equivalents) and not in crisis mode:
-    # a plain deterministic "No" (Tab ruling) — no model call, so
-    # nothing for the word filter to mangle.
-    identity_q = detect_identity_question(msg)
-    if identity_q and not in_crisis_mode:
-        reply = IDENTITY_ANSWERS[(identity_q, safety_hebrew)]
+    # Tab FINAL order A8: ONE intent classification, one approved
+    # deterministic answer per label — identity ("Is this
+    # therapy?"), licensed, diagnose, medication (A9), seeking,
+    # human, privacy, voice, availability (A12). Deterministic
+    # patterns first; the model intent classifier is the backstop
+    # for question-shaped messages the patterns don't know. No
+    # model reply is ever produced for a labeled turn. (Disabled
+    # while crisis mode is latched, as the identity route always
+    # was; a grief turn keeps its own flow and its referral.)
+    if not in_crisis_mode:
+        label = detect_intent_label(msg)
+        if label == "seeking" and detect_grief(msg):
+            label = None
+        if label is None and _question_shaped(msg):
+            label = classify_intent_model(msg)
+            if label == "seeking" and detect_grief(msg):
+                label = None
+        if label is not None:
+            reply = label_answer(label, safety_hebrew,
+                                 writer_gender, profile.get("name"))
+            if reply is not None:
+                _save_assistant_msg(uid, reply)
+                return ctx, ("final", {
+                    "reply": reply, "crisis": False,
+                    "hotline": hotline, "banner": banner,
+                    "banner_lang": banner_lang,
+                    "writer_gender": writer_gender or "",
+                    "reply_lang": safety_lang})
+
+    # Tab FINAL order A13: a content-free greeting as the first
+    # message gets the TEMPLATE reply — name when known, the one
+    # fixed self-description, one open question. Never a model
+    # improvisation, never a mention of any intake or form.
+    if not in_crisis_mode and user_count <= 1 \
+            and is_content_free_greeting(msg):
+        reply = greeting_reply(profile.get("name"), safety_hebrew,
+                               writer_gender)
         _save_assistant_msg(uid, reply)
         return ctx, ("final", {"reply": reply, "crisis": False,
                                "hotline": hotline, "banner": banner,
-                               "banner_lang": banner_lang})
-
-    # Availability question ("Are you available 24/7?"): a
-    # deterministic non-claim (Tab round 3) — no model call, so
-    # no "any time of day or night" answer can be produced.
-    if detect_availability_question(msg) and not in_crisis_mode:
-        reply = (AVAILABILITY_ANSWER_HE if safety_hebrew
-                 else AVAILABILITY_ANSWER)
-        _save_assistant_msg(uid, reply)
-        return ctx, ("final", {"reply": reply, "crisis": False,
-                               "hotline": hotline, "banner": banner,
-                               "banner_lang": banner_lang})
-
-    # Voice question ("Can I talk to you with my voice?"):
-    # Voice Mode EXISTS — a deterministic yes plus the
-    # approved voice-privacy line, verbatim (Tab round 5).
-    if detect_voice_question(msg) and not in_crisis_mode:
-        reply = (VOICE_ANSWER_HE if safety_hebrew
-                 else VOICE_ANSWER)
-        _save_assistant_msg(uid, reply)
-        return ctx, ("final", {"reply": reply, "crisis": False,
-                               "hotline": hotline, "banner": banner,
-                               "banner_lang": banner_lang})
+                               "banner_lang": banner_lang,
+                               "writer_gender": writer_gender or "",
+                               "reply_lang": safety_lang})
 
     # Clearly informational word question (and not in crisis mode):
     # answer it, with the gentle check-in — never the crisis script.
@@ -3285,34 +4387,39 @@ def _prepare_turn(uid, msg):
 
     # Crisis mode latched from an earlier message.
     if in_crisis_mode:
-        if stepdown:
-            # The gentle check-in already went out; this is the next
-            # exchange. Risk is False here (a fresh risk signal was
-            # handled above and re-latches fully), so a calm, non-risk
-            # exchange completes the step-down: normal conversation
-            # resumes, but the banner flag stays on for the rest of
-            # the session.
+        if detect_clarification(msg) and not risk:
+            # Tab FINAL order A2 (supersedes the old two-step
+            # step-down): a clarification or denial clears the
+            # latch AND the banner, and the reply is the brief
+            # fixed line — no check-in question, no crisis text.
             _set_user_state(uid, crisis_mode=False, stepdown_v=False,
+                            banner_v=False, checkin_v=False,
                             lang_v=safety_lang)
+            reply = (_CLARIFY_HE.get(writer_gender or "",
+                                     _CLARIFY_HE["n"])
+                     if safety_hebrew else CLARIFY_REPLY)
+            _save_assistant_msg(uid, reply)
+            return ctx, ("final", {"reply": reply, "crisis": False,
+                                   "hotline": safety_hotline,
+                                   "banner": False,
+                                   "banner_lang": safety_lang,
+                                   "writer_gender": writer_gender or "",
+                                   "reply_lang": safety_lang})
+        elif stepdown or not _is_latch_fragment(msg):
+            # A2: the person moves to a new topic — the latch
+            # clears and this turn is answered normally. If the
+            # crisis owed its one gentle check-in, it rides this
+            # turn's reply (prepended by code at finish time).
+            # The banner stays for the session, as before.
+            _set_user_state(uid, crisis_mode=False, stepdown_v=False,
+                            checkin_v=False, lang_v=safety_lang)
+            if profile.get("crisis_checkin"):
+                ctx["checkin_line"] = (
+                    _CHECKIN_HE.get(writer_gender or "",
+                                    _CHECKIN_HE["n"])
+                    if safety_hebrew else CHECKIN_LINE)
             ctx["banner_lang"] = safety_lang
             # fall through to the normal flow below
-        elif retracted:
-            # First walk-back: do NOT unlatch. One gentle check-in,
-            # no relief tone, still in crisis mode, banner stays —
-            # all in THIS message's language.
-            _set_user_state(uid, stepdown_v=True, lang_v=safety_lang)
-            reply = (
-                RETRACTION_CHECKIN_RESPONSE_HE if safety_hebrew
-                else RETRACTION_CHECKIN_RESPONSE
-            )
-            if ctx["need_professional"]:
-                reply = _ensure_referral(reply, safety_hebrew)
-            reply += crisis_resource_line(safety_hebrew, reply)
-            _save_assistant_msg(uid, reply)
-            return ctx, ("final", {"reply": reply, "crisis": True,
-                                   "hotline": safety_hotline,
-                                   "banner": True,
-                                   "banner_lang": safety_lang})
         else:
             # Latched follow-up: the safety framing follows this
             # message's language, not the original crisis's.
@@ -3421,7 +4528,8 @@ def _finish_model_turn(ctx, mode, reply, background):
         reply = scrub_reply(
             reply, ctx.get("writer_gender"), user_text)
         if ctx.get("need_professional"):
-            reply = _ensure_referral(reply, safety_hebrew)
+            reply = _ensure_referral(reply, safety_hebrew,
+                                     ctx.get("writer_gender"))
         _save_assistant_msg(uid, reply)
         return {"reply": reply, "crisis": False, "hotline": hotline,
                 "banner": banner, "banner_lang": banner_lang}
@@ -3461,7 +4569,7 @@ def _finish_model_turn(ctx, mode, reply, background):
             # before _ensure_referral ever ran, so a bereaved
             # person who also asked "do I need a professional?"
             # lost the line.
-            reply = _ensure_referral(reply, hebrew)
+            reply = _ensure_referral(reply, hebrew, ctx.get("writer_gender"))
         _save_assistant_msg(uid, reply)
         if ctx["user_count"] == 3 or ctx["user_count"] % 5 == 0:
             background.add_task(update_summary, uid)
@@ -3477,7 +4585,7 @@ def _finish_model_turn(ctx, mode, reply, background):
             # Same round-5 gap as the grief branch: latched
             # crisis-mode replies never passed an ensure step,
             # so the referral line depended on the model.
-            reply = _ensure_referral(reply, safety_hebrew)
+            reply = _ensure_referral(reply, safety_hebrew, ctx.get("writer_gender"))
         reply += crisis_resource_line(safety_hebrew, reply)
         _save_assistant_msg(uid, reply)
         return {"reply": reply, "crisis": True,
@@ -3501,6 +4609,14 @@ def _finish_model_turn(ctx, mode, reply, background):
             _set_user_state(uid, crisis_mode=True, stepdown_v=False,
                             banner_v=True, lang_v=banner_lang)
     reply = scrub_reply(reply, ctx.get("writer_gender"), user_text)
+    # Tab FINAL order A9 output guard: dosing content (a number
+    # + unit about a substance) replaces the whole reply with
+    # the deterministic medication answer.
+    if has_dose_advice(reply):
+        reply = label_answer("medication", safety_hebrew,
+                             ctx.get("writer_gender"))
+    # A12 output guard: no Solace-subject availability claim.
+    reply = strip_availability_claims(reply)
     # Never end two replies in a row with the same closing line
     # (Tab fix) — compare against the previous stored reply.
     with db_lock:
@@ -3517,7 +4633,12 @@ def _finish_model_turn(ctx, mode, reply, background):
         # "Do I need a professional?" always carries the approved
         # referral line (Tab round 3) — appended only if the
         # model's own reply didn't already include it.
-        reply = _ensure_referral(reply, safety_hebrew)
+        reply = _ensure_referral(reply, safety_hebrew,
+                                 ctx.get("writer_gender"))
+    # A2: the ONE gentle check-in owed after a true crisis leads
+    # this turn's reply — added by code, exactly once.
+    if ctx.get("checkin_line") and not crisis:
+        reply = ctx["checkin_line"] + "\n\n" + reply
     if crisis:
         reply += crisis_resource_line(safety_hebrew, reply)
     _save_assistant_msg(uid, reply)
@@ -3532,7 +4653,33 @@ def _finish_model_turn(ctx, mode, reply, background):
             "banner": banner, "banner_lang": banner_lang}
 
 
+# A17: one open turn per user. A second turn for the same user
+# queues behind the first (bounded wait) instead of interleaving
+# two replies into one history.
+_TURN_LOCKS = {}
+_TURN_LOCKS_GUARD = threading.Lock()
+
+
+def _turn_lock(uid):
+    with _TURN_LOCKS_GUARD:
+        lk = _TURN_LOCKS.get(uid)
+        if lk is None:
+            lk = threading.Lock()
+            _TURN_LOCKS[uid] = lk
+        return lk
+
+
 def _chat_payload(uid, msg, background):
+    lk = _turn_lock((uid or "").strip())
+    acquired = lk.acquire(timeout=180)
+    try:
+        return _chat_payload_inner(uid, msg, background)
+    finally:
+        if acquired:
+            lk.release()
+
+
+def _chat_payload_inner(uid, msg, background):
     uid = (uid or "").strip()
     msg = (msg or "").strip()
     if not uid:
@@ -3642,6 +4789,16 @@ def _sse(obj):
 
 
 def _chat_stream_events(uid, msg, background):
+    lk = _turn_lock((uid or "").strip())
+    acquired = lk.acquire(timeout=180)
+    try:
+        yield from _chat_stream_events_inner(uid, msg, background)
+    finally:
+        if acquired:
+            lk.release()
+
+
+def _chat_stream_events_inner(uid, msg, background):
     """SSE event generator for /api/chat/stream. The pre-model risk
     check (_prepare_turn) runs first: fixed-response paths emit their
     frozen text as ONE delta, immediately — they never stream through
@@ -3772,7 +4929,7 @@ def _chat_stream_events(uid, msg, background):
         elif mode == "crisis":
             rep = ctx["fallback_text"]
             if ctx.get("need_professional"):
-                rep = _ensure_referral(rep, _she)
+                rep = _ensure_referral(rep, _she, ctx.get("writer_gender"))
             rep += crisis_resource_line(_she, rep)
             payload = {"reply": rep, "crisis": True,
                        "hotline": ctx.get("safety_hotline",
@@ -3786,7 +4943,7 @@ def _chat_stream_events(uid, msg, background):
                 "Please try again in a moment — I'm still "
                 "here.")
             if ctx.get("need_professional"):
-                rep = _ensure_referral(rep, _she)
+                rep = _ensure_referral(rep, _she, ctx.get("writer_gender"))
             payload = {"reply": rep, "crisis": False,
                        "hotline": ctx["hotline"],
                        "banner": ctx["banner"],
@@ -3805,8 +4962,8 @@ def _chat_stream_events(uid, msg, background):
         # lost it in 4 of 5 runs). Emit the appendix itself
         # whenever the final carries it and the screen
         # doesn't.
-        _app = (REFERRAL_APPEND_HE if ctx.get("safety_hebrew")
-                else REFERRAL_APPEND_EN)
+        _app = _referral_append(ctx.get("safety_hebrew"),
+                                ctx.get("writer_gender"))
         if _app in final and _app not in visible:
             yield _sse({"type": "delta", "text": "\n\n" + _app})
     yield _sse({"type": "done", **payload})
@@ -5231,7 +6388,7 @@ def history(user_id: str, response: Response):
             "SELECT summary FROM summaries WHERE user_id=?", (user_id,)
         ).fetchone()
         u = conn.execute(
-            "SELECT crisis_mode, crisis_banner, crisis_lang FROM users WHERE id=?", (user_id,)
+            "SELECT crisis_mode, crisis_banner, crisis_lang, writer_gender FROM users WHERE id=?", (user_id,)
         ).fetchone()
         rh = conn.execute(
             "SELECT id, person_type, person_name, relationship, topic, "
@@ -5256,6 +6413,7 @@ def history(user_id: str, response: Response):
         "crisis": bool(u["crisis_mode"]) if u else False,
         "banner": bool(u["crisis_banner"]) if u else False,
         "banner_lang": (u["crisis_lang"] or "en") if u else "en",
+        "writer_gender": (u["writer_gender"] or "") if u else "",
         "rehearsals": rehearsals,
     }
 
