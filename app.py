@@ -1202,10 +1202,40 @@ _VOICE_STORAGE_RES = [
                r"\b(?:stored|saved|kept|recorded|retained)\b",
                re.I),
     re.compile(r"\bdo\s+you\s+record\s+(?:me|us)\b", re.I),
+    # Tab r14 item 6: the bare recording question — "are you
+    # recording me?" / "אתה מקליט אותי?" carries no audio noun
+    # for the patterns above to bite on, so it fell through to
+    # the model. It is the same storage question and takes the
+    # same No / לא answer.
+    re.compile(r"\bare\s+you\s+recording\b", re.I),
+    re.compile(r"\brecording\s+(?:me|us|this)\b", re.I),
+    re.compile(r"מקליט(?:ה|ים|ות)?\s+אותי"),
+    re.compile(r"(?:אתה|את)\s+מקליט(?:ה)?(?:\s|$)"),
     re.compile(r"(?:שומר|שומרת|שומרים|מקליט|מקליטה|מקליטים)"
                r"[^.!?\n]{0,30}?(?:קול|אודיו|הקלט|מיקרופון)"),
     re.compile(r"(?:הקלטות|האודיו|הקול)[^.!?\n]{0,20}?"
                r"(?:נשמר|נשמרות|נשמרים|מוקלט)"),
+]
+
+# Tab r14 item 6: a yes/no-shaped DATA question — "Do you sell
+# my data?" — is a privacy question whose truthful first word
+# is "No" / "לא". The generic privacy label's answer opens
+# with the approved sentence itself, so these shapes get their
+# own label whose answer is the No PLUS that same approved
+# sentence, verbatim, after it.
+_PRIVACY_YESNO_RES = [
+    re.compile(r"\b(?:do|will|would)\s+you\s+(?:sell|share)\s+"
+               r"(?:my|our)\s+(?:data|info(?:rmation)?|chats?|"
+               r"messages?|conversations?|personal\s+\w+)\b", re.I),
+    re.compile(r"\bare\s+you\s+(?:selling|sharing)\s+(?:my|our)\b",
+               re.I),
+    re.compile(r"\b(?:is|are)\s+(?:my|our)\s+(?:data|info|"
+               r"information)\s+(?:being\s+)?(?:sold|shared)\b",
+               re.I),
+    re.compile(r"מוכר(?:ים|ות|ת)?\s+את\s+(?:ה)?(?:מידע|נתונים|"
+               r"שיחות|הודעות)\s+של(?:י|נו)"),
+    re.compile(r"(?:האם\s+)?(?:אתה|את|אתם)\s+[^.!?\n]{0,20}?"
+               r"מוכר(?:ים|ות|ת)?\s+את\s+(?:ה)?(?:מידע|נתונים)"),
 ]
 
 # A bare mention of voice messages / recordings counts as
@@ -1600,6 +1630,10 @@ def detect_intent_label(text):
         return "medication"
     if any(rx.search(t) for rx in _HUMAN_Q_RES):
         return "human"
+    if any(rx.search(t) for rx in _PRIVACY_YESNO_RES):
+        # r14 item 6: checked before the generic privacy
+        # patterns — the yes/no shape needs its "No" first word.
+        return "privacy_no"
     if any(rx.search(t) for rx in _PRIVACY_Q_RES):
         return "privacy"
     if any(rx.search(t) for rx in _VOICE_STORAGE_RES):
@@ -1654,6 +1688,11 @@ def label_answer(label, hebrew, gender=None, name=None):
         ans = HUMAN_ANSWER_HE if hebrew else HUMAN_ANSWER
     elif label == "privacy":
         ans = PRIVACY_ANSWER_HE if hebrew else PRIVACY_ANSWER
+    elif label == "privacy_no":
+        # r14 item 6: the yes/no answer FIRST, then the one
+        # approved privacy sentence, verbatim.
+        ans = ("לא. " + PRIVACY_ANSWER_HE) if hebrew else (
+            "No. " + PRIVACY_ANSWER)
     elif label == "voice_storage":
         ans = VOICE_STORAGE_ANSWER_HE if hebrew \
             else VOICE_STORAGE_ANSWER
@@ -1904,7 +1943,14 @@ def _he_wrong_gender_markers(seg, target):
     # frame ("שמח שאתה כאן" — glad you are here) is not
     # rewritten: dropping it breaks the sentence, and the fixed
     # strings carry the neutral rule.
-    return bool(_HE_ADDR_M_RE.search(seg) or _HE_ADDR_F_RE.search(seg))
+    # Tab r14 item 4: כשאתה / כשאת is a marker too — the frame
+    # rewrite fixes it when a paradigm verb follows (שאתם +
+    # plural), the kshe pass fixes the future forms, and any
+    # other כשאתה sentence is unfixable and drops, so the form
+    # never ships to an unknown writer.
+    return bool(_HE_ADDR_M_RE.search(seg) or _HE_ADDR_F_RE.search(seg)
+                or re.search(r"כשאתה(?![\u0590-\u05FF])", seg)
+                or re.search(r"כשאת(?![\u0590-\u05FF])", seg))
 
 
 def _he_rewrite_gender_sentence(seg, target):
@@ -1984,18 +2030,26 @@ def he_gender_repair(text, gender):
         r"(?![\u0590-\u05FF])",
         lambda mm: "כש" + _kshe[mm.group(1)][_ki], text)
     if target == "n":
-        # Bare imperatives carry gender too ("קחי את הזמן") —
-        # under neutral they go plural ("קחו").
-        for imp, pl in (("קחי", "קחו"), ("קח", "קחו"),
-                        ("ספרי", "ספרו"), ("ספר", "ספרו"),
-                        ("כתבי", "כתבו"), ("כתוב", "כתבו"),
-                        ("בואי", "בואו"), ("בוא", "בואו"),
-                        ("שבי", "שבו"), ("שב", "שבו"),
-                        ("תני", "תנו"), ("תן", "תנו"),
-                        ("דברי", "דברו"), ("דבר", "דברו"),
-                        ("הקשיבי", "הקשיבו"), ("הקשב", "הקשיבו")):
-            text = re.sub(r"(?<![\u0590-\u05FF])" + imp
-                          + r"(?![\u0590-\u05FF])", pl, text)
+        # Bare imperatives carry gender too ("קחי את הזמן").
+        # Tab r14 item 4 SUPERSEDES the old plural rule: the
+        # plural minting produced exactly the banned forms —
+        # ספרו (named by Tab) and דברו (banned outright by
+        # item 5). An unknown writer's imperative now ships in
+        # its plain (masculine) form, the round-6 scrub rule:
+        # feminine imperatives resolve to the bare stem and
+        # masculine ones pass through untouched.
+        for fem, masc in (("קחי", "קח"), ("ספרי", "ספר"),
+                          ("כתבי", "כתוב"), ("בואי", "בוא"),
+                          ("שבי", "שב"), ("תני", "תן"),
+                          ("דברי", "דבר"), ("הקשיבי", "הקשב")):
+            text = re.sub(r"(?<![\u0590-\u05FF])" + fem
+                          + r"(?![\u0590-\u05FF])", masc, text)
+        # כש + pronoun + plural future ("כשאתה תרצו", after the
+        # kshe pass above): the pronoun drops — "כשתרצו" is the
+        # neutral frame, and כשאתה never ships (item 4).
+        text = re.sub(
+            r"כש(?:אתה|את)\s+(תרצו|תרגישו|תוכלו|תהיו)",
+            r"כש\1", text)
     segs = _sentence_segments(text)
     out_segs = []
     changed = False
@@ -2889,11 +2943,34 @@ def has_hebrew(text):
     return bool(HEBREW_RE.search(text))
 
 
+def _main_language(text):
+    """'he' / 'en' / None — the MAIN language of one message, by
+    letter counts (Tab r14 item 7). Decisive only when one
+    script clearly dominates (>= 4 letters and strictly more
+    than the other): an English message carrying one Hebrew
+    phrase is an ENGLISH message — the pre-r14 rule (any Hebrew
+    character at all makes it Hebrew) answered it in Hebrew.
+    Short or balanced messages return None and the callers fall
+    back to their older signals."""
+    he = len(re.findall(r"[\u0590-\u05FF]", text or ""))
+    lat = len(re.findall(r"[A-Za-z]", text or ""))
+    if max(he, lat) < 4 or he == lat:
+        return None
+    return "he" if he > lat else "en"
+
+
 def conversation_is_hebrew(hist_rows, msg):
-    """True when the conversation is in Hebrew: the current message or
-    any of the last few user messages contains Hebrew. Used so a Hebrew
-    conversation stays fully Hebrew even if one follow-up is short or
-    typed in transliteration."""
+    """True when the conversation is in Hebrew. Tab r14 item 7:
+    the current message's MAIN language decides when it is
+    decisive — an English message with one Hebrew phrase keeps
+    the conversation English. An indecisive message (short, or
+    typed in transliteration) falls back to the older signal:
+    any Hebrew in it, or in any of the last few user messages —
+    so a Hebrew conversation stays fully Hebrew through short
+    follow-ups."""
+    lang = _main_language(msg)
+    if lang is not None:
+        return lang == "he"
     if has_hebrew(msg):
         return True
     user_msgs = [r["content"] for r in hist_rows if r["role"] == "user"]
@@ -2904,7 +2981,13 @@ def message_is_hebrew(msg):
     """Language of THIS message only. Crisis routing uses this —
     never conversation history — so an English crisis message right
     after a Hebrew one gets the English fixed reply, banner and 988,
-    and vice versa (Tab round 3)."""
+    and vice versa (Tab round 3). Tab r14 item 7: the message's
+    MAIN language — an English message with one Hebrew phrase
+    is English here too; only an indecisive (tiny) message falls
+    back to the any-Hebrew signal."""
+    lang = _main_language(msg)
+    if lang is not None:
+        return lang == "he"
     return has_hebrew(msg)
 
 
@@ -3407,6 +3490,15 @@ _HE_CALQUE_RES = [
     # dropped, never shipped.
     re.compile(r"שום\s+מהירות"),
     re.compile(r"דברו\s+כואב"),
+    # Tab r14 item 5: three more strings that must never ship —
+    # the standalone token דברו (the garbled plural imperative,
+    # in any one-letter prefix form), the non-word כזאתם, and
+    # the agreement break שאתה שיתף (masculine "you" driving a
+    # third-person past verb, e.g. inside "תודה שאתה שיתף").
+    re.compile(r"(?<![\u0590-\u05FF])[ושבלכ]?דברו"
+               r"(?![\u0590-\u05FF])"),
+    re.compile(r"כזאתם"),
+    re.compile(r"שאתה\s+שיתף"),
 ]
 
 
@@ -3525,13 +3617,24 @@ _HE_SELF_FEM_MASC = {
     "זמינה": "זמין", "מקצועית": "מקצועי", "מאבחנת": "מאבחן",
     "ממליצה": "ממליץ", "מכירה": "מכיר", "מורשית": "מורשה",
     "מוסמכת": "מוסמך", "נרגשת": "נרגש", "פנויה": "פנוי",
+    # Tab r14 item 4: the forms Tab caught on device that the
+    # map didn't know — סקרנית (curious) above all, plus the
+    # rest of the everyday first-person set.
+    "סקרנית": "סקרן", "קשובה": "קשוב", "נלהבת": "נלהב",
+    "מתרגשת": "מתרגש", "דואגת": "דואג", "נהנית": "נהנה",
+    "מתכוונת": "מתכוון", "חוששת": "חושש",
 }
 # Round 5: the middle slot now also carries negation and
 # small adverbs — "אני לא יכולה" slipped past round 4
 # because the regex demanded the form directly after אני
 # (or אני ממש). Middle words are preserved verbatim.
+# Tab r14 item 4: the slot widens (deictics + a trailing
+# comma) — "אני כאן, מקשיבה" and "אני תמיד מבינה" shipped
+# feminine because כאן / תמיד / a comma weren't allowed
+# between אני and the participle.
 _HE_SELF_FEM_RE = re.compile(
-    r"(אני)\s+((?:(?:ממש|לא|גם|רק|כבר)\s+){0,2})("
+    r"(אני)\s+((?:(?:ממש|לא|גם|רק|כבר|תמיד|כאן|פה|עכשיו|"
+    r"איתך|איתכם|איתכן)[,\s]+){0,3})("
     + "|".join(_HE_SELF_FEM_MASC) + r")(?![\u0590-\u05FF])")
 
 # Self-reference WITHOUT an explicit אני (Tab round 5):
@@ -3548,6 +3651,9 @@ _HE_SELF_START_FORMS = {
     "מרגישה": "מרגיש", "מקשיבה": "מקשיב", "ממליצה": "ממליץ",
     "מכירה": "מכיר", "יכולה": "יכול", "זמינה": "זמין",
     "מאבחנת": "מאבחן", "עוזרת": "עוזר",
+    # r14 item 4: Tab's named forms at a sentence start too.
+    "סקרנית": "סקרן", "קשובה": "קשוב", "שואלת": "שואל",
+    "נלהבת": "נלהב",
 }
 _HE_SELF_START_RE = re.compile(
     r"(^|[.!?…]\s+)(" + "|".join(_HE_SELF_START_FORMS) + r")"
@@ -4033,6 +4139,34 @@ def _strip_sympathy_sentences(body):
     return "".join(s + sep for s, sep in kept).strip()
 
 
+# Tab r14 item 5: in a grief FOLLOW-UP, the opening's own two
+# signature phrases are repeats too — "no right way" (the EN
+# opening: "there is no right way to grieve") and "קח את הזמן"
+# (the HE opening's "קח את כל הזמן שאתה צריך", any imperative
+# form). The r13 no-repeat rule covered the opening as a whole;
+# Tab extends it to these phrases. Follow-ups only: a FIRST
+# reply's continuation keeps its pinned behavior (round 10
+# keeps "קחי את הזמן שאת צריכה" in a first-turn cleanup).
+_GRIEF_REPEAT_PHRASE_RES = [
+    re.compile(r"no\s+right\s+way", re.I),
+    re.compile(r"קח(?:י)?\s+את\s+(?:כל\s+)?הזמן"),
+]
+
+
+def _strip_grief_repeat_phrases(body):
+    """Drop every sentence carrying a repeated opening phrase
+    from a grief follow-up's continuation."""
+    if not body:
+        return body
+    segs = _sentence_segments(body)
+    kept = [(s, sep) for s, sep in segs
+            if not any(rx.search(s)
+                       for rx in _GRIEF_REPEAT_PHRASE_RES)]
+    if len(kept) == len(segs):
+        return body
+    return "".join(s + sep for s, sep in kept).strip()
+
+
 def _strip_companionship_lines(body):
     """Remove every 'my heart / my thoughts / we're with you'
     sentence from a grief continuation, wherever it appears —
@@ -4164,13 +4298,16 @@ def _he_gender_consistency(body, target="m"):
     return out
 
 
-def _grief_clean_body(body, opening, writer_gender=None):
+def _grief_clean_body(body, opening, writer_gender=None,
+                      repeat=False):
     """The deterministic cleanup every grief continuation passes
     through (sync, stream-visible, saved text): no divider seams,
     no echoed opening, no leading condolence pile-up, no second
     opening sentence, no glued-on second reply, one consistent
     gender of address — so the final reply is the fixed opening
-    + ONE continuation."""
+    + ONE continuation. `repeat` marks a FOLLOW-UP turn (r13):
+    its continuation additionally loses the opening's signature
+    phrases (r14 item 5)."""
     if not body:
         return body
     body = _DIVIDER_LINE_RE.sub("", body)
@@ -4180,6 +4317,8 @@ def _grief_clean_body(body, opening, writer_gender=None):
     body = _strip_continuation_openers(body)
     body = _strip_companionship_lines(body)
     body = _strip_sympathy_sentences(body)
+    if repeat:
+        body = _strip_grief_repeat_phrases(body)
     body = _cut_second_reply_block(body, opening)
     if opening and has_hebrew(opening):
         # The continuation matches the OPENING that actually
@@ -4207,7 +4346,7 @@ def _grief_clean_body(body, opening, writer_gender=None):
 
 
 def _grief_stream_visible(raw_text, opening, started,
-                          writer_gender=None):
+                          writer_gender=None, repeat=False):
     """The visible continuation during a grief STREAM: the scrubbed
     prefix, cleaned exactly like the final body. Held back ("")
     until two complete sentences exist — the condolence strip
@@ -4220,7 +4359,7 @@ def _grief_stream_visible(raw_text, opening, started,
         if len(segs) < 2:
             return "", False
     return _grief_clean_body(
-        scrubbed, opening, writer_gender), True
+        scrubbed, opening, writer_gender, repeat), True
 
 
 def _same_theme_judge(deleted_text, cand_text):
@@ -5275,7 +5414,8 @@ def _finish_model_turn(ctx, mode, reply, background):
         body = _grief_clean_body(
             scrub_field(reply.strip(),
                         ctx.get("grief_writer_gender")), echo_ref,
-            ctx.get("grief_writer_gender"))
+            ctx.get("grief_writer_gender"),
+            repeat=bool(ctx.get("grief_repeat")))
         if not body:
             # The continuation was ONLY a second opening (Tab
             # round 4) — the reply is the fixed opening + the
@@ -5703,7 +5843,8 @@ def _chat_stream_events_inner(uid, msg, background):
                 # bubble, exactly as elsewhere.
                 visible, grief_started = _grief_stream_visible(
                     raw[skip:].lstrip(), opening, grief_started,
-                    ctx.get("grief_writer_gender"))
+                    ctx.get("grief_writer_gender"),
+                    repeat=bool(ctx.get("grief_repeat")))
                 if grief_frozen or not visible.startswith(
                         emitted_visible):
                     grief_frozen = True
