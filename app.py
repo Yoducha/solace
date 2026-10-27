@@ -1410,7 +1410,16 @@ def detect_intent_label(text):
             return "replace"
         return "therapist"
     if identity_q == "professional":
-        return "licensed"
+        # A8: the "professional" detector family covers two
+        # distinct labels — a role-noun identity question
+        # ("Are you a therapist?", "אתה מטפל?") is THERAPIST
+        # (its answer carries the referral line, A10), while
+        # LICENSED/CREDENTIALS is only for license / credential
+        # wording ("Are you licensed?", "יש לך רישיון?").
+        if re.search(r"licens|certif|credential|qualif|"
+                     r"רישיון|מורשה|מוסמך|הכשרה|הסמכה", t, re.I):
+            return "licensed"
+        return "therapist"
     if identity_q == "diagnose":
         return "diagnose"
     if detect_medication_question(t):
@@ -1982,9 +1991,11 @@ GRIEF_OPENING_HE_N_F = (
     "שצריך. כשמתאים, אשמח לשמוע עליה."
 )
 _GRIEF_KIN_HE_F = re.compile(
-    r"(אמא|סבתא|אחותי|אחות\s+שלי|אשתי|הבת\s+שלי|בת\s+שלי|חברה\s+שלי)")
+    r"(אמא|סבתא|אחותי|אחות\s+שלי|אשתי|הבת\s+שלי|בת\s+שלי|חברה\s+שלי|"
+    r"הכלבה\s+שלי|כלבה\s+שלי|החתולה\s+שלי|חתולה\s+שלי)")
 _GRIEF_KIN_HE_M = re.compile(
-    r"(אבא|סבא|אחי|אח\s+שלי|בעלי|הבן\s+שלי|בן\s+שלי|חבר\s+שלי)")
+    r"(אבא|סבא|אחי|אח\s+שלי|בעלי|הבן\s+שלי|בן\s+שלי|חבר\s+שלי|"
+    r"הכלב\s+שלי|כלב\s+שלי|החתול\s+שלי|חתול\s+שלי)")
 
 
 def detect_grief_kin_he(text):
@@ -2637,13 +2648,15 @@ GRIEF_RE = [
     # the reversed "נפטרה לי אמא" shape, and "איבדתי את <kin>".
     re.compile(
         r"(?:ה)?(?:אמא|אבא|סבתא|סבא|אח שלי|אחות שלי|אחי|אחותי|בעלי|"
-        r"אשתי|הבן שלי|הבת שלי|חבר שלי|חברה שלי)"
+        r"אשתי|הבן שלי|הבת שלי|חבר שלי|חברה שלי|"
+        r"הכלב שלי|הכלבה שלי|החתול שלי|החתולה שלי)"
         r"[^.!?\n]{0,25}?"
         r"(?:נפטר|נפטרה|נפטרו|מת|מתה|נהרג|נהרגה|הלך לעולמו|הלכה לעולמה)"
     ),
     re.compile(r"(?:נפטר|נפטרה)\s+(?:לי\s+)?(?:ה)?(?:אמא|אבא|סבתא|סבא)"),
     re.compile(
-        r"איבדתי\s+את\s+(?:ה)?(?:אמא|אבא|סבתא|סבא|אחי|אחותי|בעלי|אשתי)"
+        r"איבדתי\s+את\s+(?:ה)?(?:אמא|אבא|סבתא|סבא|אחי|אחותי|בעלי|אשתי|"
+        r"הכלב|הכלבה|החתול|החתולה)"
     ),
 ]
 

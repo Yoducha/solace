@@ -107,6 +107,41 @@ if solace.is_never_crisis_idiom(
         "I can't take it anymore with this noise, I want to die"):
     failures.append("A1 real crisis clause after idiom wrongly cleared")
 
+# ---- A8: role-noun questions are THERAPIST, not LICENSED -------
+# "Are you a therapist?" / "אתה מטפל?" ask what Solace IS — the
+# THERAPIST label (whose answer carries the referral line, A10).
+# LICENSED is only for license / credential wording.
+for q, want in (("Are you a therapist?", "therapist"),
+                ("Are you a psychologist?", "therapist"),
+                ("אתה מטפל?", "therapist"),
+                ("אתה פסיכולוג?", "therapist"),
+                ("Are you a licensed professional?", "licensed"),
+                ("Are you licensed?", "licensed"),
+                ("What are your qualifications?", "licensed"),
+                ("יש לך רישיון?", "licensed"),
+                ("אתה מורשה?", "licensed")):
+    got = solace.detect_intent_label(q)
+    if got != want:
+        failures.append("A8 label %r -> %r, want %r" % (q, got, want))
+if "a doctor or a licensed mental health professional" not in \
+        solace.label_answer("therapist", False):
+    failures.append("A10 therapist answer lost the referral line")
+if "רופא או איש מקצוע מורשה" not in \
+        solace.label_answer("therapist", True):
+    failures.append("A10 HE therapist answer lost the referral line")
+
+# ---- A7: a pet's death is grief too (Part B line 55) ------------
+_dog = "הכלבה שלי מתה היום ואני הרוסה"
+if not solace.detect_grief(_dog):
+    failures.append("A7 pet death not detected as grief")
+if solace.detect_grief_kin_he(_dog) != "f":
+    failures.append("A7 pet kin gender wrong")
+if solace.grief_opening_for(True, _dog, "f") != \
+        solace.GRIEF_OPENING_HE_WF_F:
+    failures.append("A7 pet grief opening wrong")
+if solace.detect_grief("הכלבה שלי ישנה עכשיו"):
+    failures.append("A7 pet false positive (sleeping dog)")
+
 # ---- A17: the client busy state --------------------------------
 if "function setChatBusy" not in idx or "send.disabled = busy" not in idx:
     failures.append("A17 Send/mic busy state missing")
