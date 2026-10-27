@@ -374,6 +374,32 @@ _IDENTITY_Q_RES = [
     ("professional", re.compile(
         r"^\s*(?:האם\s+)?(?:אתה|את|אתם)\s+"
         r"(?:פסיכולוג|פסיכולוגית|פסיכולוגים|מטפל|מטפלת)\b")),
+    # Licensed / credential questions (Tab round 5): "Are you
+    # a licensed professional?" fell through to the model —
+    # the professional patterns above demand a role noun
+    # (therapist / psychologist / …), so "licensed
+    # professional" never matched and the model answered with
+    # "drawing on approaches like CBT, ACT". Same plain "No",
+    # same answer strings ("professional" kind).
+    ("professional", re.compile(
+        r"^\s*are\s+you\s+(?:a\s+|an\s+)?"
+        r"(?:licensed|certified|credentialed|qualified)\b",
+        re.I)),
+    ("professional", re.compile(
+        r"^\s*(?:what\s+(?:are|is)\s+your|tell\s+me\s+your)\s+"
+        r"(?:credentials|qualifications|licen[cs]e|"
+        r"certification)\b", re.I)),
+    ("professional", re.compile(
+        r"^\s*do\s+you\s+have\s+(?:a\s+)?licen[cs]e\b", re.I)),
+    ("professional", re.compile(
+        r"^\s*(?:האם\s+)?(?:אתה|את)\s+"
+        r"(?:איש\s+מקצוע\s+)?מורשה")),
+    ("professional", re.compile(
+        r"^\s*(?:האם\s+)?יש\s+לך\s+רישיון")),
+    ("professional", re.compile(
+        r"^\s*(?:האם\s+)?(?:אתה|את)\s+מוסמכ")),
+    ("professional", re.compile(
+        r"מה\s+(?:ה)?(?:הכשרה|הסמכה)\s+שלך")),
     # Request form (Tab round 3): "Can you be my therapist?" is
     # the same identity question wearing a request — it gets the
     # same plain deterministic "No", never a model reply whose
@@ -877,6 +903,7 @@ HARD LIMITS (never break these):
 - Never tell someone what condition they have. Never say or imply "you have depression / anxiety / PTSD / etc." Use describing language only, never labels: "a working understanding," "it sounds like," "what I'm hearing is."
 - Never claim to be a licensed professional or a human being.
 - IDENTITY LANGUAGE (Tab persona test): never describe yourself, or what happens in this conversation, as therapy, treatment, or counseling, and never as the work of a therapist, psychologist, or counselor — in English, Hebrew, or any language. You are an AI self-help companion for reflection and support. Never say you diagnose, heal, or cure.
+- NO NAMED-APPROACH CLAIMS: never say you draw on, use, are trained in, or are based on named approaches or schools (CBT, ACT, DBT, psychotherapy and the like), and never imply a license or credentials. If asked what you are, answer plainly: an AI companion for reflection and self-help. (You may still quietly let good listening practice shape how you respond — just never advertise named approaches as your method or credentials.)
 - REFERRAL WORDING (Tab ruling): encouraging outside support is welcome, but ALWAYS write it with exactly this phrasing — "a doctor or a licensed mental health professional" (in Hebrew: "רופא או איש מקצוע מורשה בתחום בריאות הנפש"). Never use any other label for them; other wordings are removed from your replies before they are shown.
 - PRIVACY REASSURANCE (Tab ruling): if the person worries about who might find out what they share, reassure them with exactly this and nothing stronger: "Your chats aren't shared with other people or used to advertise to you. See the privacy page for details." Never promise that no one will ever see or read what they share.
 - This is not emergency care. If the person is in crisis, follow the crisis protocol below.
@@ -909,6 +936,7 @@ STYLE:
 - Warm, calm, human, non-judgmental. Plain everyday language, no jargon.
 - Short messages. One question at a time — never stack multiple questions.
 - Never lecture, never give long lists of advice.
+- NO INVENTED WORRIES: never open a reply by claiming you can see, sense, or already know that something is bothering, troubling, or weighing on the person when they haven't said so — no "I can see something is bothering you" openers to a plain greeting. Respond to what they actually wrote; ask, don't presume.
 
 READING BETWEEN THE LINES (the inner person):
 - People rarely say exactly what they feel. Listen for what's underneath: the fear behind the anger, the loneliness behind "I'm fine," the shame behind the joke, what they avoid saying, what they repeat, where their words and feelings don't match.
@@ -1561,6 +1589,49 @@ def _sentence_availability_claim(seg):
     return any(rx.search(seg) for rx in _AVAILABILITY_CLAIM_RES)
 
 
+# Approach claims (Tab round 5): "drawing on approaches like
+# CBT, ACT" — a reply must never claim Solace draws on, uses,
+# or is based on NAMED therapy approaches, and never imply
+# licensure or credentials. The identity short-circuit answers
+# the direct question deterministically; this sentence-level
+# scrub is the second wall, for every other surface. A plain
+# informational mention that carries no self-claim shape
+# ("some people find CBT helpful") is not this pattern's
+# target — the claim shapes are.
+_APPROACH_CLAIM_RES = [
+    re.compile(
+        r"\bdraw(?:s|ing|n)?\s+on\b[^.!?\n]{0,60}?\b"
+        r"(?:approaches?|techniques?|methods?|CBT|ACT|DBT)\b",
+        re.I),
+    re.compile(
+        r"\bapproaches?\s+(?:like|such\s+as)\s+"
+        r"(?:CBT|ACT|DBT)\b", re.I),
+    re.compile(
+        r"\b(?:i|we|solace)\s+(?:use|uses|using|apply|applies|"
+        r"practice|practise|work\s+with)\b[^.!?\n]{0,60}?\b"
+        r"(?:CBT|ACT|DBT)\b", re.I),
+    re.compile(
+        r"\btrained\s+in\s+(?:CBT|ACT|DBT|psychotherapy)\b",
+        re.I),
+    re.compile(
+        r"\bbased\s+on\s+(?:evidence-based\s+)?"
+        r"(?:CBT|ACT|DBT)\b", re.I),
+    re.compile(
+        r"\bmy\s+(?:training|background|approach)\s+in\s+"
+        r"(?:CBT|ACT|DBT)\b", re.I),
+    re.compile(r"גישות\s+כמו\s+(?:CBT|ACT|DBT)"),
+    re.compile(
+        r"(?:מבוסס|מבוססת|משתמש|משתמשת|עובד|עובדת)\s+"
+        r"(?:ב|עם)?[^.!?\n]{0,25}?(?:CBT|ACT|DBT)"),
+]
+
+
+def _sentence_approach_claim(seg):
+    """True when one sentence claims Solace draws on / uses /
+    is based on named therapy approaches."""
+    return any(rx.search(seg) for rx in _APPROACH_CLAIM_RES)
+
+
 def _sentence_segments(text):
     """Split into (sentence, separator-after) pairs, losslessly."""
     parts = _SENT_SEP_RE.split(text or "")
@@ -1584,6 +1655,7 @@ def _scrub_join(segs, include_last):
             if not tail or tail[-1] not in ".!?…":
                 break
         if _sentence_banned(seg) or _sentence_availability_claim(seg) \
+                or _sentence_approach_claim(seg) \
                 or _sentence_dangling(seg):
             continue
         out.append(seg + sep)
