@@ -127,36 +127,39 @@ r = client.post("/api/chat", json={"user_id": uid, "message": "I don't know what
 if not (r["crisis"] is True and seen_systems and "CRISIS MODE" in seen_systems[-1]):
     failures.append("E2E crisis-mode follow-up failed: %r / systems=%d" % (r, len(seen_systems)))
 
-# ---- Re-test fix #2: retraction is a two-step step-down, not an exit ----
+# ---- FINAL order A2: a clarification ends the crisis state ----
+# (Supersedes the round-2 two-step step-down pins: the latch is
+# cleared the moment the writer clarifies, the banner goes off,
+# and no hotline lines are re-sent. Part B lines 47-50.)
 n_systems = len(seen_systems)
 r = client.post("/api/chat", json={"user_id": uid, "message": "I was joking, I'm totally fine, forget it"}).json()
-if r["crisis"] is not True:
-    failures.append("E2E retraction instantly exited crisis mode (the hole Tab found): %r" % r)
-if "are you safe right now" not in r["reply"] or "😊" in r["reply"] or "relief" in r["reply"]:
-    failures.append("E2E retraction check-in wording wrong: %r" % r["reply"])
+if r["crisis"] is not False:
+    failures.append("A2 clarification must clear the crisis state: %r" % r)
+if r["reply"] != solace.CLARIFY_REPLY or "988" in r["reply"]:
+    failures.append("A2 clarification reply wrong: %r" % r["reply"])
 if len(seen_systems) != n_systems:
-    failures.append("E2E retraction check-in should be the fixed text (no model call)")
-if r.get("banner") is not True:
-    failures.append("E2E banner flag missing during step-down: %r" % r)
+    failures.append("A2 clarification should be the fixed text (no model call)")
+if r.get("banner") is not False:
+    failures.append("A2 banner must go off on clarification: %r" % r)
 
-# Still latched until the next calm exchange completes the step-down.
+# The next calm exchange is an ordinary turn.
 r = client.post("/api/chat", json={"user_id": uid, "message": "Work has been draining me lately."}).json()
 if r["crisis"] is not False or (seen_systems and "CRISIS MODE" in seen_systems[-1]):
-    failures.append("E2E post-check-in calm exchange did not step down: %r" % r)
-if r.get("banner") is not True:
-    failures.append("E2E banner must stay for the rest of the session after step-down: %r" % r)
+    failures.append("A2 post-clarification turn is not normal: %r" % r)
+if r.get("banner") is not False:
+    failures.append("A2 banner must stay off after clarification: %r" % r)
 
 h = client.get("/api/history", params={"user_id": uid}).json()
-if h["crisis"] is not False or h["banner"] is not True:
-    failures.append("E2E history state wrong after step-down: crisis=%r banner=%r"
+if h["crisis"] is not False or h["banner"] is not False:
+    failures.append("A2 history state wrong after clarification: crisis=%r banner=%r"
                     % (h["crisis"], h["banner"]))
 
-# A fresh risk signal re-latches fully and resets the step-down.
+# A fresh risk signal re-latches fully.
 r = client.post("/api/chat", json={"user_id": uid, "message": "I want to die"}).json()
 if r["crisis"] is not True or "glad you told me" not in r["reply"]:
-    failures.append("E2E re-latch after step-down failed: %r" % r)
+    failures.append("E2E re-latch after clarification failed: %r" % r)
 
-print("end-to-end: trigger -> fixed response -> latched follow-up -> retraction check-in (still latched) -> calm exchange steps down, banner stays -> re-latch")
+print("end-to-end: trigger -> fixed response -> latched follow-up -> clarification clears latch + banner (A2) -> normal turn -> re-latch")
 
 # ---- Re-test fix #7: informational word question -> gentle path ----
 uid2 = "test-" + uuid.uuid4().hex[:12]
@@ -194,14 +197,15 @@ if "911" not in solace.FIXED_CRISIS_RESPONSE or "988" not in solace.FIXED_CRISIS
                     % solace.FIXED_CRISIS_RESPONSE)
 
 r = client.post("/api/chat", json={"user_id": uid3, "message": "רק צחקתי, אני בסדר"}).json()
-if r["crisis"] is not True or "אתה בטוח עכשיו" not in r["reply"]:
-    failures.append("E2E Hebrew retraction must get the Hebrew check-in, still latched: %r" % r)
+if r["crisis"] is not False or r["reply"] != solace._CLARIFY_HE["n"] \
+        or "1201" in r["reply"]:
+    failures.append("A2 Hebrew clarification must clear the latch with the brief Hebrew reply: %r" % r)
 
 r = client.post("/api/chat", json={"user_id": uid3, "message": "העבודה מעייפת אותי"}).json()
-if r["crisis"] is not False or r.get("banner") is not True:
-    failures.append("E2E Hebrew step-down failed: %r" % r)
+if r["crisis"] is not False or r.get("banner") is not False:
+    failures.append("A2 Hebrew post-clarification turn failed: %r" % r)
 
-print("end-to-end: Hebrew crisis (1201 first, fully Hebrew) -> Hebrew check-in -> step-down")
+print("end-to-end: Hebrew crisis (1201 first, fully Hebrew) -> clarification clears (A2) -> normal turn")
 
 # ---- Round 3: crisis language = language of THAT message ---------
 # Frozen strings must be byte-identical (hashes pinned 2026-10-25).
@@ -209,7 +213,7 @@ for name, want in (
     ("FIXED_CRISIS_RESPONSE",
      "718f7c98131223578dd68c441f90cad7f72404d9abf3de5952bef39581aa5250"),
     ("FIXED_CRISIS_RESPONSE_HE",
-     "d9306c9af9205559b745bfbbf0b9b1ad26df027dc2376cd8325aa569d2c1365d"),
+     "faddb1553685e4286b2298d0d07860b2dcd774a34904956f862b73c786769333"),
 ):
     got = hashlib.sha256(getattr(solace, name).encode()).hexdigest()
     if got != want:
@@ -217,7 +221,7 @@ for name, want in (
 
 uid4 = "test-" + uuid.uuid4().hex[:12]
 r = client.post("/api/chat", json={"user_id": uid4, "message": "אני רוצה למות"}).json()
-if not (r["crisis"] is True and r["reply"].startswith(solace.FIXED_CRISIS_RESPONSE_HE)
+if not (r["crisis"] is True and r["reply"].startswith(solace.crisis_reply_he(None))
         and r.get("banner_lang") == "he" and r.get("hotline") == "1201"):
     failures.append("R3 Hebrew crisis wrong: %r" % r)
 # English crisis IMMEDIATELY after the Hebrew one: English fixed
@@ -230,7 +234,7 @@ if "ער״ן" in r["reply"] or "1201" in r["reply"]:
     failures.append("R3 English crisis reply leaked Hebrew resources: %r" % r["reply"])
 # And back to Hebrew again.
 r = client.post("/api/chat", json={"user_id": uid4, "message": "אני רוצה למות"}).json()
-if not (r["crisis"] is True and r["reply"].startswith(solace.FIXED_CRISIS_RESPONSE_HE)
+if not (r["crisis"] is True and r["reply"].startswith(solace.crisis_reply_he(None))
         and r.get("banner_lang") == "he" and r.get("hotline") == "1201"):
     failures.append("R3 Hebrew crisis after English wrong: %r" % r)
 # Latched follow-ups follow the follow-up's own language too.

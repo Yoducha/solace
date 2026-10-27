@@ -51,7 +51,7 @@ for name, want in (
     ("FIXED_CRISIS_RESPONSE",
      "718f7c98131223578dd68c441f90cad7f72404d9abf3de5952bef39581aa5250"),
     ("FIXED_CRISIS_RESPONSE_HE",
-     "d9306c9af9205559b745bfbbf0b9b1ad26df027dc2376cd8325aa569d2c1365d"),
+     "faddb1553685e4286b2298d0d07860b2dcd774a34904956f862b73c786769333"),
 ):
     got = hashlib.sha256(getattr(solace, name).encode()).hexdigest()
     if got != want:
@@ -126,7 +126,7 @@ MODEL_TEXT[0] = "אני כאן איתך, דני."
 uid = new_user()
 r = chat(uid, "אבא שלי נפטר")
 rep = r["reply"]
-if not rep.startswith(solace.GRIEF_OPENING_HE):
+if not rep.startswith(solace.GRIEF_OPENING_HE_N):
     failures.append("OPENER E2E wrong opening: %r" % rep[:100])
 if solace.GRIEF_FALLBACK_HE not in rep:
     failures.append("OPENER E2E no fallback line: %r" % rep)
@@ -171,8 +171,10 @@ if opening != solace.GRIEF_OPENING_HE_WF_F or "עליה" not in opening:
     failures.append("WRITER feminine/mother opening wrong: %r"
                     % opening)
 # No signal keeps the rounds 2-3 openings exactly.
+# FINAL order A5: no signal -> the NEUTRAL opening (supersedes
+# the rounds 2-3 masculine-default pin).
 if solace.grief_opening_for(True, "אמא שלי נפטרה", None) \
-        != solace.GRIEF_OPENING_HE_F:
+        != solace.GRIEF_OPENING_HE_N_F:
     failures.append("WRITER no-signal opening changed")
 
 # The cleanup now normalizes toward the writer's gender.
@@ -225,7 +227,9 @@ for msg, hebrew in (("Can you diagnose me?", False),
     uid = new_user()
     calls["n"] = 0
     r = chat(uid, msg)
-    want = solace.IDENTITY_ANSWERS[("diagnose", hebrew)]
+    # FINAL order A10: referral-free template + the line
+    # appended by code, exactly once.
+    want = solace.label_answer("diagnose", hebrew)
     if r["reply"] != want:
         failures.append("DIAGNOSE %r wrong answer: %r"
                         % (msg, r["reply"]))

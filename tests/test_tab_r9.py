@@ -45,7 +45,7 @@ for name, want in (
     ("FIXED_CRISIS_RESPONSE",
      "718f7c98131223578dd68c441f90cad7f72404d9abf3de5952bef39581aa5250"),
     ("FIXED_CRISIS_RESPONSE_HE",
-     "d9306c9af9205559b745bfbbf0b9b1ad26df027dc2376cd8325aa569d2c1365d"),
+     "faddb1553685e4286b2298d0d07860b2dcd774a34904956f862b73c786769333"),
 ):
     got = hashlib.sha256(getattr(solace, name).encode()).hexdigest()
     if got != want:
@@ -127,7 +127,9 @@ for surface in ("sync", "stream"):
         failures.append("AVAIL (%s) called the model" % surface)
 uid = new_user()
 r = chat(uid, "אתה זמין תמיד?")
-if r["reply"] != solace.AVAILABILITY_ANSWER_HE:
+# FINAL order A5/A12: unknown writer gender -> the neutral
+# availability version.
+if r["reply"] != solace._AVAILABILITY_HE["n"]:
     failures.append("AVAIL HE wrong answer: %r" % r["reply"])
 
 # Claim sentences scrubbed; the rest of the reply survives.
@@ -167,7 +169,7 @@ MODEL_TEXT[0] = GLUED_HE
 uid = new_user()
 r = chat(uid, "אמא שלי נפטרה אתמול")
 rep = r["reply"]
-if not rep.startswith(solace.GRIEF_OPENING_HE_F):
+if not rep.startswith(solace.GRIEF_OPENING_HE_N_F):
     failures.append("GRIEF glued wrong opening: %r" % rep[:100])
 if rep.count("מצטער") != 1:
     failures.append("GRIEF glued kept a second reply: %r" % rep)
@@ -191,7 +193,8 @@ for surface in ("sync", "stream"):
         if marker in rep:
             failures.append("GRIEF flip (%s) kept %r: %r"
                             % (surface, marker, rep))
-    if "שאתה מרגיש" not in rep:
+    # FINAL order A5: unknown writer -> plural-neutral forms.
+    if "שאתם מרגישים" not in rep:
         failures.append("GRIEF flip (%s) not normalized: %r"
                         % (surface, rep))
     if "עליה" not in rep:
@@ -290,13 +293,15 @@ if solace.detect_identity_question("Can you be my therapist?") \
 if solace.detect_identity_question("אתה יכול להיות המטפל שלי?") \
         != "therapy":
     failures.append("REQUEST identity not detected (HE)")
+# FINAL order A10: the labeled answer now carries the referral
+# line appended by code, exactly once.
 for msg, want in (
     ("Can you be my therapist?",
-     solace.IDENTITY_ANSWERS[("therapy", False)]),
+     solace.label_answer("therapist", False)),
     ("Can you act as my psychologist?",
-     solace.IDENTITY_ANSWERS[("therapy", False)]),
+     solace.label_answer("therapist", False)),
     ("אתה יכול להיות המטפל שלי?",
-     solace.IDENTITY_ANSWERS[("therapy", True)]),
+     solace.label_answer("therapist", True)),
 ):
     uid = new_user()
     calls["n"] = 0

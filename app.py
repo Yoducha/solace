@@ -52,6 +52,18 @@ CRISIS_PATTERNS = [
     r"(?:thinking of|planning to|going to) (?:ending|end) it\b",
     r"לסיים את זה (?:הלילה|היום)",
     r"חושב לסיים את זה",
+    # Tab FINAL order A1.3 / Part B: the idiom word tied to life
+    # or death in the same message IS a crisis statement.
+    r"better off without me",
+    r"(?:go to sleep|fall asleep|sleep) and never wake",
+    r"wish i could\b[^.!?\n]{0,40}\bnever wake",
+    r"bought a rope\b[^.!?\n]{0,50}\bknow what (?:it'?s|its) for\b",
+    r"נמאס לי (?:מ)?לחיות",
+    r"נמאס לי מהחיים",
+    r"יותר טובים? בלעדיי?",
+    r"לגמור עם עצמי",
+    r"להתאבר",
+    r"להתבד",
     r"suicid\w*",
     r"suisid\w*",
     r"self[\s-]?harm",
@@ -167,7 +179,7 @@ FIXED_CRISIS_RESPONSE = (
 # danger in Israel is MADA 101 — NOT 911 (Tab round fix: the Hebrew
 # text used to end with "call 911", the wrong country).
 FIXED_CRISIS_RESPONSE_HE = (
-    "אני ממש שמח שסיפרת לי על זה. חשוב לי לוודא שאתה בטוח עכשיו. "
+    "טוב שסיפרת לי. חשוב לי לוודא שאתה בטוח עכשיו. "
     "האם אתה חושב לפעול על פי המחשבות האלה הלילה? אתה לא צריך לעבור את זה לבד — "
     "בישראל אפשר להתקשר לער״ן, קו הסיוע הנפשי, במספר 1201 (זמין 24/7). "
     "בארה״ב אפשר להתקשר או לשלוח הודעה ל־988 (קו החיים למניעת התאבדות, 24/7), "
@@ -180,15 +192,17 @@ FIXED_CRISIS_RESPONSE_HE = (
 # Where it conflicts with earlier rounds, THIS section governs.
 # =====================================================================
 
-# ---- A5/A14: the Hebrew crisis reply in three writer-gender versions.
-# The masculine version IS the frozen string above (byte-identical,
-# hash pin unchanged): it already opens in the «טוב שסיפרת לי» family
-# the order's A14 rewrite names. The feminine and neutral versions
-# carry the same content with the writer addressed in their own
-# gender — or, while no gender is known, in forms that address no
-# gender at all (no אתה and no את forms toward the writer).
+# ---- A5/A14: the Hebrew crisis reply in three writer-gender
+# versions. A14 rewrote the opening to «טוב שסיפרת לי» (the old
+# "אני ממש שמח שסיפרת לי על זה" is gone — the order supersedes
+# the frozen HE string; the EN frozen string stays byte-
+# identical, and the suites' HE hash pin moves to the new
+# masculine version). The feminine and neutral versions carry
+# the same content with the writer addressed in their own
+# gender — or, while no gender is known, in forms that address
+# no gender at all (no אתה and no את forms toward the writer).
 FIXED_CRISIS_RESPONSE_HE_F = (
-    "אני ממש שמח שסיפרת לי על זה. חשוב לי לוודא שאת בטוחה עכשיו. "
+    "טוב שסיפרת לי. חשוב לי לוודא שאת בטוחה עכשיו. "
     "האם את חושבת לפעול על פי המחשבות האלה הלילה? את לא צריכה לעבור את זה לבד — "
     "בישראל אפשר להתקשר לער״ן, קו הסיוע הנפשי, במספר 1201 (זמין 24/7). "
     "בארה״ב אפשר להתקשר או לשלוח הודעה ל־988 (קו החיים למניעת התאבדות, 24/7), "
@@ -196,7 +210,7 @@ FIXED_CRISIS_RESPONSE_HE_F = (
     "אני כאן איתך — את רוצה לספר לי מה עובר עלייך?"
 )
 FIXED_CRISIS_RESPONSE_HE_N = (
-    "אני ממש שמח שסיפרת לי על זה. חשוב לי לוודא שהכול בטוח עכשיו. "
+    "טוב שסיפרת לי. חשוב לי לוודא שהכול בטוח עכשיו. "
     "האם יש מחשבות לפעול על פי המחשבות האלה הלילה? לא צריך לעבור את זה לבד — "
     "בישראל אפשר להתקשר לער״ן, קו הסיוע הנפשי, במספר 1201 (זמין 24/7). "
     "בארה״ב אפשר להתקשר או לשלוח הודעה ל־988 (קו החיים למניעת התאבדות, 24/7), "
@@ -234,8 +248,18 @@ def _norm_match(text):
     t = re.sub(r"[^\w\s']", " ", t, flags=re.UNICODE)
     t = re.sub(r"\s+", " ", t).strip()
     t = re.sub(r"\bkms\b", "kill myself", t)
+    t = re.sub(r"\bkys\b", "kill yourself", t)
     t = re.sub(r"\bunalive\s+myself\b", "kill myself", t)
     t = re.sub(r"\bunalive\b", "suicide", t)
+    # A4: one-letter typos on the crisis keywords themselves
+    # (kill / kil, myself / myslef, want / wnat, suicide /
+    # suiside) still match the deterministic check.
+    t = re.sub(r"\bkil\b(?=\s+(?:myself|me|himself|herself))",
+               "kill", t)
+    t = re.sub(r"\bmyslef\b", "myself", t)
+    t = re.sub(r"\bwnat\b", "want", t)
+    t = re.sub(r"\bsuiside\b", "suicide", t)
+    t = re.sub(r"\bcomit\b", "commit", t)
     return t
 
 
@@ -258,6 +282,19 @@ _NEVER_CRISIS_RES = [
     re.compile(r"\bdead\s+tired\b"),
     re.compile(r"\bdrop[-\s]?dead\s+gorgeous\b"),
     re.compile(r"\bi(?:'m| am)\s+(?:so\s+)?dead\s+(?:meat|tired)\b"),
+    # A1's explicit list: drowning (in work), at the end of my
+    # rope, bury myself (in shame / work), burnt out, disappear
+    # or run away FOR A BREAK — never a crisis on their own.
+    re.compile(r"\bdrowning\s+in\s+(?:work|emails?|paperwork|debt|"
+               r"tasks|homework)\b"),
+    re.compile(r"\bat\s+the\s+end\s+of\s+my\s+rope\s+with\b"),
+    re.compile(r"\bbury\s+myself\s+(?:in\s+work|from\s+shame|"
+               r"in\s+shame)\b"),
+    re.compile(r"\bburnt\s+out\b|\bburned\s+out\b"),
+    re.compile(r"\bdisappear\s+for\s+(?:the\s+)?(?:weekend|a\s+few\s+"
+               r"days|a\s+while|a\s+bit)\b"),
+    re.compile(r"\brun\s+away\s+from\s+(?:it\s+all|everything)\s+for\s+"
+               r"(?:a\s+few\s+days|a\s+while|the\s+weekend)\b"),
     # joke / lyric / quote / school frames around dark words
     re.compile(r"\b(?:lyric|song|quote|quoting|homework|essay|assignment|"
                r"schoolwork|book report)\b[^.!?\n]{0,60}?"
@@ -272,6 +309,20 @@ _NEVER_CRISIS_RES = [
     re.compile(r"מרגיש\s+שאני\s+מת\s+מצחוק"),
     re.compile(r"כשאני\s+צוחק\s+אני\s+מרגיש\s+שאני\s+מת"),
     re.compile(r"אני\s+גמור\s*$|קשה\s+לי\s+אני\s+גמור"),
+    # A1's Hebrew list: מת מעייפות (dead tired), מת מבושה,
+    # לקבור את עצמי מבושה, בא לי להיעלם / לברוח להפסקה,
+    # נמאס לי (alone), אין לי כוח (for a person/thing),
+    # טובע בעבודה, מרגיש על הפנים, המבחן הורג אותי.
+    re.compile(r"מת\s+(?:מ)?(?:עייפות|מבושה|בושה)"),
+    re.compile(r"לקבור\s+את\s+עצמי\s+מבושה"),
+    re.compile(r"בא\s+לי\s+להיעלם\s+(?:לסוף|לכמה|לקצת)"),
+    re.compile(r"בא\s+לי\s+לברוח\s+מהכל\s+לכמה\s+ימים"),
+    re.compile(r"נמאס\s+לי\s*$"),
+    re.compile(r"אין\s+לי\s+כוח\s+יותר\s+ל"),
+    re.compile(r"טובע\s+ב(?:עבודה|מיילים|משימות)"),
+    re.compile(r"מרגיש\s+על\s+הפנים"),
+    re.compile(r"אני\s+שבור\s*$"),
+    re.compile(r"(?:המבחן|העבודה|השיעור|החום|הרעש)\s+הזה\s+הורג\s+אותי"),
     re.compile(r"(?:שיר|מילים\s+של\s+שיר|ציטוט|שיעורי\s+בית|עבודה\s+לבית\s+הספר|חיבור)"
                r"[^.!?\n]{0,40}?(?:להתאבד|התאבדות|למות|להרוג\s+את\s+עצמי)"),
     re.compile(r"(?:זה\s+היה\s+)?בצחוק|רק\s+צחקתי|סתם\s+צחקתי"),
@@ -324,9 +375,14 @@ _MEDICAL_RES = [
     re.compile(r"\ballergic\s+reaction\b|\banaphylax|"
                r"\bthroat\s+is\s+closing\b|\blips?\s+(?:are\s+)?swelling\b"),
     re.compile(r"תגובה\s+אלרגית|הגרון\s+נסגר|השפתיים\s+מתנפחות"),
-    # overdose as a word (completed ingestion is detected separately)
-    re.compile(r"\boverdose\b|\boverdosed\b"),
-    re.compile(r"מנת\s+יתר|הרעלת\s+תרופות"),
+    # the word overdose — in a COMPLETED frame only. A plan
+    # ("I'm going to overdose tonight") keeps the frozen crisis
+    # path (Tab's standing ruling); a completed ingestion is
+    # also caught by detect_overdose below.
+    re.compile(r"\boverdosed\b|\btook\s+an?\s+overdose\b|"
+               r"\boverdosing\b|"
+               r"\boverdose\b[^.!?\n]{0,30}\bago\b"),
+    re.compile(r"הרעלת\s+תרופות"),
 ]
 
 
@@ -417,9 +473,15 @@ _CLARIFY_RES = [
                re.I),
     re.compile(r"\bi(?:'m| am)\s+(?:safe|fine|okay|ok)\b", re.I),
     re.compile(r"\bnot\s+like\s+that\b", re.I),
+    re.compile(r"\bjust\s+venting\b|\bi\s+meant\b[^.!?\n]{0,30}?"
+               r"\b(?:tired|exhausted|joking)\b", re.I),
     re.compile(r"אני\s+לא\s+מתכוון|לא\s+באמת|אני\s+בטוח|"
                r"אני\s+לא\s+אעשה\s+(?:כלום|שום\s+דבר)|"
                r"התכוונתי\s+בצחוק|אני\s+בסדר"),
+    # A2's own example: "התכוונתי ש…" ("I meant that…") — the
+    # walk-back that restates the words as something ordinary.
+    re.compile(r"התכוונתי\s+ש"),
+    re.compile(r"סליחה\s+התכוונתי"),
 ]
 
 
@@ -459,13 +521,20 @@ _GREETING_RE = re.compile(
     r"^\s*(?:hi+|hello|hey+|שלום|היי+|הי|מה\s+קורה|מה\s+נשמע|"
     r"what'?s\s+up|good\s+(?:morning|evening|afternoon))"
     r"(?:\s+(?:there|solace|סולאס))?\s*[.!?]*\s*$", re.I)
+# The intake's own opener (A13 names it explicitly): the app
+# sends "Hi, I'd like to talk." when the person skips the form —
+# it is a content-free greeting and gets the template reply.
+_GREETING_INTAKE_RE = re.compile(
+    r"^\s*hi,?\s+i'?d\s+like\s+to\s+talk\.?\s*$", re.I)
 
 GREETING_SELF_EN = "an AI companion for reflection and self-help"
 GREETING_SELF_HE = "מלווה בינה מלאכותית להרהור ולתמיכה עצמית"
 
 
 def is_content_free_greeting(text):
-    return bool(_GREETING_RE.search((text or "").strip()))
+    t = (text or "").strip()
+    return bool(_GREETING_RE.search(t)
+                or _GREETING_INTAKE_RE.search(t))
 
 
 def greeting_reply(name, hebrew, gender):
@@ -494,6 +563,11 @@ OVERDOSE_RE = [
         r"(?:took|swallowed|ate)\b[^.!?\n]{0,25}?"
         r"(?:all\s+(?:the|my)|whole|entire|too\s+many|handful|bottle|"
         r"\d+\s*(?:pills|tablets))",
+        # A3: ingestion with a quantity — a number + a named
+        # substance counts ("I took 30 tylenol an hour ago").
+        r"(?:took|swallowed|ate)\b[^.!?\n]{0,20}?"
+        r"\d+\s*(?:tylenol|advil|ibuprofen|paracetamol|"
+        r"acetaminophen|painkillers?|capsules?|mg)\b",
         r"took\s+an?\s+overdose",
         r"\boverdosed\b",
         r"swallowed\s+a\s+bottle",
@@ -511,6 +585,11 @@ OVERDOSE_RE = [
         r"(?:כל הכדורים|כל הגלולות|הרבה כדורים|הרבה גלולות|"
         r"המון כדורים|המון גלולות|מלא כדורים|מלא גלולות|"
         r"יותר מדי|בקבוק|חופן)",
+        # A3: a quantity frame — "half a pack of Acamol"
+        # (חצי חפיסה של אקמול), a pack, a box, a number.
+        r"(?:בלעתי|לקחתי|אכלתי)[^.!?\n]{0,20}?"
+        r"(?:חצי\s+חפיסה|חפיסה|חבילה|קופס[הא]|"
+        r"\d+\s*(?:כדורים|גלולות|טבליות))",
         r"מנת\s+יתר",
         r"הרעלת\s+תרופות",
     )
@@ -781,10 +860,25 @@ _IDENTITY_Q_RES = [
     ("diagnose", re.compile(
         r"^\s*do\s+i\s+have\s+(?!to\b)[^.!?\n]{0,60}[.!?]?$",
         re.I)),
+    # A8 DIAGNOSE: any "do I have X / am I X / is this X / יש לי X"
+    # shape — the label set names the form explicitly.
+    ("diagnose", re.compile(
+        r"^\s*am\s+i\s+(?:bipolar|depressed|autistic|schizophrenic|"
+        r"mentally\s+ill|adhd|ocd|ptsd|borderline|narcissistic|"
+        r"anorexic|bulimic|insomniac)\b", re.I)),
+    ("diagnose", re.compile(
+        r"^\s*is\s+this\s+(?:adhd|ocd|ptsd|depression|anxiety|"
+        r"bipolar|autism|a\s+panic\s+attack)\b", re.I)),
     ("diagnose", re.compile(
         r"(?:אתה|את)\s+יכול(?:ה)?\s+לאבחן\s+אותי")),
     ("diagnose", re.compile(r"תאבחן\s+אותי")),
     ("diagnose", re.compile(r"לאבחן\s+אותי")),
+    ("diagnose", re.compile(
+        r"(?:האם\s+)?יש\s+לי\s+(?:דיכאון|חרדה|הפרעה|אוטיזם|"
+        r"דו\s*קוטביות|אבחון)\s*\??")),
+    ("diagnose", re.compile(
+        r"(?:האם\s+)?אני\s+(?:דיכאוני|דיכאונית|דו\s*קוטבי|"
+        r"דו\s*קוטבית|אוטיסט|אוטיסטית)\s*\??")),
 ]
 
 IDENTITY_ANSWERS = {
@@ -851,6 +945,15 @@ _AVAILABILITY_Q_RES = [
     re.compile(r"זמי\w*\s+(?:24\s*/\s*7|מסביב\s+לשעון)"),
     re.compile(r"אפשר\s+לדבר\s+איתך\s+בכל\s+שעה"),
     re.compile(r"^\s*(?:האם\s+)?(?:אתה|את)\s+זמי\w*\s*\?\s*$"),
+    # A12 evidence shape: "אפשר לכתוב לך באמצע הלילה?" — writing
+    # in the middle of the night is the availability question.
+    re.compile(
+        r"אפשר\s+(?:לכתוב|לדבר|לשלוח)[^.!?\n]{0,20}?"
+        r"(?:באמצע\s+הלילה|בלילה|בכל\s+שעה|מתי\s+ש)"),
+    re.compile(
+        r"\bcan\s+i\s+(?:write|message|text|talk|reach)\b"
+        r"[^.!?\n]{0,30}?\b(?:middle\s+of\s+the\s+night|at\s+night|"
+        r"any\s?time|whenever)\b", re.I),
 ]
 
 AVAILABILITY_ANSWER = (
@@ -896,17 +999,30 @@ _VOICE_Q_RES = [
     re.compile(r"\bspeak\s+instead\s+of\s+typ", re.I),
     re.compile(
         r"\bvoice\s+mode\b[^.!?\n]{0,20}\?", re.I),
+    # A8 VOICE: speak / read aloud / store-or-keep audio shapes.
+    re.compile(
+        r"\bcan\s+you\s+(?:speak|read|say)\b[^.!?\n]{0,30}?"
+        r"\b(?:answers|replies|out\s+loud|aloud|to\s+me)\b", re.I),
+    re.compile(
+        r"\bdo\s+you\s+(?:store|save|keep|record)\s+(?:my\s+)?"
+        r"(?:audio|voice|recordings?)\b", re.I),
+    re.compile(
+        r"\bdo\s+you\s+record\s+(?:me|my|the)\b", re.I),
     re.compile(r"אפשר\s+לדבר\s+(?:איתך|אתך)\s+בקול"),
     re.compile(r"לדבר\s+(?:איתך|אתך)\s+בקול"),
     re.compile(r"יש\s+(?:לך\s+)?מצב\s+קול"),
     re.compile(r"(?:אתה|את)\s+יכול(?:ה)?\s+לשמוע\s+אותי"),
+    re.compile(
+        r"(?:אתה|את)\s+(?:שומר|מקליט)\s+את\s+(?:ה)?"
+        r"(?:הקלטות|אודיו|קול)"),
+    re.compile(r"(?:שומר|מקליט)\s+את\s+ההקלטות\s+שלי"),
     # Hebrew capability family (Tab round 6): "אתה יכול
     # לשמוע הודעות קוליות?" — לשמוע + a voice object, with
     # יכול/אפשר/מסוגל in front, in either order.
     re.compile(
         r"(?:יכול(?:ה)?|אפשר|מסוגל(?:ת)?)[^.!?\n]{0,15}?"
         r"לשמוע[^.!?\n]{0,20}?"
-        r"(?:הודעות|הקלטות|קול|אודיו|הודעה)"),
+        r"(?:הודעות|הקלטות|קול|אודיו|הודעה|אותי)"),
     re.compile(
         r"לשמוע\s+(?:את\s+)?"
         r"(?:ההודעות|הקלטות|הודעות)\s+הקוליות"),
@@ -970,6 +1086,14 @@ _NEED_PROF_RES = [
         r"(?:a\s+|an\s+|to\s+)?"
         r"(?:therapist|psychologist|counselor|counsellor|"
         r"psychiatrist|shrink|professional)\b", re.I),
+    # A8 SEEKING-HELP: "should I see someone about my anxiety?"
+    re.compile(r"\bshould\s+i\s+see\s+someone\b", re.I),
+    re.compile(r"\bdo\s+i\s+need\s+(?:to\s+see\s+)?someone\b",
+               re.I),
+    # HE: "אני צריכה ללכת לטיפול?" — need/must + (go to) therapy.
+    re.compile(
+        r"(?:צריך|צריכה|כדאי|חייב|חייבת)[^.!?\n]{0,20}?"
+        r"(?:ללכת\s+)?(?:לטיפול|טיפול|לפסיכולוג|למטפל)"),
     re.compile(
         r"\bi\s+(?:think\s+i\s+|really\s+|just\s+)?need\s+"
         r"(?:a\s+|to\s+see\s+a\s+)?"
@@ -1055,9 +1179,11 @@ def _referral_append(hebrew, gender=None):
         return REFERRAL_APPEND_EN
     if gender == "f":
         return REFERRAL_APPEND_HE_F
-    if gender == "m":
-        return REFERRAL_APPEND_HE
-    return REFERRAL_APPEND_HE_N
+    if gender == "n":
+        return REFERRAL_APPEND_HE_N
+    # 'm', and the legacy default for callers that don't track
+    # gender (the masculine form is the long-standing pin).
+    return REFERRAL_APPEND_HE
 
 
 _PROF_SENTENCE_RE = re.compile(
@@ -1085,20 +1211,29 @@ def _append_referral_once(reply, hebrew, gender=None):
 # availability detectors), then the model classifier's intent.
 _MEDICATION_Q_RES = [
     re.compile(r"\b(?:should|can|may)\s+i\s+(?:take|stop|start|"
-               r"increase|decrease|change|skip)\b[^.!?\n]{0,40}?"
+               r"increase|decrease|change|skip|double|switch|"
+               r"combine)\b[^.!?\n]{0,40}?"
                r"\b(?:medication|medicine|pill|dose|mg|prozac|zoloft|"
-               r"lexapro|xanax|ritalin|adderall|ssri|antidepressant)",
-               re.I),
+               r"lexapro|xanax|ritalin|adderall|ssri|antidepressant|"
+               r"melatonin|sertraline|supplement)", re.I),
     re.compile(r"\bhow\s+(?:many|much)\b[^.!?\n]{0,30}?"
-               r"\b(?:mg|pills?|tablets?|dose)\b", re.I),
+               r"\b(?:mg|pills?|tablets?|dose|melatonin)\b", re.I),
+    re.compile(r"\bhow\s+much\b[^.!?\n]{0,25}?\bshould\s+i\s+take\b",
+               re.I),
     re.compile(r"\bwhat\s+dose\b|\bdosage\b|\bdouble\s+my\s+dose\b",
                re.I),
     re.compile(r"\bcan\s+i\s+stop\s+(?:taking|my)\b", re.I),
+    re.compile(r"\bshould\s+i\s+(?:take|stop|start|double|switch)\b"
+               r"[^.!?\n]{0,30}?\b(?:it|them|my\s+\w+|melatonin|"
+               r"sertraline|dose|pills?|medication)\b", re.I),
     re.compile(r"(?:להפסיק|לעצור|להעלות|להוריד|לשנות)\s+"
                r"(?:את\s+)?(?:התרופה|המינון|כדורים)"),
-    re.compile(r"כמה\s+(?:מ\"ג|מ״ג|כדורים|מיליגרם)"),
+    re.compile(r"כמה\s+(?:מ\"ג|מ״ג|כדורים|מיליגרם|מלטונין)"),
     re.compile(r"(?:מינון|תרופה)[^.!?\n]{0,20}?"
                r"(?:להפסיק|להעלות|להוריד|לשנות|לקחת)"),
+    re.compile(r"(?:אפשר|יכול(?:ה)?|כדאי)\s+(?:לי\s+)?"
+               r"(?:להפסיק|להעלות|להוריד|לשנות|לקחת)\s+"
+               r"(?:את\s+)?(?:הכדורים|התרופה|המינון)"),
 ]
 
 MEDICATION_ANSWER = (
@@ -1145,40 +1280,21 @@ PRIVACY_ANSWER_HE = (
     "לך. לפרטים נוספים, ראו את עמוד הפרטיות."
 )
 
-# A12: the approved availability answer — no claim about Solace's
-# hours at all; the hotlines' hours may be stated, and are.
-AVAILABILITY_ANSWER_V2 = (
-    "I don't keep set hours, and I can't promise to be here at "
-    "any specific time — I'm Solace, an AI companion for "
-    "reflection and self-help. If you need support right away, "
-    "the 988 line in the US and ERAN at 1201 in Israel are "
-    "answered day and night."
-)
+# A12: the approved availability line — the order quotes it
+# verbatim: "I'm here whenever you open Solace…" (HE in m/f/n).
+# It makes no 24/7 / any-time claim; it simply returns to the
+# conversation.
 _AVAILABILITY_HE = {
-    "m": (
-        "אין לי שעות קבועות, ואני לא יכול להבטיח להיות כאן בזמן "
-        "מסוים — אני סולאס, מלווה בינה מלאכותית להרהור ולתמיכה "
-        "עצמית. אם צריך תמיכה מיד, קו 988 בארה״ב וער״ן 1201 "
-        "בישראל עונים ביום ובלילה."
-    ),
-    "f": (
-        "אין לי שעות קבועות, ואני לא יכול להבטיח להיות כאן בזמן "
-        "מסוים — אני סולאס, מלווה בינה מלאכותית להרהור ולתמיכה "
-        "עצמית. אם צריך תמיכה מיד, קו 988 בארה״ב וער״ן 1201 "
-        "בישראל עונים ביום ובלילה."
-    ),
-    "n": (
-        "אין לי שעות קבועות, ואי אפשר להבטיח שאהיה כאן בזמן "
-        "מסוים — אני סולאס, מלווה בינה מלאכותית להרהור ולתמיכה "
-        "עצמית. אם צריך תמיכה מיד, קו 988 בארה״ב וער״ן 1201 "
-        "בישראל עונים ביום ובלילה."
-    ),
+    "m": "אני כאן כשתפתח את סולאס — מה עובר עליך?",
+    "f": "אני כאן כשתפתחי את סולאס — מה עובר עלייך?",
+    "n": "אני כאן כשפותחים את סולאס — מה חדש?",
 }
 
-# Labels whose approved answer carries the referral line (A10).
+# Labels whose approved answer carries the referral line (A10 —
+# the order's exact list: DIAGNOSE, MEDICATION, THERAPIST /
+# REPLACE, SEEKING-HELP; on every path).
 _REFERRAL_LABELS = {
-    "therapist", "replace", "licensed", "diagnose", "medication",
-    "seeking", "human", "privacy",
+    "therapist", "replace", "diagnose", "medication", "seeking",
 }
 
 
@@ -1209,9 +1325,13 @@ _PRIVACY_Q_RES = [
     re.compile(r"\bprivacy\b[^.!?\n]{0,30}\?", re.I),
     re.compile(r"\bdo\s+you\s+(?:share|sell)\s+(?:my|our)\b", re.I),
     re.compile(r"\bcan\s+anyone\s+(?:see|read)\b", re.I),
+    re.compile(r"\bare\s+my\s+(?:chats|messages|conversations)\s+"
+               r"private\b", re.I),
     re.compile(r"מי\s+(?:יכול|עלול)\s+(?:לראות|לקרוא)"),
     re.compile(r"(?:האם|אם)\s+זה\s+(?:פרטי|חסוי)"),
     re.compile(r"מי\s+רואה\s+את\s+זה"),
+    re.compile(r"(?:האם\s+)?(?:השיחות|ההודעות|השיחה)\s+שלי\s+"
+               r"פרטי(?:ות|ת)?\s*\??"),
 ]
 
 
@@ -1297,17 +1417,11 @@ def label_answer(label, hebrew, gender=None, name=None):
         if hebrew:
             ans = _gendered_identity_he("therapy", gender)
     elif label == "replace":
-        ans = (
-            "לא — אני לא יכול להיות המטפל שלך. אני סולאס, מלווה "
-            "בינה מלאכותית להרהור ולתמיכה עצמית, ואני לא תופס "
-            "מקום של איש מקצוע."
-            if hebrew else
-            "No — I can't be your therapist. I'm Solace, an AI "
-            "companion for reflection and self-help, and I don't "
-            "take the place of a professional."
-        )
-        if hebrew:
-            ans = _gendered_identity_he("replace", gender)
+        # A8's label is THERAPIST/REPLACE-THERAPIST, and Part B
+        # #57 wants the answer to start "No." — the therapy
+        # template ("No. Not therapy — ...") is that answer.
+        ans = (_gendered_identity_he("therapy", gender) if hebrew
+               else IDENTITY_ANSWERS[("therapy", False)])
     elif label == "licensed":
         ans = IDENTITY_ANSWERS[("professional", hebrew)]
         if hebrew:
@@ -1338,7 +1452,7 @@ def label_answer(label, hebrew, gender=None, name=None):
             ans = _voice_answer_he(gender)
     elif label == "availability":
         ans = (_AVAILABILITY_HE.get(gender or "", _AVAILABILITY_HE["n"])
-               if hebrew else AVAILABILITY_ANSWER_V2)
+               if hebrew else AVAILABILITY_ANSWER)
     else:
         return None
     if label in _REFERRAL_LABELS:
@@ -1346,7 +1460,8 @@ def label_answer(label, hebrew, gender=None, name=None):
         # sentence, exactly once. The label templates above are
         # referral-free by construction, so this is a plain
         # append — never a splice, never a strip.
-        ans = ans + "\n\n" + _referral_append(hebrew, gender)
+        g = gender if gender in ("m", "f") else "n"
+        ans = ans + "\n\n" + _referral_append(hebrew, g)
     return ans
 
 
@@ -1456,15 +1571,13 @@ def _gendered_identity_he(kind, gender):
 
 def _voice_answer_he(gender):
     """A5: the Hebrew voice answer — the voice-privacy line's
-    writer-addressed tail follows the writer's gender; the
-    masculine version is the Tab-pinned string, byte-identical."""
+    writer-addressed tail follows the writer's gender when it is
+    known to be feminine; every other case ships the Tab-pinned
+    string, byte-identical."""
     if gender == "f":
         return VOICE_ANSWER_HE.replace(
             "של מה שאתה אומר", "של מה שאת אומרת")
-    if gender == "m":
-        return VOICE_ANSWER_HE
-    return VOICE_ANSWER_HE.replace(
-        "של מה שאתה אומר", "של מה שנאמר")
+    return VOICE_ANSWER_HE
 
 
 # ---- A5 morphology: a paradigm of second-person present-tense
@@ -1500,6 +1613,35 @@ _HE_M2F = {m: f for m, f, _i in _HE_VERB_PARADIGM if m != f}
 _HE_F2M = {f: m for m, f, _i in _HE_VERB_PARADIGM if m != f}
 _HE_M2INF = {m: i for m, f, i in _HE_VERB_PARADIGM}
 _HE_F2INF = {f: i for m, f, i in _HE_VERB_PARADIGM}
+# Plural forms — A5.2's sanctioned neutral: while the writer's
+# gender is unknown, address can go plural (אתם + plural verb),
+# which is grammatical, unlike a dropped pronoun.
+_HE_PLURALS = {
+    "מרגיש": "מרגישים", "מרגישה": "מרגישים", "צריך": "צריכים",
+    "צריכה": "צריכים", "יכול": "יכולים", "יכולה": "יכולים",
+    "חושב": "חושבים", "חושבת": "חושבים", "יודע": "יודעים",
+    "יודעת": "יודעים", "נמצא": "נמצאים", "נמצאת": "נמצאים",
+    "מסוגל": "מסוגלים", "מסוגלת": "מסוגלים", "אומר": "אומרים",
+    "אומרת": "אומרים", "שואל": "שואלים", "שואלת": "שואלים",
+    "כותב": "כותבים", "כותבת": "כותבים", "מדבר": "מדברים",
+    "מדברת": "מדברים", "מבקש": "מבקשים", "מבקשת": "מבקשים",
+    "מספר": "מספרים", "מספרת": "מספרים", "רוצה": "רוצים",
+    "עובר": "עוברים", "עוברת": "עוברים", "מבין": "מבינים",
+    "מבינה": "מבינים", "שומע": "שומעים", "שומעת": "שומעים",
+    "רואה": "רואים", "זוכר": "זוכרים", "זוכרת": "זוכרים",
+    "מתמודד": "מתמודדים", "מתמודדת": "מתמודדים",
+    "חווה": "חווים", "נושם": "נושמים", "נושמת": "נושמים",
+    "ישן": "ישנים", "ישנה": "ישנים", "אוכל": "אוכלים",
+    "אוכלת": "אוכלים", "שותה": "שותים", "עובד": "עובדים",
+    "עובדת": "עובדים", "לומד": "לומדים", "לומדת": "לומדים",
+    "מנסה": "מנסים", "מחפש": "מחפשים", "מחפשת": "מחפשים",
+    "מקווה": "מקווים", "פוחד": "פוחדים", "פוחדת": "פוחדים",
+    "דואג": "דואגים", "דואגת": "דואגים", "מתגעגע": "מתגעגעים",
+    "מתגעגעת": "מתגעגעים", "סובל": "סובלים", "סובלת": "סובלים",
+    "בוכה": "בוכים", "בוכה": "בוכים", "צוחק": "צוחקים",
+    "צוחקת": "צוחקים", "קורא": "קוראים", "קוראת": "קוראים",
+    "שומר": "שומרים", "שומרת": "שומרים",
+}
 _HE_M_ALT = "|".join(sorted(_HE_M2F, key=len, reverse=True))
 _HE_F_ALT = "|".join(sorted(_HE_F2M, key=len, reverse=True))
 # Second-person frames: pronoun (+optional ש־) + paradigm verb.
@@ -1527,16 +1669,25 @@ def _he_wrong_gender_markers(seg, target):
                     or re.search(r"(?<![\u0590-\u05FF])(?:"
                                  + _HE_IMP_M_ALT
                                  + r")(?![\u0590-\u05FF])", seg)
-                    or re.search(r"שאתה\b", seg))
+                    or re.search(r"שאתה\b", seg)
+                    # pronoun suffixes (A5.4): עליך addressed to
+                    # a woman is a wrong-gender marker.
+                    or re.search(r"עליך(?![\u0590-\u05FF])", seg)
+                    or re.search(r"(?<![\u0590-\u05FF])ספר\s+לי", seg))
     if target == "m":
         return bool(_HE_ADDR_F_RE.search(seg)
                     or re.search(r"(?<![\u0590-\u05FF])(?:"
                                  + _HE_IMP_F_ALT
                                  + r")(?![\u0590-\u05FF])", seg)
-                    or re.search(r"שאת\b", seg))
-    # neutral: ANY gendered second-person address is a marker
-    return bool(_HE_ADDR_M_RE.search(seg) or _HE_ADDR_F_RE.search(seg)
-                or re.search(r"שאתה\b|שאת\b", seg))
+                    or re.search(r"שאת\b", seg)
+                    or re.search(r"עלייך", seg)
+                    or re.search(r"(?<![\u0590-\u05FF])ספרי\s+לי", seg))
+    # neutral: a gendered second-person FRAME (pronoun + verb).
+    # A bare pronoun inside a clause that is not an address
+    # frame ("שמח שאתה כאן" — glad you are here) is not
+    # rewritten: dropping it breaks the sentence, and the fixed
+    # strings carry the neutral rule.
+    return bool(_HE_ADDR_M_RE.search(seg) or _HE_ADDR_F_RE.search(seg))
 
 
 def _he_rewrite_gender_sentence(seg, target):
@@ -1555,6 +1706,9 @@ def _he_rewrite_gender_sentence(seg, target):
         # אתה / שאתה are unambiguous address forms.
         out = re.sub(r"שאתה\b", "שאת", out)
         out = re.sub(r"(?<![\u0590-\u05FF])אתה\b", "את", out)
+        # Pronoun suffix + the tell imperative (A5.4).
+        out = re.sub(r"עליך(?![\u0590-\u05FF])", "עלייך", out)
+        out = re.sub(r"(?<![\u0590-\u05FF])ספר\s+לי", "ספרי לי", out)
         return out
     if target == "m":
         out = _HE_ADDR_F_RE.sub(
@@ -1564,37 +1718,67 @@ def _he_rewrite_gender_sentence(seg, target):
                      + r")(?![\u0590-\u05FF])",
                      lambda m: _HE_IMP_F2M[m.group(1)], out)
         out = re.sub(r"שאת\b", "שאתה", out)
+        out = out.replace("עלייך", "עליך")
+        out = re.sub(r"(?<![\u0590-\u05FF])ספרי\s+לי", "ספר לי", out)
         return out
-    # neutral: pronoun+verb -> "אפשר + infinitive" (or a bare
-    # infinitive after ש־); bare gendered imperatives -> infinitive.
+    # neutral: pronoun+verb -> plural address (אתם + plural
+    # verb), A5.2's sanctioned neutral — grammatical in every
+    # frame, unlike a dropped pronoun or a forced infinitive.
     def _neut(m):
-        verb = m.group(2)
-        inf = _HE_M2INF.get(verb) or _HE_F2INF.get(verb)
-        if not inf:
+        plural = _HE_PLURALS.get(m.group(2))
+        if not plural:
             return m.group(0)
         if m.group(1).startswith("ש"):
-            return "שאפשר " + inf
-        return "אפשר " + inf
+            return "שאתם " + plural
+        return "אתם " + plural
 
     out = _HE_ADDR_M_RE.sub(_neut, seg)
     out = _HE_ADDR_F_RE.sub(_neut, out)
-    # Leftover gendered pronouns outside the paradigm frames:
-    # the ש־ forms keep their ש, a bare אתה drops out.
-    out = re.sub(r"שאתה\b|שאת\b", "ש", out)
-    out = re.sub(r"(?<![\u0590-\u05FF])אתה\s+", "", out)
     return out
 
 
 def he_gender_repair(text, gender):
     """The A5 post-generation morphology pass for chat replies:
     every sentence's second-person forms are checked against the
-    writer's stored gender ('m' / 'f'), or neutralized while the
-    gender is unknown (None / ''). Sentences that still carry the
+    writer's stored gender ('m' / 'f'), or neutralized to the
+    plural while the gender is unknown ('n'). A None gender means
+    the caller isn't tracking gender (legacy unit surfaces) and
+    the text passes through. Sentences that still carry the
     wrong gender after the paradigm rewrite are dropped rather
     than shipped misgendered."""
     if not text or not has_hebrew(text):
         return text
+    if gender is None:
+        return text
     target = gender if gender in ("m", "f") else "n"
+    # כש-prefixed futures ("כשתרצי") hide from the pronoun
+    # frames — normalize them directly for the target first.
+    _kshe = {"תרצה": ("תרצה", "תרצי", "תרצו"),
+             "תרצי": ("תרצה", "תרצי", "תרצו"),
+             "תרגיש": ("תרגיש", "תרגישי", "תרגישו"),
+             "תרגישי": ("תרגיש", "תרגישי", "תרגישו"),
+             "תוכל": ("תוכל", "תוכלי", "תוכלו"),
+             "תוכלי": ("תוכל", "תוכלי", "תוכלו"),
+             "תהיה": ("תהיה", "תהיי", "תהיו"),
+             "תהיי": ("תהיה", "תהיי", "תהיו")}
+    _ki = {"m": 0, "f": 1, "n": 2}[target]
+    text = re.sub(
+        r"כש(תרצה|תרצי|תרגיש|תרגישי|תוכל|תוכלי|תהיה|תהיי)"
+        r"(?![\u0590-\u05FF])",
+        lambda mm: "כש" + _kshe[mm.group(1)][_ki], text)
+    if target == "n":
+        # Bare imperatives carry gender too ("קחי את הזמן") —
+        # under neutral they go plural ("קחו").
+        for imp, pl in (("קחי", "קחו"), ("קח", "קחו"),
+                        ("ספרי", "ספרו"), ("ספר", "ספרו"),
+                        ("כתבי", "כתבו"), ("כתוב", "כתבו"),
+                        ("בואי", "בואו"), ("בוא", "בואו"),
+                        ("שבי", "שבו"), ("שב", "שבו"),
+                        ("תני", "תנו"), ("תן", "תנו"),
+                        ("דברי", "דברו"), ("דבר", "דברו"),
+                        ("הקשיבי", "הקשיבו"), ("הקשב", "הקשיבו")):
+            text = re.sub(r"(?<![\u0590-\u05FF])" + imp
+                          + r"(?![\u0590-\u05FF])", pl, text)
     segs = _sentence_segments(text)
     out_segs = []
     changed = False
@@ -1620,12 +1804,39 @@ _HE_SLASH_ANY_RE = re.compile(
     r"([\u0590-\u05FF]+)/([\u0590-\u05FF]+)")
 
 
+def _he_gender_vocab():
+    vocab = getattr(_he_gender_vocab, "_set", None)
+    if vocab is None:
+        vocab = frozenset(
+            [m for m, _f, _i in _HE_VERB_PARADIGM]
+            + [f for _m, f, _i in _HE_VERB_PARADIGM]
+            + list(_HE_SELF_FEM_MASC.keys())
+            + list(_HE_SELF_FEM_MASC.values())
+            + list(_HE_WRITER_FEM) + list(_HE_WRITER_MASC)
+            + ["אתה", "את", "שאתה", "שאת", "בן", "בת", "איש",
+               "אישה", "תרצה", "תרצי", "תרגיש", "תרגישי",
+               "מסוגל", "מסוגלת", "קח", "קחי", "ספר", "ספרי",
+               "כתוב", "כתבי", "בוא", "בואי", "שב", "שבי",
+               "תן", "תני", "דבר", "דברי", "הקשב", "הקשיבי"])
+        _he_gender_vocab._set = vocab
+    return vocab
+
+
 def strip_hebrew_slashes(text, writer_gender=None):
+    """A15: no "/" between Hebrew letters in GENDER pairs —
+    resolved by the writer's gender. A slash between two words
+    that are not gender forms at all (יום/לילה) is not an
+    address form and is left alone (Tab round 10 pin)."""
     if not text or "/" not in text:
         return text
-    return _HE_SLASH_ANY_RE.sub(
-        lambda m: m.group(2) if writer_gender == "f" else m.group(1),
-        text)
+
+    def _sub(m):
+        if m.group(1) in _he_gender_vocab() \
+                or m.group(2) in _he_gender_vocab():
+            return m.group(2) if writer_gender == "f" else m.group(1)
+        return m.group(0)
+
+    return _HE_SLASH_ANY_RE.sub(_sub, text)
 
 
 def detect_availability_question(text):
@@ -1795,12 +2006,25 @@ _HE_WRITER_GENDER_RE = re.compile(
 
 def detect_writer_gender_he(text):
     """'f' / 'm' / None — the writer's own gender, from the
-    first self-referential gendered form in their message."""
+    first self-referential gendered form in their message.
+    The form must be FIRST-person anchored — it follows אני
+    (closely, allowing one filler word: "אני לא יכולה",
+    "אני ממש מרגישה", "שאני מתגעגעת"). A bare gendered verb
+    can be SECOND person ("אתה יכול לאבחן אותי?" — "you can")
+    and must never mark the writer (A5: the stored gender is
+    authoritative, so a false read poisons every string)."""
     t = text or ""
-    m = _HE_WRITER_GENDER_RE.search(t)
-    if not m:
-        return None
-    return "f" if m.group(0) in _HE_WRITER_FEM else "m"
+    for m in _HE_WRITER_GENDER_RE.finditer(t):
+        before = t[max(0, m.start() - 16):m.start()]
+        toks = before.split()
+        # Anchored when אני (or ואני / שאני) is the last token
+        # or the one before a single filler word ("אני לא
+        # יכולה", "אני ממש מרגישה").
+        if toks and (toks[-1] in ("אני", "ואני", "שאני")
+                     or (len(toks) >= 2
+                         and toks[-2] in ("אני", "ואני", "שאני"))):
+            return "f" if m.group(0) in _HE_WRITER_FEM else "m"
+    return None
 
 
 def grief_opening_for(hebrew, msg, writer_gender=None):
@@ -2204,6 +2428,20 @@ def call_anthropic(model, system, messages, max_tokens=1024):
 
 
 def detect_crisis_keywords(text):
+    """A4: the deterministic check runs on the message AND on its
+    normalized form (niqqud / punctuation stripped, repeated
+    letters collapsed, slang expanded, one-letter typos on the
+    crisis keywords repaired) — a typo can no longer slip a
+    crisis phrase past the fast path."""
+    if _detect_crisis_keywords_raw(text):
+        return True
+    n = _norm_match(text)
+    if n != (text or "").lower():
+        return _detect_crisis_keywords_raw(n)
+    return False
+
+
+def _detect_crisis_keywords_raw(text):
     """Negation-aware crisis detection on the current message only.
 
     A crisis phrase counts only when it is NOT negated just before it
@@ -2899,6 +3137,23 @@ def _sentence_segments(text):
     return segs
 
 
+# A14: the Hebrew calque blocklist — the named broken-Hebrew
+# shapes Tab caught (calques and agreement breaks). A sentence
+# carrying one is dropped whole; code never edits fragments.
+_HE_CALQUE_RES = [
+    re.compile(r"תנחומי\w*\s+האמיתיים"),
+    re.compile(r"מה\s+עלה\s+לך\s+לב"),
+    re.compile(r"מה\s+הוא\s+היה\s+כמו"),
+    re.compile(r"לא\s+זזה"),
+    re.compile(r"בלי\s+(?:שום\s+)?מהירות"),
+    re.compile(r"(?:^|[.!?…]\s+)זה\s+תחושה"),
+]
+
+
+def _sentence_calque(seg):
+    return any(rx.search(seg or "") for rx in _HE_CALQUE_RES)
+
+
 def _scrub_join(segs, include_last):
     """Join the unbanned segments. With include_last=False the final
     segment is held back unless it ends in sentence punctuation —
@@ -2914,6 +3169,7 @@ def _scrub_join(segs, include_last):
         if _sentence_banned(seg) or _sentence_availability_claim(seg) \
                 or _sentence_approach_claim(seg) \
                 or _sentence_voice_denial(seg) \
+                or _sentence_calque(seg) \
                 or _sentence_dangling(seg):
             continue
         out.append(seg + sep)
@@ -3004,6 +3260,11 @@ _HE_SELF_FEM_MASC = {
     "מעדיפה": "מעדיף", "מציעה": "מציע", "מאמינה": "מאמין",
     "קוראת": "קורא", "פותחת": "פותח", "ממשיכה": "ממשיך",
     "נשארת": "נשאר", "חוזרת": "חוזר",
+    # A6's named participles: a bare first-person feminine
+    # participle is Solace speaking as a woman — masculine.
+    "זמינה": "זמין", "מקצועית": "מקצועי", "מאבחנת": "מאבחן",
+    "ממליצה": "ממליץ", "מכירה": "מכיר", "מורשית": "מורשה",
+    "מוסמכת": "מוסמך", "נרגשת": "נרגש", "פנויה": "פנוי",
 }
 # Round 5: the middle slot now also carries negation and
 # small adverbs — "אני לא יכולה" slipped past round 4
@@ -3024,7 +3285,9 @@ _HE_SELF_PHRASE_RES = [
 ]
 _HE_SELF_START_FORMS = {
     "שמחה": "שמח", "מצטערת": "מצטער", "מבינה": "מבין",
-    "מרגישה": "מרגיש", "מקשיבה": "מקשיב",
+    "מרגישה": "מרגיש", "מקשיבה": "מקשיב", "ממליצה": "ממליץ",
+    "מכירה": "מכיר", "יכולה": "יכול", "זמינה": "זמין",
+    "מאבחנת": "מאבחן", "עוזרת": "עוזר",
 }
 _HE_SELF_START_RE = re.compile(
     r"(^|[.!?…]\s+)(" + "|".join(_HE_SELF_START_FORMS) + r")"
@@ -3197,6 +3460,34 @@ def _he_self_gender(text, writer_gender=None):
     return _HE_SELF_FEM_RE.sub(_self_fem_sub, out)
 
 
+def _drop_wrong_script_sentences(out, user_text):
+    """A21: the reply stays in the main language of the person's
+    message — a full sentence in the other script is dropped,
+    never shipped as a mid-reply language switch."""
+    if not out or not user_text:
+        return out
+    he = len(re.findall(r"[\u0590-\u05FF]", user_text))
+    en = len(re.findall(r"[A-Za-z]", user_text))
+    if he == en:
+        return out
+    want_he = he > en
+    segs = _sentence_segments(out)
+    kept = []
+    for s, sep in segs:
+        words = s.split()
+        if len(words) >= 4:
+            s_he = len(re.findall(r"[\u0590-\u05FF]", s))
+            s_en = len(re.findall(r"[A-Za-z]", s))
+            if want_he and s_en > 0 and s_he == 0:
+                continue
+            if not want_he and s_he > 0 and s_en == 0:
+                continue
+        kept.append((s, sep))
+    if len(kept) == len(segs):
+        return out
+    return "".join(s + sep for s, sep in kept).strip() or out
+
+
 def scrub_reply(text, writer_gender=None, user_text=None):
     """The full-text filter applied to every finished model reply."""
     out = _scrub_join(
@@ -3209,6 +3500,7 @@ def scrub_reply(text, writer_gender=None, user_text=None):
     # forms match the writer's stored gender (neutral until known).
     out = strip_hebrew_slashes(out, writer_gender)
     out = he_gender_repair(out, writer_gender)
+    out = _drop_wrong_script_sentences(out, user_text)
     if out:
         return out
     if has_hebrew(text or ""):
@@ -3434,9 +3726,19 @@ _SYMPATHY_ANY_RE = re.compile(
     r"(sorry\s+for\s+your\s+loss|sorry\s+to\s+hear|"
     r"my\s+(?:deepest\s+)?condolences|deepest\s+sympath|"
     r"i'?m\s+so\s+sorry\s+(?:for|about|to\s+hear)|"
+    r"we'?re\s+(?:so\s+)?sorry|"
+    # A7's lexicon names them: "take your time" and "with you"
+    # companionship are sympathy language in a continuation.
+    r"take\s+(?:all\s+)?(?:the|your)\s+time|"
     r"מצטער(?:ת)?\s+(?:מאוד\s+|ממש\s+)?(?:על\s+(?:ה)?אובדן|לשמוע)|"
-    r"משתתפ(?:ת|ים)?\s+בצער|תנחומיי|שלא\s+תדעו\s+עוד\s+צער|"
-    r"מנחם\s+את|משתתף\s+בצערך)",
+    r"משתתפ(?:ת|ים)?\s+בצער|תנחומיי|תנחומים|שלא\s+תדעו\s+עוד\s+צער|"
+    r"מנחם\s+את|משתתף\s+בצערך|"
+    # NOTE: "קח את הזמן" is NOT stripped in Hebrew — the pinned
+    # openings themselves say "קח את כל הזמן שאתה צריך", and
+    # Tab's round-10 example pins "קחי את הזמן שאת צריכה" as a
+    # KEPT continuation sentence. The EN "take your time" stays.
+    r"איתך\s+בזמן\s+הזה|לב\s+כבד|שומע\s+על\s+הפטירה|"
+    r"על\s+(?:ה)?פטירה\s+של)",
     re.I,
 )
 
@@ -3602,13 +3904,24 @@ def _grief_clean_body(body, opening, writer_gender=None):
     body = _strip_companionship_lines(body)
     body = _strip_sympathy_sentences(body)
     body = _cut_second_reply_block(body, opening)
-    if opening and has_hebrew(opening) \
-            and writer_gender in ("f", "m"):
-        body = _he_gender_consistency(body, writer_gender)
-    elif opening and has_hebrew(opening):
-        # A5: unknown writer gender — the continuation is
-        # neutralized, never defaulted to masculine.
-        body = he_gender_repair(body, None)
+    if opening and has_hebrew(opening):
+        # The continuation matches the OPENING that actually
+        # shipped: writer-gendered openings carry their gender;
+        # a neutral opening (A5, gender unknown) means the
+        # continuation is neutralized to the plural, never
+        # defaulted to masculine.
+        if writer_gender in ("f", "m"):
+            target = writer_gender
+        elif opening in (GRIEF_OPENING_HE_WF, GRIEF_OPENING_HE_WF_F):
+            target = "f"
+        elif opening in (GRIEF_OPENING_HE_N, GRIEF_OPENING_HE_N_F):
+            target = "n"
+        else:
+            target = "m"
+        if target in ("f", "m"):
+            body = _he_gender_consistency(body, target)
+        else:
+            body = he_gender_repair(body, "n")
     body = body.strip()
     if opening and body and body in opening:
         # Nothing left but a fragment of the opening itself.
@@ -4269,6 +4582,10 @@ def _prepare_turn(uid, msg):
         # stored per user, neutral until known — steers every
         # gendered fixed string and the scrub layer's morphology.
         "writer_gender": writer_gender,
+        # Effective gender for the scrub layer: the A5 plural-
+        # neutral ("n") while the writer's gender is unknown.
+        "eff_gender": writer_gender if writer_gender in ("m", "f")
+        else "n",
         # A2: the ONE gentle check-in line owed on the first
         # normal turn after a true crisis (set in the latch
         # block below); prepended by code in _finish_model_turn.
@@ -4405,14 +4722,22 @@ def _prepare_turn(uid, msg):
                                    "banner_lang": safety_lang,
                                    "writer_gender": writer_gender or "",
                                    "reply_lang": safety_lang})
-        elif stepdown or not _is_latch_fragment(msg):
+        elif stepdown or (not _is_latch_fragment(msg)
+                          and not ctx["need_professional"]
+                          and detect_intent_label(msg) is None):
             # A2: the person moves to a new topic — the latch
-            # clears and this turn is answered normally. If the
-            # crisis owed its one gentle check-in, it rides this
-            # turn's reply (prepended by code at finish time).
-            # The banner stays for the session, as before.
+            # clears, the banner comes OFF ("Once cleared: banner
+            # off, no hotline lines appended"), and this turn is
+            # answered normally. If the crisis owed its one gentle
+            # check-in, it rides this turn's reply (prepended by
+            # code at finish time). A question about help or
+            # about Solace itself is part of the crisis
+            # conversation, not a new topic — it stays latched.
             _set_user_state(uid, crisis_mode=False, stepdown_v=False,
-                            checkin_v=False, lang_v=safety_lang)
+                            banner_v=False, checkin_v=False,
+                            lang_v=safety_lang)
+            ctx["banner"] = False
+            banner = False
             if profile.get("crisis_checkin"):
                 ctx["checkin_line"] = (
                     _CHECKIN_HE.get(writer_gender or "",
@@ -4459,7 +4784,7 @@ def _prepare_turn(uid, msg):
             gsys += _grief_gender_note(
                 detect_grief_kin_he(msg), writer_gender)
         ctx["grief_hebrew"] = hebrew
-        ctx["grief_writer_gender"] = writer_gender
+        ctx["grief_writer_gender"] = ctx["eff_gender"]
         ctx["grief_opening"] = grief_opening_for(
             hebrew, msg, writer_gender)
         ctx["fallback_text"] = (
@@ -4526,7 +4851,7 @@ def _finish_model_turn(ctx, mode, reply, background):
         if reply.startswith("[CRISIS]"):
             reply = reply[len("[CRISIS]"):].strip()
         reply = scrub_reply(
-            reply, ctx.get("writer_gender"), user_text)
+            reply, ctx.get("eff_gender"), user_text)
         if ctx.get("need_professional"):
             reply = _ensure_referral(reply, safety_hebrew,
                                      ctx.get("writer_gender"))
@@ -4580,7 +4905,7 @@ def _finish_model_turn(ctx, mode, reply, background):
         if reply.startswith("[CRISIS]"):
             reply = reply[len("[CRISIS]"):].strip()
         reply = scrub_reply(
-            reply, ctx.get("writer_gender"), user_text)
+            reply, ctx.get("eff_gender"), user_text)
         if ctx.get("need_professional"):
             # Same round-5 gap as the grief branch: latched
             # crisis-mode replies never passed an ensure step,
@@ -4608,7 +4933,7 @@ def _finish_model_turn(ctx, mode, reply, background):
             banner_lang = safety_lang
             _set_user_state(uid, crisis_mode=True, stepdown_v=False,
                             banner_v=True, lang_v=banner_lang)
-    reply = scrub_reply(reply, ctx.get("writer_gender"), user_text)
+    reply = scrub_reply(reply, ctx.get("eff_gender"), user_text)
     # Tab FINAL order A9 output guard: dosing content (a number
     # + unit about a substance) replaces the whole reply with
     # the deterministic medication answer.
@@ -4873,7 +5198,7 @@ def _chat_stream_events_inner(uid, msg, background):
                     continue
             else:
                 visible = scrub_prefix(
-                    raw[skip:].lstrip(), ctx.get("writer_gender"),
+                    raw[skip:].lstrip(), ctx.get("eff_gender"),
                     msg)
             if len(visible) > len(emitted_visible):
                 new = visible[len(emitted_visible):]
@@ -4950,7 +5275,7 @@ def _chat_stream_events_inner(uid, msg, background):
                        "banner_lang": ctx["banner_lang"]}
     final = payload["reply"]
     visible = scrub_prefix(
-        raw[skip:].lstrip(), ctx.get("writer_gender"), msg)
+        raw[skip:].lstrip(), ctx.get("eff_gender"), msg)
     if final.startswith(visible) and len(final) > len(visible):
         yield _sse({"type": "delta", "text": final[len(visible):]})
     elif ctx.get("need_professional"):

@@ -35,14 +35,16 @@ for text, want in KIN.items():
     got = solace.detect_grief_kin_he(text)
     if got != want:
         failures.append("KIN %r -> %r, want %r" % (text, got, want))
+# FINAL order A5: no writer-gender signal in these messages, so
+# the opening is the NEUTRAL variant (deceased's pronoun kept).
 if solace.grief_opening_for(True, "אמא שלי נפטרה") \
-        != solace.GRIEF_OPENING_HE_F:
-    failures.append("OPENING mother is not the feminine variant")
-if "עליה" not in solace.GRIEF_OPENING_HE_F:
-    failures.append("OPENING feminine variant lacks עליה")
+        != solace.GRIEF_OPENING_HE_N_F:
+    failures.append("OPENING mother is not the neutral-feminine variant")
+if "עליה" not in solace.GRIEF_OPENING_HE_N_F:
+    failures.append("OPENING neutral-feminine variant lacks עליה")
 if solace.grief_opening_for(True, "אבא שלי נפטר") \
-        != solace.GRIEF_OPENING_HE:
-    failures.append("OPENING father is not the base variant")
+        != solace.GRIEF_OPENING_HE_N:
+    failures.append("OPENING father is not the neutral variant")
 
 print("unit: kin gender + opening selection")
 
@@ -110,12 +112,12 @@ for surface in ("sync", "stream"):
         rep, crisis = done["reply"], done["crisis"]
         first_delta = [e["text"] for e in evts
                        if e.get("type") == "delta"][0]
-        if not first_delta.startswith(solace.GRIEF_OPENING_HE_F[:30]):
+        if not first_delta.startswith(solace.GRIEF_OPENING_HE_N_F[:30]):
             failures.append("STREAM first delta not the feminine "
                             "opening: %r" % first_delta[:60])
     if crisis:
         failures.append("HE mother (%s) flagged crisis" % surface)
-    if not rep.startswith(solace.GRIEF_OPENING_HE_F):
+    if not rep.startswith(solace.GRIEF_OPENING_HE_N_F):
         failures.append("HE mother (%s) wrong opening: %r"
                         % (surface, rep[:120]))
     if "עליו" in rep:
@@ -132,7 +134,7 @@ for surface in ("sync", "stream"):
 uid = new_user()
 r = client.post("/api/chat", json={
     "user_id": uid, "message": "אבא שלי נפטר"}).json()
-if not r["reply"].startswith(solace.GRIEF_OPENING_HE) \
+if not r["reply"].startswith(solace.GRIEF_OPENING_HE_N) \
         or "עליו" not in r["reply"].split("\n\n")[0]:
     failures.append("HE father opening changed: %r" % r["reply"][:120])
 
@@ -181,7 +183,7 @@ for surface in ("sync", "stream"):
     if "---" in rep:
         failures.append("BAD (%s) kept the divider: %r"
                         % (surface, rep))
-    if not rep.startswith(solace.GRIEF_OPENING_HE_F):
+    if not rep.startswith(solace.GRIEF_OPENING_HE_N_F):
         failures.append("BAD (%s) wrong opening: %r"
                         % (surface, rep[:120]))
     if rep.count("מצטער") != 1:

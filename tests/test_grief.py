@@ -38,7 +38,7 @@ for name, want in (
     ("FIXED_CRISIS_RESPONSE",
      "718f7c98131223578dd68c441f90cad7f72404d9abf3de5952bef39581aa5250"),
     ("FIXED_CRISIS_RESPONSE_HE",
-     "d9306c9af9205559b745bfbbf0b9b1ad26df027dc2376cd8325aa569d2c1365d"),
+     "faddb1553685e4286b2298d0d07860b2dcd774a34904956f862b73c786769333"),
 ):
     got = hashlib.sha256(getattr(solace, name).encode()).hexdigest()
     if got != want:
@@ -157,7 +157,7 @@ uid = new_user()
 r = client.post("/api/chat", json={
     "user_id": uid, "message": "אמא שלי נפטרה אתמול",
 }).json()
-if not r.get("reply", "").startswith(solace.GRIEF_OPENING_HE_F):
+if not r.get("reply", "").startswith(solace.GRIEF_OPENING_HE_N_F):
     failures.append("GRIEF HE reply does not start with the HE "
                     "feminine opening: %r" % r.get("reply", "")[:120])
 if r.get("crisis"):

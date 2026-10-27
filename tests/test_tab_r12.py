@@ -60,7 +60,7 @@ for name, want in (
     ("FIXED_CRISIS_RESPONSE",
      "718f7c98131223578dd68c441f90cad7f72404d9abf3de5952bef39581aa5250"),
     ("FIXED_CRISIS_RESPONSE_HE",
-     "d9306c9af9205559b745bfbbf0b9b1ad26df027dc2376cd8325aa569d2c1365d"),
+     "faddb1553685e4286b2298d0d07860b2dcd774a34904956f862b73c786769333"),
 ):
     got = hashlib.sha256(getattr(solace, name).encode()).hexdigest()
     if got != want:
@@ -190,7 +190,7 @@ for surface in ("sync", "stream"):
 # clears the latch — the guard wins over the latch.
 uid = new_user()
 r = chat(uid, "אני רוצה למות")
-if not r["crisis"] or FROZEN_HE not in r["reply"]:
+if not r["crisis"] or solace.crisis_reply_he(None) not in r["reply"]:
     failures.append("LATCH setup failed: %r" % r["reply"][:80])
 r = chat(uid, "לקחתי את הכדורים שלי")
 if r["crisis"] or EMERG_HE in r["reply"]:
@@ -204,23 +204,30 @@ if r["crisis"]:
 # and latches; a calm follow-up stays in the crisis flow.
 uid = new_user()
 r = chat(uid, "אני רוצה למות")
-if not r["crisis"] or FROZEN_HE not in r["reply"] \
+if not r["crisis"] or solace.crisis_reply_he(None) not in r["reply"] \
         or not r.get("banner"):
     failures.append("CRISIS real signal weakened: %r"
                     % r["reply"][:80])
+# FINAL order A2: moving on to an everyday topic clears the
+# latch AND the banner (supersedes the round-12 stay-latched pin).
 r = chat(uid, "סתם רציתי לדבר על משהו אחר")
-if not r["crisis"] and not r.get("banner"):
-    failures.append("CRISIS latch lost after a real crisis")
+if r["crisis"] or r.get("banner"):
+    failures.append("A2 moving-on must clear latch + banner: %r"
+                    % r)
 # Stuck + a genuine crisis word in one message: crisis wins.
 uid = new_user()
+# (Writer is masculine-signaled here — "אני מרגיש" — so the
+# masculine frozen variant is the right one.)
 r = chat(uid, "אני מרגיש תקוע בחיים ואני רוצה למות")
 if not r["crisis"] or FROZEN_HE not in r["reply"]:
     failures.append("CRISIS stuck+crisis-word not crisis: %r"
                     % r["reply"][:80])
-# A real completed ingestion still leads with מד״א 101.
+# A real completed ingestion still leads with מד״א 101 —
+# FINAL order A3's medical reply (supersedes the old
+# EMERGENCY_RESPONSE_HE pin).
 uid = new_user()
 r = chat(uid, "בלעתי כדורים")
-if EMERG_HE not in r["reply"]:
+if solace._MEDICAL_HE["n"] not in r["reply"]:
     failures.append("CRISIS ingestion weakened: %r"
                     % r["reply"][:80])
 print("1. stuck is not-crisis by rule (classifier never consulted); "
