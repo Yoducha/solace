@@ -390,17 +390,33 @@
   }
   .rhcard strong { display: block; font-size: 15px; margin-bottom: 2px; }
   .rhcard .tip { color: var(--ink); }
+  /* A19: every tappable element is at least 44x44px at phone
+     widths — header buttons, chips, the SOS pill, memory item
+     buttons, message speak buttons, footer links, the disclaimer
+     collapse, help-vote buttons and the composer controls. */
+  .hdr-btn { min-height: 44px; min-width: 44px; }
+  .sos { display: inline-flex; align-items: center; min-height: 44px; }
+  .chip { min-height: 44px; }
+  .mem-item button { min-width: 44px; min-height: 44px; }
+  .msg .speak { min-width: 44px; min-height: 44px; }
+  .disclaimer .x { min-width: 44px; min-height: 44px; }
+  .tiny .linkbtn, .tiny a { display: inline-flex; align-items: center; min-height: 44px; padding: 0 4px; }
+  #help-vote button { min-width: 44px; min-height: 44px; }
+  #composer button { min-height: 44px; min-width: 44px; }
+  #rh-voicebar .pv { min-height: 44px; min-width: 44px; }
+  #vm-bar button { min-width: 44px; min-height: 44px; }
+  button:disabled { opacity: .45; }
 </style>
 </head>
 <body>
 
 <div id="topbar">
 <header>
-  <div class="brand">Solace<small>A private AI companion for reflection and self-help.</small></div>
+  <div class="brand">Solace<small id="brand-sub">A private AI companion for reflection and self-help.</small></div>
   <div class="hdr-actions">
-    <button id="new-chat" class="hdr-btn" title="Start a new conversation">↺ <span class="btn-label">New chat</span></button>
-    <button id="voice-toggle" class="hdr-btn" title="Voice on/off">🔇 <span class="btn-label">Voice off</span></button>
-    <a class="sos" href="tel:988"><span class="sos-full">In crisis? Call/text 988</span><span class="sos-short">Crisis? 988</span></a>
+    <button id="new-chat" class="hdr-btn" title="Start a new conversation">↺ <span class="btn-label" id="new-chat-label">New chat</span></button>
+    <button id="voice-toggle" class="hdr-btn" title="Voice on/off">🔇 <span class="btn-label" id="voice-label">Voice off</span></button>
+    <a class="sos" id="sos-pill" href="tel:988"><span class="sos-full" id="sos-full">In crisis? Call/text 988</span><span class="sos-short" id="sos-short">Crisis? 988</span></a>
   </div>
 </header>
 
@@ -412,7 +428,7 @@
 </div>
 
 <div class="disclaimer" id="disclaimer">
-  <span class="disc-full">Solace is an AI self-help companion — not for emergencies.</span><span class="disc-short">Solace is an AI self-help companion.</span>
+  <span class="disc-full" id="disc-full">Solace is an AI self-help companion — not for emergencies.</span><span class="disc-short" id="disc-short">Solace is an AI self-help companion.</span>
   <button class="x" id="disclaimer-x" title="Make this smaller" aria-label="Collapse disclaimer">×</button>
 </div>
 
@@ -427,6 +443,10 @@
       <button class="btn secondary" id="begin">Start a reflection</button>
     </div>
     <p class="privacy-line" id="privacy-line">We count usage anonymously — never what you write.</p>
+
+    <!-- A18: memory + delete are reachable from the welcome
+         screen too, whenever a user id exists. -->
+    <p class="tiny" id="welcome-data-row" style="display:none;text-align:center;margin:0"><button type="button" class="linkbtn" data-act="memory">What Solace remembers</button> · <button type="button" class="linkbtn danger" data-act="delete">Delete my data</button></p>
 
     <div id="intake-fields" style="display:none">
       <p class="lead" id="lead-line">Your chats aren't shared with other people or used to advertise to you. See the privacy page for details.</p>
@@ -481,13 +501,16 @@
     <div class="chat-actions">
       <button type="button" id="rehearse-open" class="btn secondary">🎭 Rehearse a hard talk</button>
     </div>
-    <p class="tiny" style="text-align:center;margin:6px 0 10px"><a href="/privacy" target="_blank">Privacy</a> · <a href="/terms" target="_blank">Terms</a> · <button type="button" id="memory-open" class="linkbtn">What Solace remembers</button> · <button type="button" id="delete-data" class="linkbtn danger">Delete my data</button></p>
+    <p class="tiny" id="chat-footer-links" style="text-align:center;margin:6px 0 10px"><a href="/privacy" target="_blank" id="footer-privacy">Privacy</a> · <a href="/terms" target="_blank" id="footer-terms">Terms</a> · <button type="button" id="memory-open" class="linkbtn">What Solace remembers</button> · <button type="button" id="delete-data" class="linkbtn danger">Delete my data</button></p>
   </section>
 
   <!-- Rehearse a hard talk -->
   <section id="rehearse">
     <div class="rh-top">
       <button type="button" id="rh-back" class="linkbtn">← <span data-rh="back">Back</span></button>
+      <span style="flex:1"></span>
+      <button type="button" class="linkbtn" data-act="memory">What Solace remembers</button>
+      <button type="button" class="linkbtn danger" data-act="delete">Delete my data</button>
       <span class="rh-name" data-rh="title">Rehearse a hard talk</span>
     </div>
 
@@ -575,8 +598,8 @@
 <!-- What Solace remembers about you -->
 <div id="memory-overlay" role="dialog" aria-label="What Solace remembers about you">
   <div id="memory-card">
-    <h2>What Solace remembers about you</h2>
-    <p class="sub">So we can pick up where we left off, Solace keeps a short note of the themes and goals you share. You can remove anything here — it stays removed — or delete everything at once.</p>
+    <h2 id="mem-title">What Solace remembers about you</h2>
+    <p class="sub" id="mem-sub">So we can pick up where we left off, Solace keeps a short note of the themes and goals you share. You can remove anything here — it stays removed — or delete everything at once.</p>
     <div id="memory-list"></div>
     <div class="row">
       <button type="button" id="memory-close">Close</button>
@@ -613,6 +636,192 @@ let voiceOn = false;
 // conversation's language.
 let bannerLang = 'en';
 
+// ---- A16: ONE string table for the whole UI, EN + HE. The
+// language is chosen ONCE: a stored choice wins, then the
+// device language, then the first message's language (set in
+// doSend). Every visible string renders from here, so a Hebrew
+// session never shows English chrome.
+const UI_STRINGS = {
+  en: {
+    brandSub: 'A private AI companion for reflection and self-help.',
+    newChat: 'New chat', voiceOn: 'Voice on', voiceOff: 'Voice off',
+    sosFull: 'In crisis? Call/text 988', sosShort: 'Crisis? 988',
+    discFull: 'Solace is an AI self-help companion — not for emergencies.',
+    discShort: 'Solace is an AI self-help companion.',
+    tagline: null, // EN: served verbatim in the element; not duplicated here.
+    beginRehearse: 'Practice a hard conversation',
+    begin: 'Start a reflection', beginOpen: 'Begin reflection', starting: 'Starting…',
+    privacyLine: 'We count usage anonymously — never what you write.',
+    leadLine: null, // EN: the served element already carries the approved sentence verbatim — never duplicated in this file.
+    nameLabel: 'What should I call you? (optional)', namePh: 'Your first name',
+    moodLabel: 'How are you feeling right now?',
+    moods: {},
+    startersLabel: 'Not sure where to start? Tap one:',
+    starters: [],
+    concernLabel: "What's weighing on you most?",
+    concernPh: "Whatever comes to mind — there's no wrong answer.",
+    tinyLine: 'Continuing means you agree to the <a href="/terms" target="_blank">Terms</a> and <a href="/privacy" target="_blank">Privacy Policy</a>. In crisis, call or text 988.',
+    composerPh: "Share what's on your mind…", send: 'Send',
+    rehearseOpen: '🎭 Rehearse a hard talk',
+    footerPrivacy: 'Privacy', footerTerms: 'Terms',
+    memoryOpen: 'What Solace remembers', deleteData: 'Delete my data',
+    memTitle: 'What Solace remembers about you',
+    memSub: 'So we can pick up where we left off, Solace keeps a short note of the themes and goals you share. You can remove anything here — it stays removed — or delete everything at once.',
+    memClose: 'Close', memDeleteAll: 'Delete everything',
+    memEmpty: 'Nothing saved yet. As we talk, a short note of the themes and goals you share will appear here — and you can remove any of it, any time.',
+    memLoading: 'Loading…', memLoadErr: 'Could not load your memory just now — please try again.',
+    memThemes: 'Themes', memGoals: 'Goals', memRemove: 'Remove this',
+    welcomeBack: "Welcome back — here's where you left off.",
+    confirmNew: 'Start a new conversation? A fresh session will begin.',
+    noDataYet: 'There is no saved data to delete yet.',
+    confirmDelete: 'Permanently delete ALL your Solace data — every message, your profile, and the memory notes? This cannot be undone.',
+    deleted: 'Your data has been deleted.',
+    deleteFailed: 'Could not delete your data just now — please try again, or email us and we will delete it for you.',
+    nothingSaved: 'Nothing is saved yet — start a conversation first.',
+    removeFailed: 'Could not remove that just now — please try again.',
+    helpQ: 'Did this help?',
+    voiceOnMsg: "Voice is on. I'll read my replies out loud.",
+    connErr: "I'm having trouble connecting. Please check your connection and try again.",
+    bannerHeads: {
+      m: 'אם אתה מרגיש שאתה עלול לפעול לפי המחשבות האלה, כדאי לפנות לעזרה ממש עכשיו.',
+      f: 'אם את מרגישה שאת עלולה לפעול לפי המחשבות האלה, כדאי לפנות לעזרה ממש עכשיו.',
+      n: 'אם יש הרגשה שאפשר לפעול לפי המחשבות האלה, כדאי לפנות לעזרה ממש עכשיו.',
+    },
+  },
+  he: {
+    brandSub: 'מלווה AI פרטי להתבוננות ולעזרה עצמית.',
+    newChat: 'שיחה חדשה', voiceOn: 'קול פעיל', voiceOff: 'קול כבוי',
+    sosFull: 'במשבר? ער״ן 1201 · מד״א 101', sosShort: 'משבר? 1201',
+    discFull: 'סולאס הוא מלווה AI לעזרה עצמית — לא למצבי חירום.',
+    discShort: 'סולאס הוא מלווה AI לעזרה עצמית.',
+    tagline: 'מלווה AI פרטי להתבוננות ולעזרה עצמית. לא טיפול, ולא תחליף לליווי מקצועי.',
+    beginRehearse: 'לתרגל שיחה קשה',
+    begin: 'להתחיל התבוננות', beginOpen: 'מתחילים', starting: 'מתחיל…',
+    privacyLine: 'אנחנו סופרים שימוש באופן אנונימי — לעולם לא את מה שכותבים.',
+    leadLine: 'השיחות שלך לא משותפות עם אנשים אחרים ולא משמשות כדי לפרסם לך. לפרטים נוספים, ראו את עמוד הפרטיות.',
+    nameLabel: 'איך לקרוא לך? (לא חובה)', namePh: 'השם הפרטי שלך',
+    moodLabel: 'איך ההרגשה עכשיו?',
+    moods: { 'Really struggling': 'ממש קשה לי', 'Low': 'נמוך', 'Okay': 'בסדר', 'Good': 'טוב', 'Great': 'מצוין' },
+    startersLabel: 'לא בטוח מאיפה להתחיל? אפשר להקיש על אחד:',
+    starters: ['אני לא מצליח לישון — הראש לא מפסיק לרוץ.', 'העבודה ממש מכבידה עליי בזמן האחרון.', 'רבתי עם מישהו שאני אוהב.'],
+    concernLabel: 'מה הכי מכביד עכשיו?',
+    concernPh: 'כל מה שעולה בראש — אין תשובה לא נכונה.',
+    tinyLine: 'המשך השימוש מהווה הסכמה ל<a href="/terms" target="_blank">תנאים</a> ול<a href="/privacy" target="_blank">מדיניות הפרטיות</a>. במשבר: ער״ן <a href="tel:1201">1201</a>, מד״א <a href="tel:101">101</a>.',
+    composerPh: 'אפשר לשתף מה שעובר בראש…', send: 'שלח',
+    rehearseOpen: '🎭 לתרגל שיחה קשה',
+    footerPrivacy: 'פרטיות', footerTerms: 'תנאים',
+    memoryOpen: 'מה סולאס זוכר', deleteData: 'מחיקת הנתונים שלי',
+    memTitle: 'מה סולאס זוכר עליך',
+    memSub: 'כדי שנוכל להמשיך מאיפה שהפסקנו, סולאס שומר הערה קצרה על הנושאים והמטרות שמשתפים כאן. אפשר להסיר כל פריט — והוא נשאר מוסר — או למחוק הכול בבת אחת.',
+    memClose: 'סגירה', memDeleteAll: 'מחיקת הכול',
+    memEmpty: 'עדיין לא נשמר כלום. תוך כדי השיחה תופיע כאן הערה קצרה על הנושאים והמטרות — ואפשר להסיר כל חלק, בכל זמן.',
+    memLoading: 'טוען…', memLoadErr: 'לא הצלחנו לטעון את הזיכרון כרגע — אפשר לנסות שוב.',
+    memThemes: 'נושאים', memGoals: 'מטרות', memRemove: 'הסרת הפריט',
+    welcomeBack: 'טוב שחזרתם — הנה המקום שבו הפסקנו.',
+    confirmNew: 'להתחיל שיחה חדשה? תתחיל שיחה טרייה.',
+    noDataYet: 'עדיין אין נתונים שמורים למחיקה.',
+    confirmDelete: 'למחוק לצמיתות את כל נתוני סולאס — כל ההודעות, הפרופיל והערות הזיכרון? אי אפשר לבטל את זה.',
+    deleted: 'הנתונים נמחקו.',
+    deleteFailed: 'לא הצלחנו למחוק את הנתונים כרגע — אפשר לנסות שוב, או לכתוב לנו ואנחנו נמחק עבורך.',
+    nothingSaved: 'עדיין לא נשמר כלום — קודם מתחילים שיחה.',
+    removeFailed: 'לא הצלחנו להסיר את זה כרגע — אפשר לנסות שוב.',
+    helpQ: 'זה עזר?',
+    voiceOnMsg: 'הקול פעיל. אקריא את התשובות שלי בקול.',
+    connErr: 'יש בעיית חיבור. כדאי לבדוק את החיבור ולנסות שוב.',
+    bannerHeads: {
+      m: 'אם אתה מרגיש שאתה עלול לפעול לפי המחשבות האלה, כדאי לפנות לעזרה ממש עכשיו.',
+      f: 'אם את מרגישה שאת עלולה לפעול לפי המחשבות האלה, כדאי לפנות לעזרה ממש עכשיו.',
+      n: 'אם יש הרגשה שאפשר לפעול לפי המחשבות האלה, כדאי לפנות לעזרה ממש עכשיו.',
+    },
+  },
+};
+let UILang = (() => {
+  try {
+    const s = localStorage.getItem('solace_lang');
+    if (s === 'he' || s === 'en') return s;
+  } catch (e) {}
+  return /^he/i.test(navigator.language || '') ? 'he' : 'en';
+})();
+let writerGender = '';
+const BTXT = { begin: '', beginOpen: '', starting: '' };
+function T() { return UI_STRINGS[UILang] || UI_STRINGS.en; }
+function setText(id, txt) {
+  const el = document.getElementById(id);
+  if (el && txt != null) el.textContent = txt;
+}
+function applyUIStrings() {
+  const t = T();
+  document.documentElement.lang = UILang;
+  document.documentElement.dir = UILang === 'he' ? 'rtl' : 'ltr';
+  BTXT.begin = t.begin; BTXT.beginOpen = t.beginOpen; BTXT.starting = t.starting;
+  setText('brand-sub', t.brandSub);
+  setText('new-chat-label', t.newChat);
+  setText('voice-label', voiceOn ? t.voiceOn : t.voiceOff);
+  setText('sos-full', t.sosFull); setText('sos-short', t.sosShort);
+  const sos = document.getElementById('sos-pill');
+  if (sos) sos.href = UILang === 'he' ? 'tel:1201' : 'tel:988';
+  setText('disc-full', t.discFull); setText('disc-short', t.discShort);
+  const welcome = document.getElementById('welcome');
+  if (welcome) welcome.setAttribute('dir', UILang === 'he' ? 'rtl' : 'ltr');
+  setText('tagline', t.tagline);
+  setText('begin-rehearse', t.beginRehearse);
+  const beginBtn = document.getElementById('begin');
+  if (beginBtn) beginBtn.textContent = intakeShown ? t.beginOpen : t.begin;
+  setText('privacy-line', t.privacyLine);
+  setText('lead-line', t.leadLine);
+  setText('name-label', t.nameLabel);
+  const nameEl = document.getElementById('name');
+  if (nameEl) nameEl.placeholder = t.namePh;
+  setText('mood-label', t.moodLabel);
+  document.querySelectorAll('#moods .chip').forEach(ch => {
+    if (t.moods[ch.dataset.m]) ch.textContent = t.moods[ch.dataset.m];
+  });
+  setText('starters-label', t.startersLabel);
+  document.querySelectorAll('.starter-chip').forEach((ch, i) => {
+    if (t.starters[i]) ch.textContent = t.starters[i];
+  });
+  setText('concern-label', t.concernLabel);
+  const concernEl = document.getElementById('concern');
+  if (concernEl) concernEl.placeholder = t.concernPh;
+  const tiny = document.getElementById('tiny-line');
+  if (tiny) tiny.innerHTML = t.tinyLine;
+  const input = document.getElementById('input');
+  if (input) input.placeholder = t.composerPh;
+  setText('send', t.send);
+  setText('rehearse-open', t.rehearseOpen);
+  setText('footer-privacy', t.footerPrivacy);
+  setText('footer-terms', t.footerTerms);
+  setText('memory-open', t.memoryOpen);
+  setText('delete-data', t.deleteData);
+  document.querySelectorAll('[data-act="memory"]').forEach(b => { b.textContent = t.memoryOpen; });
+  document.querySelectorAll('[data-act="delete"]').forEach(b => { b.textContent = t.deleteData; });
+  setText('mem-title', t.memTitle); setText('mem-sub', t.memSub);
+  setText('memory-close', t.memClose); setText('memory-delete-all', t.memDeleteAll);
+  setText('help-vote-q', t.helpQ);
+  refreshWelcomeDataRow();
+}
+function setUILang(l) {
+  if (l !== 'he' && l !== 'en') return;
+  UILang = l;
+  try { localStorage.setItem('solace_lang', l); } catch (e) {}
+  applyUIStrings();
+}
+function refreshWelcomeDataRow() {
+  const row = document.getElementById('welcome-data-row');
+  if (row) row.style.display = userId ? '' : 'none';
+}
+// The voice-privacy line in the writer's gender (A5): the
+// masculine text is Tab's pinned default; a known woman writer
+// gets the feminine, an unknown writer the plural-neutral.
+const VOICE_PRIVACY_HE = {
+  m: 'סולאס אף פעם לא מקבל או שומר את האודיו שלך — רק את הטקסט של מה שאתה אומר.',
+  f: 'סולאס אף פעם לא מקבל או שומר את האודיו שלך — רק את הטקסט של מה שאת אומרת.',
+  n: 'סולאס אף פעם לא מקבל או שומר הקלטות — רק את הטקסט של מה שנאמר.',
+};
+function voicePrivacyHe() {
+  return VOICE_PRIVACY_HE[writerGender] || VOICE_PRIVACY_HE.m;
+}
+
 function pickVoice() {
   const vs = speechSynthesis.getVoices();
   return vs.find(v => /en[-_]US/i.test(v.lang) && /natural|neural|samantha|google us english/i.test(v.name))
@@ -622,8 +831,12 @@ function speak(text) {
   try {
     speechSynthesis.cancel();
     const u = new SpeechSynthesisUtterance(text.replace(/\*\*/g, '').replace(/\*/g, ''));
-    const v = pickVoice();
-    if (v) u.voice = v;
+    // A16: the TTS voice follows the REPLY's language — a Hebrew
+    // reply is read with a Hebrew voice, never an English one.
+    const heCount = (text.match(/[\u0590-\u05FF]/g) || []).length;
+    const latCount = (text.match(/[A-Za-z]/g) || []).length;
+    const v = heCount > latCount ? pickVoiceFor('he') : pickVoice();
+    if (v) { u.voice = v; u.lang = v.lang; }
     u.rate = 0.95; u.pitch = 1;
     speechSynthesis.speak(u);
   } catch (e) { /* voice not supported */ }
@@ -632,9 +845,9 @@ if ('speechSynthesis' in window) speechSynthesis.getVoices();
 
 document.getElementById('voice-toggle').addEventListener('click', function() {
   voiceOn = !voiceOn;
-  this.innerHTML = voiceOn ? '🔊 <span class="btn-label">Voice on</span>' : '🔇 <span class="btn-label">Voice off</span>';
+  this.innerHTML = (voiceOn ? '🔊 ' : '🔇 ') + '<span class="btn-label" id="voice-label">' + (voiceOn ? T().voiceOn : T().voiceOff) + '</span>';
   if (!voiceOn && 'speechSynthesis' in window) speechSynthesis.cancel();
-  if (voiceOn) speak("Voice is on. I'll read my replies out loud.");
+  if (voiceOn) speak(T().voiceOnMsg);
 });
 
 // Disclaimer strip: collapsible to one small line, remembered for the
@@ -651,7 +864,7 @@ document.getElementById('voice-toggle').addEventListener('click', function() {
 // New Conversation: fresh session id, cleared view, reset intake. confirm()
 // guards against an accidental tap wiping the current chat.
 document.getElementById('new-chat').addEventListener('click', () => {
-  if (!confirm('Start a new conversation? A fresh session will begin.')) return;
+  if (!confirm(T().confirmNew)) return;
   userId = Array.from(crypto.getRandomValues(new Uint8Array(8)))
     .map(b => b.toString(16).padStart(2, '0')).join('');
   localStorage.setItem('solace_uid', userId);
@@ -838,11 +1051,14 @@ function hideChatVote() {
 
 function crisisBannerHTML(hotline, lang) {
   if (lang === 'he') {
-    return '<strong>אם אתם מרגישים שאתם עלולים לפעול לפי המחשבות האלה, אנא פנו לעזרה ממש עכשיו.</strong>'
+    // A5: the banner addresses the writer in their own gender
+    // (neutral until known) — never the old plural forms.
+    const head = T().bannerHeads[writerGender] || T().bannerHeads.n;
+    return '<strong>' + head + '</strong>'
       + 'בישראל אפשר להתקשר לער״ן — סיוע רגשי — למספר <a href="tel:1201">1201</a>, בכל שעה, 24/7. '
-      + 'אם אתם בסכנה מיידית, התקשרו למד״א במספר <a href="tel:101">101</a>. '
+      + 'אם יש סכנה מיידית, צריך להתקשר למד״א במספר <a href="tel:101">101</a>. '
       + 'בארצות הברית אפשר להתקשר או לשלוח הודעה ל־<a href="tel:988">988</a>. '
-      + 'אתם לא צריכים לעבור את זה לבד.';
+      + 'לא צריך לעבור את זה לבד.';
   }
   if (hotline === '1201') {
     return '<strong>If you feel you might act on these thoughts, please reach out right now.</strong>'
@@ -898,11 +1114,28 @@ function finishBubble(b, text) {
 let lastChatPayload = null;
 let lastChatReplyText = '';
 
+// A17: while a reply is streaming, Send and the mic stay
+// disabled — a second turn can't start until this one is done.
+function setChatBusy(busy) {
+  const send = document.getElementById('send');
+  const mic = document.getElementById('chat-mic');
+  if (send) send.disabled = busy;
+  if (mic) mic.disabled = busy;
+}
 async function sendChat(text) {
+  setChatBusy(true);
+  try {
+    return await sendChatTurn(text);
+  } finally {
+    setChatBusy(false);
+  }
+}
+async function sendChatTurn(text) {
   if ('speechSynthesis' in window) speechSynthesis.cancel();
   const typing = addTyping('messages');
   const applyPayload = (payload, bubble, acc) => {
     if (payload.banner_lang) bannerLang = payload.banner_lang;
+    if (payload.writer_gender) writerGender = payload.writer_gender;
     if (payload.crisis) hideChatVote();
     if (payload.crisis || payload.banner) {
       // In crisis, and also after stepping down: the banner stays
@@ -973,7 +1206,7 @@ async function sendChat(text) {
         lastChatPayload = res;
         return res;
       } catch (e2) {
-        addMsg("I'm having trouble connecting. Please check your connection and try again.", 'ai');
+        addMsg(T().connErr, 'ai');
       }
     }
   }
@@ -1024,6 +1257,16 @@ async function doSend() {
   const text = inp.value.trim();
   if (!text) return;
   inp.value = '';
+  // A16: with no stored choice, the FIRST message's main
+  // language picks the UI language (once).
+  let langStored = null;
+  try { langStored = localStorage.getItem('solace_lang'); } catch (e) {}
+  if (!langStored) {
+    const he = (text.match(/[\u0590-\u05FF]/g) || []).length;
+    const lat = (text.match(/[A-Za-z]/g) || []).length;
+    if (he > lat) setUILang('he');
+    else if (lat > 0) setUILang('en');
+  }
   addMsg(text, 'user');
   await sendChat(text);
 }
@@ -1037,8 +1280,8 @@ document.getElementById('input').addEventListener('keydown', e => {
 // reset the app. Shared by the chat footer button and the remembers
 // view's "Delete everything".
 async function doDeleteData() {
-  if (!userId) { alert('There is no saved data to delete yet.'); return; }
-  if (!confirm('Permanently delete ALL your Solace data — every message, your profile, and the memory notes? This cannot be undone.')) return;
+  if (!userId) { alert(T().noDataYet); return; }
+  if (!confirm(T().confirmDelete)) return;
   try {
     const res = await api('/api/delete', {user_id: userId});
     if (!res.ok) throw new Error('delete failed');
@@ -1063,13 +1306,15 @@ async function doDeleteData() {
     document.getElementById('rehearse').style.display = 'none';
     rhState = null;
     document.getElementById('welcome').style.display = 'flex';
-    alert('Your data has been deleted.');
+    refreshWelcomeDataRow();
+    alert(T().deleted);
     window.scrollTo(0, 0);
   } catch (e) {
-    alert('Could not delete your data just now — please try again, or email us and we will delete it for you.');
+    alert(T().deleteFailed);
   }
 }
 document.getElementById('delete-data').addEventListener('click', doDeleteData);
+document.querySelectorAll('[data-act="delete"]').forEach(b => b.addEventListener('click', doDeleteData));
 
 // ---- What Solace remembers about you ----
 const memoryOverlay = document.getElementById('memory-overlay');
@@ -1080,11 +1325,11 @@ function renderMemory(items) {
   if (!items || !items.length) {
     const p = document.createElement('p');
     p.className = 'mem-empty';
-    p.textContent = 'Nothing saved yet. As we talk, a short note of the themes and goals you share will appear here — and you can remove any of it, any time.';
+    p.textContent = T().memEmpty;
     list.appendChild(p);
     return;
   }
-  [['theme', 'Themes'], ['goal', 'Goals']].forEach(([kind, label]) => {
+  [['theme', T().memThemes], ['goal', T().memGoals]].forEach(([kind, label]) => {
     const group = items.filter(i => i.kind === kind);
     if (!group.length) return;
     const h = document.createElement('h3');
@@ -1097,13 +1342,13 @@ function renderMemory(items) {
       span.textContent = item.text;
       const x = document.createElement('button');
       x.textContent = '✕';
-      x.title = 'Remove this';
-      x.setAttribute('aria-label', 'Remove this memory item');
+      x.title = T().memRemove;
+      x.setAttribute('aria-label', T().memRemove);
       x.addEventListener('click', async () => {
         try {
           const res = await api('/api/memory/delete-item', {user_id: userId, item_id: item.id});
           if (res.ok) renderMemory(res.items);
-        } catch (e) { alert('Could not remove that just now — please try again.'); }
+        } catch (e) { alert(T().removeFailed); }
       });
       row.appendChild(span);
       row.appendChild(x);
@@ -1112,18 +1357,19 @@ function renderMemory(items) {
   });
 }
 async function openMemory() {
-  if (!userId) { alert('Nothing is saved yet — start a conversation first.'); return; }
+  if (!userId) { alert(T().nothingSaved); return; }
   memoryOverlay.classList.add('open');
-  document.getElementById('memory-list').innerHTML = '<p class="mem-empty">Loading…</p>';
+  document.getElementById('memory-list').innerHTML = '<p class="mem-empty">' + T().memLoading + '</p>';
   try {
     const r = await fetch('/api/memory?user_id=' + encodeURIComponent(userId));
     const m = await r.json();
     renderMemory(m.items || []);
   } catch (e) {
-    document.getElementById('memory-list').innerHTML = '<p class="mem-empty">Could not load your memory just now — please try again.</p>';
+    document.getElementById('memory-list').innerHTML = '<p class="mem-empty">' + T().memLoadErr + '</p>';
   }
 }
 document.getElementById('memory-open').addEventListener('click', openMemory);
+document.querySelectorAll('[data-act="memory"]').forEach(b => b.addEventListener('click', openMemory));
 document.getElementById('memory-close').addEventListener('click', closeMemory);
 document.getElementById('memory-delete-all').addEventListener('click', doDeleteData);
 memoryOverlay.addEventListener('click', e => { if (e.target === memoryOverlay) closeMemory(); });
@@ -1524,7 +1770,7 @@ function rhSetPartnerVoice(on) {
 
 function rhInitVoicebar() {
   const t = rhT();
-  document.getElementById('rh-voice-privacy').textContent = t.voicePrivacy;
+  document.getElementById('rh-voice-privacy').textContent = (rhLang() === 'he' ? voicePrivacyHe() : t.voicePrivacy);
   document.getElementById('rh-mic-cta').textContent = t.micCta;
   document.getElementById('rh-mic').title = t.micTitle;
   rhVoiceNote('');
@@ -2041,7 +2287,7 @@ const VM_STR = {
   en: { listening: 'Listening…', thinking: 'Thinking…', speaking: 'Speaking…',
         muted: 'Muted', tapTalk: 'Tap to talk', tapDone: 'Tap when done',
         typePh: 'Type instead…' },
-  he: { listening: 'מקשיב…', thinking: 'חושבת…', speaking: 'מדברת…',
+  he: { listening: 'מקשיב…', thinking: 'חושב…', speaking: 'מדבר…',
         muted: 'מושתק', tapTalk: 'הקישו כדי לדבר', tapDone: 'הקישו לסיום',
         typePh: 'אפשר גם לכתוב…' },
 };
@@ -2478,7 +2724,7 @@ function vmOpen(ctx) {
   let seen = false;
   try { seen = !!localStorage.getItem('solace_vm_seen'); } catch (e) {}
   if (!seen) {
-    pv.textContent = (vm.lang === 'he' ? RH.he.voicePrivacy : RH.en.voicePrivacy);
+    pv.textContent = (vm.lang === 'he' ? voicePrivacyHe() : RH.en.voicePrivacy);
     pv.style.display = '';
     try { localStorage.setItem('solace_vm_seen', '1'); } catch (e) {}
   } else {
@@ -2600,47 +2846,11 @@ document.querySelectorAll('.starter-chip').forEach(ch => {
     box.focus();
   });
 });
-// A Hebrew phone/browser gets the whole intake in Hebrew (Tab
-// ruling) — strings swap in place, values (mood data-m) stay as-is.
-const UI_HE = /^he/i.test(navigator.language || '');
-const BTXT = UI_HE
-  ? { begin: 'להתחיל התבוננות', beginOpen: 'מתחילים', starting: 'מתחיל…' }
-  : { begin: 'Start a reflection', beginOpen: 'Begin reflection', starting: 'Starting…' };
-if (UI_HE) {
-  const set = (id, txt) => {
-    const el = document.getElementById(id);
-    if (el) el.textContent = txt;
-  };
-  document.getElementById('welcome').setAttribute('dir', 'rtl');
-  set('tagline', 'מלווה AI פרטי להתבוננות ולעזרה עצמית. לא טיפול, ולא תחליף לליווי מקצועי.');
-  set('begin-rehearse', 'לתרגל שיחה קשה');
-  set('begin', BTXT.begin);
-  set('privacy-line', 'אנחנו סופרים שימוש באופן אנונימי — לעולם לא את מה שכותבים.');
-  set('lead-line', 'השיחות שלך לא משותפות עם אנשים אחרים ולא משמשות כדי לפרסם לך. לפרטים נוספים, ראו את עמוד הפרטיות.');
-  set('name-label', 'איך לקרוא לך? (לא חובה)');
-  document.getElementById('name').placeholder = 'השם הפרטי שלך';
-  set('mood-label', 'איך אתה מרגיש עכשיו?');
-  const MOOD_HE = {
-    'Really struggling': 'ממש קשה לי', 'Low': 'נמוך', 'Okay': 'בסדר',
-    'Good': 'טוב', 'Great': 'מצוין',
-  };
-  document.querySelectorAll('#moods .chip').forEach(ch => {
-    if (MOOD_HE[ch.dataset.m]) ch.textContent = MOOD_HE[ch.dataset.m];
-  });
-  set('starters-label', 'לא בטוח מאיפה להתחיל? הקש על אחד:');
-  const STARTERS_HE = [
-    'אני לא מצליח לישון — הראש לא מפסיק לרוץ.',
-    'העבודה ממש מכבידה עליי בזמן האחרון.',
-    'רבתי עם מישהו שאני אוהב.',
-  ];
-  document.querySelectorAll('.starter-chip').forEach((ch, i) => {
-    if (STARTERS_HE[i]) ch.textContent = STARTERS_HE[i];
-  });
-  set('concern-label', 'מה הכי מכביד עליך?');
-  document.getElementById('concern').placeholder = 'כל מה שעולה בראש — אין תשובה לא נכונה.';
-  document.getElementById('tiny-line').innerHTML =
-    'בהמשך אתה מסכים ל<a href="/terms" target="_blank">תנאים</a> ול<a href="/privacy" target="_blank">מדיניות הפרטיות</a>. במשבר: ער״ן <a href="tel:1201">1201</a>, בכל שעה.';
-}
+// A16: the whole UI renders from the one string table — a
+// Hebrew session gets every string in Hebrew (intake included),
+// an English session none. Applied once here; setUILang re-applies
+// if the first message changes the choice.
+applyUIStrings();
 
 // Returning user: skip intake, restore history
 (async function init() {
@@ -2653,9 +2863,10 @@ if (UI_HE) {
     if ((h.messages && h.messages.length) || rhs.length) {
       showChat();
       if (h.banner_lang) bannerLang = h.banner_lang;
+      if (h.writer_gender) writerGender = h.writer_gender;
       const divider = document.createElement('div');
       divider.className = 'sysline';
-      divider.textContent = 'Welcome back — here\u2019s where you left off.';
+      divider.textContent = T().welcomeBack;
       document.getElementById('messages').appendChild(divider);
       // Completed rehearsals appear in history distinctly, in
       // chronological position among the messages.

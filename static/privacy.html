@@ -9,14 +9,17 @@
   h1 { font-size: 24px; } h2 { font-size: 17px; margin-top: 28px; }
   a { color: #7a6a53; } .back { display: inline-block; margin-bottom: 16px; }
   .updated { color: #8a8178; font-size: 13px; }
-  .crisis-btn { position: fixed; top: 12px; right: 12px; z-index: 50; background: #fdeeee; color: #9c2b2b; font-weight: 700; font-size: 14px; text-decoration: none; border-radius: 999px; padding: 9px 16px; box-shadow: 0 2px 10px rgba(0,0,0,.12); }
+  .crisis-btn { position: fixed; top: 12px; right: 12px; z-index: 50; background: #fdeeee; color: #9c2b2b; font-weight: 700; font-size: 14px; text-decoration: none; border-radius: 999px; padding: 9px 16px; box-shadow: 0 2px 10px rgba(0,0,0,.12); min-height: 44px; display: inline-flex; align-items: center; }
+  .lang-toggle { display: inline-block; margin-bottom: 16px; margin-inline-start: 14px; background: none; border: none; font: inherit; color: #7a6a53; cursor: pointer; text-decoration: underline; min-height: 44px; }
 </style>
 </head>
 <body>
-<a class="crisis-btn" href="tel:988">In crisis? Call/text 988</a>
-<a class="back" href="/">← Back to Solace</a>
+<a class="crisis-btn" id="crisis-btn" href="tel:988">In crisis? Call/text 988</a>
+<a class="back" href="/" id="back-top">← Back to Solace</a><button type="button" class="lang-toggle" id="lang-toggle">עברית</button>
+
+<div id="page-en">
 <h1>Privacy Policy</h1>
-<p class="updated">Last updated: October 25, 2026</p>
+<p class="updated">Last updated: October 27, 2026</p>
 
 <p>Solace is a private AI companion for reflection and self-help — not a substitute for professional care. This policy explains what information we collect, how we use it, and the choices you have. We wrote it in plain language on purpose.</p>
 
@@ -35,15 +38,12 @@
   <li>We do not share your information with advertisers or data brokers, except if required by law.</li>
   <li><strong>Your chats aren't shared with other people or used to advertise to you. See the privacy page for details.</strong></li>
 </ul>
-<div dir="rtl" lang="he">
-<p><strong>השיחות שלך לא משותפות עם אנשים אחרים ולא משמשות כדי לפרסם לך. לפרטים נוספים, ראו את עמוד הפרטיות.</strong></p>
-</div>
+
+<h2>In a crisis</h2>
+<p>Solace is not for emergencies. In the United States, call or text <strong>988</strong> any time — free, confidential, 24/7. In Israel, call ERAN emotional support at <strong>1201</strong> any time; if there is immediate danger, call MADA at <strong>101</strong>.</p>
 
 <h2>Anonymous usage counts</h2>
 <p>We count how Solace is used — how many people come, whether they come back, and which features they use, like Rehearse — so we can make it better. These counts are anonymous: they are kept under a one-way code that cannot be matched back to you or to your chats, and they never include anything you wrote. If you tap "Did this help?", only the 👍 or 👎 itself is counted — nothing else.</p>
-<div dir="rtl" lang="he">
-<p><strong>ספירת שימוש אנונימית:</strong> אנחנו סופרים איך משתמשים ב-Solace — כמה אנשים מגיעים, אם הם חוזרים, ובאילו אפשרויות הם משתמשים, כמו אפשרות החזרה על שיחה — כדי לשפר את האפליקציה. הספירה אנונימית: היא נשמרת תחת קוד חד-כיווני שלא ניתן לקשר אליך או לשיחות שלך, והיא לעולם לא כוללת שום דבר שכתבת. אם לוחצים על "זה עזר לך?", נספר רק ה-👍 או ה-👎 עצמו — שום דבר אחר.</p>
-</div>
 
 <h2>How your conversations are processed</h2>
 <p>When you send a message, it is transmitted securely to our AI provider (Anthropic) so it can generate a reply. Our provider processes the text only to produce the response and does not use your conversations to train its models.</p>
@@ -72,7 +72,94 @@
 
 <h2>Contact</h2>
 <p>For privacy questions, copies of your data, or deletion requests: <a href="mailto:y3769848@gmail.com">y3769848@gmail.com</a></p>
+</div>
 
-<a class="back" href="/">← Back to Solace</a>
+<div id="page-he" lang="he" dir="rtl" hidden>
+<h1>מדיניות פרטיות</h1>
+<p class="updated">עודכן לאחרונה: 27 באוקטובר 2026</p>
+
+<p>סולאס הוא מלווה בינה מלאכותית פרטי להרהור ולעזרה עצמית — לא תחליף לליווי מקצועי. המדיניות הזו מסבירה איזה מידע נאסף, איך משתמשים בו, ואילו בחירות יש לך. כתבנו אותה בשפה פשוטה בכוונה.</p>
+
+<h2>איזה מידע נאסף</h2>
+<ul>
+  <li><strong>מה שמספרים לנו:</strong> שם פרטי (לא חובה), ההודעות שלך, עדכוני מצב הרוח, והערות הזיכרון הפרטיות שהאפליקציה שומרת כדי לזכור את הסיפור שלך בין הביקורים.</li>
+  <li><strong>בסיס טכני:</strong> יומני שרת רגילים (כדי שהשירות יעבוד ויהיה מאובטח).</li>
+</ul>
+<p>אנחנו <strong>לא</strong> מבקשים כתובת דוא״ל, מספר טלפון או פרטי תשלום.</p>
+
+<h2>איך משתמשים במידע</h2>
+<ul>
+  <li>כדי לנהל את השיחות שלך ולזכור הקשר בין הביקורים.</li>
+  <li>כדי לשמור על השירות בטוח ופעיל.</li>
+  <li>השיחות שלך מעובדות על ידי ספק בינה מלאכותית כדי ליצור תשובות. אנחנו אף פעם לא מוכרים אותן, ואפשר למחוק הכול בכל זמן עם «מחיקת הנתונים שלי».</li>
+  <li>אנחנו לא משתפים את המידע שלך עם מפרסמים או סוחרי מידע, אלא אם החוק מחייב זאת.</li>
+  <li><strong>השיחות שלך לא משותפות עם אנשים אחרים ולא משמשות כדי לפרסם לך. לפרטים נוספים, ראו את עמוד הפרטיות.</strong></li>
+</ul>
+
+<h2>במצב משבר</h2>
+<p>סולאס לא מיועד למצבי חירום. בישראל מתקשרים לער״ן, קו הסיוע הנפשי, במספר <strong>1201</strong> בכל שעה; אם יש סכנה מיידית, מתקשרים למד״א במספר <strong>101</strong>. בארצות הברית מתקשרים או שולחים הודעה ל־<strong>988</strong> בכל שעה — חינם, חסוי, 24/7.</p>
+
+<h2>ספירת שימוש אנונימית</h2>
+<p>אנחנו סופרים איך משתמשים בסולאס — כמה אנשים מגיעים, אם הם חוזרים, ובאילו אפשרויות הם משתמשים, כמו אפשרות התרגול — כדי לשפר את האפליקציה. הספירה אנונימית: היא נשמרת תחת קוד חד-כיווני שלא ניתן לקשר אליך או לשיחות שלך, והיא לעולם לא כוללת שום דבר שכתבת. אם לוחצים על «זה עזר?», נספר רק ה-👍 או ה-👎 עצמו — שום דבר אחר.</p>
+
+<h2>איך השיחות מעובדות</h2>
+<p>כששולחים הודעה, היא מועברת בצורה מאובטחת לספק הבינה המלאכותית שלנו (Anthropic) כדי שייצור תשובה. הספק מעבד את הטקסט רק כדי להפיק את התשובה, ולא משתמש בשיחות שלך לאימון המודלים שלו.</p>
+
+<h2>כמה זמן המידע נשמר</h2>
+<p>אנחנו שומרים את השיחות והערות הזיכרון שלך כל עוד החשבון שלך קיים, כדי שהאפליקציה תוכל לזכור אותך. אפשר לבקש מאיתנו למחוק הכול בכל זמן (ראו למטה).</p>
+
+<h2>הזכויות שלך</h2>
+<ul>
+  <li><strong>לראות:</strong> פותחים את <strong>«מה סולאס זוכר»</strong> בתחתית מסך השיחה כדי לראות את נושאי ומטרות הזיכרון שנשמרו, ולהסיר כל אחד מהם — או לבקש מאיתנו עותק של מה שיש לנו.</li>
+  <li><strong>למחוק:</strong> אפשר לבקש מאיתנו למחוק לצמיתות את כל הנתונים שלך. נעשה זאת.</li>
+</ul>
+<p>אפשר גם למחוק הכול בעצמך, מיד, עם כפתור <strong>«מחיקת הנתונים שלי»</strong> בתחתית מסך השיחה — הוא מוחק לצמיתות את ההודעות, הפרופיל והערות הזיכרון. או לכתוב לנו לכתובת למטה ואנחנו נמחק עבורך.</p>
+
+<h2>אבטחה</h2>
+<p>השיחות מוצפנות בהעברה. הגישה למידע השמור מוגבלת. אף מערכת אינה מושלמת, ולא כדאי לשתף בסולאס משהו שלא היית רוצה שאף אחד יראה אי פעם — אבל אנחנו מתייחסים למילים שלך בזהירות הראויה.</p>
+
+<h2>הערה כנה</h2>
+<p>סולאס <strong>אינו</strong> ספק שירותים רפואיים ו<strong>אינו</strong> מכוסה ב-HIPAA. זהו מלווה בינה מלאכותית לעזרה עצמית, לא שירות רפואי. בבקשה לא לשתף באפליקציה מזהים רגישים במיוחד (כמו מספרי ביטוח לאומי או מספרי חשבונות בנק).</p>
+
+<h2>ילדים</h2>
+<p>סולאס מיועד לבני 18 ומעלה. מתחת לגיל 18, השימוש רק באישור הורה או אפוטרופוס.</p>
+
+<h2>שינויים</h2>
+<p>אם נשנה את המדיניות באופן משמעותי, נציין את התאריך החדש בראש העמוד.</p>
+
+<h2>יצירת קשר</h2>
+<p>לשאלות פרטיות, עותקים של הנתונים שלך, או בקשות מחיקה: <a href="mailto:y3769848@gmail.com">y3769848@gmail.com</a></p>
+</div>
+
+<a class="back" href="/" id="back-bottom">← Back to Solace</a>
+<script>
+(function () {
+  var stored = null;
+  try { stored = localStorage.getItem('solace_lang'); } catch (e) {}
+  var lang = (stored === 'he' || stored === 'en') ? stored
+    : (/^he/i.test(navigator.language || '') ? 'he' : 'en');
+  function apply(l) {
+    lang = l;
+    var he = l === 'he';
+    document.getElementById('page-en').hidden = he;
+    document.getElementById('page-he').hidden = !he;
+    document.documentElement.lang = he ? 'he' : 'en';
+    document.documentElement.dir = he ? 'rtl' : 'ltr';
+    var btn = document.getElementById('crisis-btn');
+    btn.textContent = he ? 'במשבר? ער״ן 1201' : 'In crisis? Call/text 988';
+    btn.href = he ? 'tel:1201' : 'tel:988';
+    document.getElementById('back-top').textContent = he ? '→ חזרה לסולאס' : '← Back to Solace';
+    document.getElementById('back-bottom').textContent = he ? '→ חזרה לסולאס' : '← Back to Solace';
+    document.getElementById('lang-toggle').textContent = he ? 'English' : 'עברית';
+    document.title = he ? 'מדיניות פרטיות — סולאס' : 'Privacy Policy — Solace';
+  }
+  document.getElementById('lang-toggle').addEventListener('click', function () {
+    var next = lang === 'he' ? 'en' : 'he';
+    try { localStorage.setItem('solace_lang', next); } catch (e) {}
+    apply(next);
+  });
+  apply(lang);
+})();
+</script>
 </body>
 </html>

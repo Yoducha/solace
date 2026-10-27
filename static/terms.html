@@ -10,27 +10,38 @@
   a { color: #7a6a53; } .back { display: inline-block; margin-bottom: 16px; }
   .updated { color: #8a8178; font-size: 13px; }
   .important { background: #fff7f0; border-left: 4px solid #c96f2e; padding: 12px 16px; border-radius: 0 8px 8px 0; }
-  .crisis-btn { position: fixed; top: 12px; right: 12px; z-index: 50; background: #fdeeee; color: #9c2b2b; font-weight: 700; font-size: 14px; text-decoration: none; border-radius: 999px; padding: 9px 16px; box-shadow: 0 2px 10px rgba(0,0,0,.12); }
+  .crisis-btn { position: fixed; top: 12px; right: 12px; z-index: 50; background: #fdeeee; color: #9c2b2b; font-weight: 700; font-size: 14px; text-decoration: none; border-radius: 999px; padding: 9px 16px; box-shadow: 0 2px 10px rgba(0,0,0,.12); min-height: 44px; display: inline-flex; align-items: center; }
+  .lang-toggle { display: inline-block; margin-bottom: 16px; margin-inline-start: 14px; background: none; border: none; font: inherit; color: #7a6a53; cursor: pointer; text-decoration: underline; min-height: 44px; }
+  [dir="rtl"] .important { border-left: none; border-right: 4px solid #c96f2e; border-radius: 8px 0 0 8px; }
 </style>
 </head>
 <body>
-<a class="crisis-btn" href="tel:988">In crisis? Call/text 988</a>
-<a class="back" href="/">← Back to Solace</a>
+<a class="crisis-btn" id="crisis-btn" href="tel:988">In crisis? Call/text 988</a>
+<a class="back" href="/" id="back-top">← Back to Solace</a><button type="button" class="lang-toggle" id="lang-toggle">עברית</button>
+
+<div id="page-en">
 <h1>Terms of Service</h1>
-<p class="updated">Last updated: October 25, 2026</p>
+<p class="updated">Last updated: October 27, 2026</p>
 
 <div class="important">
-<strong>Please read this first.</strong> Solace is an AI self-help companion — <strong>not</strong> a substitute for professional care, and <strong>not</strong> for emergencies. It is not medical care, and it does not replace professional help. If you are in crisis or thinking about harming yourself, call or text <strong>988</strong> (US) right now instead of using this app.
+<strong>Please read this first.</strong> Solace is an AI self-help companion — <strong>not</strong> a substitute for professional care, and <strong>not</strong> for emergencies. Not therapy. If you are in crisis or thinking about harming yourself, reach out right now instead of using this app (see “In a crisis” below).
 </div>
 
 <h2>What Solace is</h2>
-<p>Solace offers supportive, conversational AI that draws on well-established approaches (such as CBT, ACT, and DBT concepts) to help you reflect, cope, and work on small practical steps. It is a self-help and wellness tool — nothing more.</p>
+<p>Solace offers supportive, conversational AI to help you reflect, cope, and work on small practical steps. It is a self-help and wellness tool — nothing more.</p>
 
 <h2>What Solace is not</h2>
 <ul>
-  <li>Not a licensed professional, and not a patient–provider relationship.</li>
-  <li>Not medical advice, and not a professional assessment of what you're going through.</li>
-  <li>Not emergency care. Never use Solace for a crisis — contact 988, local emergency services, or a trusted person.</li>
+  <li>Not a licensed professional, and no professional relationship of any kind is created by using it.</li>
+  <li>Not professional advice, and not a professional assessment of what you're going through.</li>
+  <li>Not emergency care. Never use Solace for a crisis — see the crisis section below, contact local emergency services, or reach out to a trusted person.</li>
+</ul>
+
+<h2>In a crisis</h2>
+<ul>
+  <li><strong>United States:</strong> call or text <strong>988</strong> any time — free, confidential, 24/7 — or text HOME to 741741.</li>
+  <li><strong>Israel:</strong> call ERAN emotional support at <strong>1201</strong>, any time. If there is immediate danger, call MADA at <strong>101</strong>.</li>
+  <li>Anywhere else: contact your local emergency number or a trusted person near you.</li>
 </ul>
 
 <h2>AI limitations</h2>
@@ -53,7 +64,84 @@
 
 <h2>Contact</h2>
 <p>Questions about these terms: <a href="mailto:y3769848@gmail.com">y3769848@gmail.com</a></p>
+</div>
 
-<a class="back" href="/">← Back to Solace</a>
+<div id="page-he" lang="he" dir="rtl" hidden>
+<h1>תנאי שימוש</h1>
+<p class="updated">עודכן לאחרונה: 27 באוקטובר 2026</p>
+
+<div class="important">
+<strong>כדאי לקרוא קודם.</strong> סולאס הוא מלווה בינה מלאכותית לעזרה עצמית — <strong>לא</strong> תחליף לליווי מקצועי, ו<strong>לא</strong> למצבי חירום. לא טיפול. אם יש משבר או מחשבות על פגיעה עצמית, כדאי לפנות לעזרה ממש עכשיו במקום להשתמש באפליקציה (ראו «במצב משבר» למטה).
+</div>
+
+<h2>מה סולאס כן</h2>
+<p>סולאס מציע שיחה תומכת עם בינה מלאכותית, כדי לעזור להרהר, להתמודד, ולעבוד על צעדים קטנים ומעשיים. זהו כלי לעזרה עצמית ולרווחה — לא יותר מזה.</p>
+
+<h2>מה סולאס לא</h2>
+<ul>
+  <li>לא איש מקצוע מורשה, והשימוש בו לא יוצר שום קשר מקצועי.</li>
+  <li>לא ייעוץ מקצועי, ולא הערכה מקצועית של מה שעובר עליך.</li>
+  <li>לא נועד למצבי חירום. אף פעם לא משתמשים בסולאס במצב משבר — ראו את סעיף המשבר למטה, פנו לשירותי החירום המקומיים, או לאדם קרוב.</li>
+</ul>
+
+<h2>במצב משבר</h2>
+<ul>
+  <li><strong>בישראל:</strong> מתקשרים לער״ן, קו הסיוע הנפשי, במספר <strong>1201</strong>, בכל שעה. אם יש סכנה מיידית, מתקשרים למד״א במספר <strong>101</strong>.</li>
+  <li><strong>בארצות הברית:</strong> מתקשרים או שולחים הודעה ל־<strong>988</strong> בכל שעה — חינם, חסוי, 24/7 — או שולחים HOME ל־741741.</li>
+  <li>בכל מקום אחר: פנו למספר החירום המקומי או לאדם קרוב.</li>
+</ul>
+
+<h2>מגבלות הבינה המלאכותית</h2>
+<p>סולאס מופעל בבינה מלאכותית. הוא עלול לא להבין נכון, לטעות, או לתת תשובות שלא עוזרות. כדאי להפעיל שיקול דעת, ולדבר עם איש מקצוע מוסמך על כל דבר רציני או מתמשך.</p>
+
+<h2>מי יכול להשתמש בסולאס</h2>
+<p>השימוש מגיל 18 ומעלה, או בליווי ובאישור של הורה או אפוטרופוס.</p>
+
+<h2>שימוש מותר</h2>
+<p>משתמשים בסולאס לתמיכה אישית בלבד. לא מנסים לשבור אותו, להשתמש בו לרעה, או לפגוע באמצעותו באחרים. חשבון אחד לכל אדם — השיחות שלך פרטיות.</p>
+
+<h2>התוכן שלך</h2>
+<p>מה שנכתב כאן נשאר שלך. בשימוש בסולאס מאפשרים לנו לעבד אותו רק כדי להפעיל את השירות, כפי שמתואר ב<a href="/privacy">מדיניות הפרטיות</a>.</p>
+
+<h2>אחריות</h2>
+<p>במלוא המידה שהחוק מאפשר, סולאס ויוצריו אינם אחראים לנזק שייגרם מהשימוש באפליקציה, כולל הסתמכות על דבריו. זהו כלי תמיכה, לא ליווי מקצועי — בעניינים רציניים כדאי לפנות לאיש מקצוע מוסמך.</p>
+
+<h2>שינויים</h2>
+<p>אנחנו עשויים לעדכן את התנאים; התאריך בראש העמוד ישתנה. המשך השימוש בסולאס פירושו הסכמה לתנאים הנוכחיים.</p>
+
+<h2>יצירת קשר</h2>
+<p>שאלות על התנאים: <a href="mailto:y3769848@gmail.com">y3769848@gmail.com</a></p>
+</div>
+
+<a class="back" href="/" id="back-bottom">← Back to Solace</a>
+<script>
+(function () {
+  var stored = null;
+  try { stored = localStorage.getItem('solace_lang'); } catch (e) {}
+  var lang = (stored === 'he' || stored === 'en') ? stored
+    : (/^he/i.test(navigator.language || '') ? 'he' : 'en');
+  function apply(l) {
+    lang = l;
+    var he = l === 'he';
+    document.getElementById('page-en').hidden = he;
+    document.getElementById('page-he').hidden = !he;
+    document.documentElement.lang = he ? 'he' : 'en';
+    document.documentElement.dir = he ? 'rtl' : 'ltr';
+    var btn = document.getElementById('crisis-btn');
+    btn.textContent = he ? 'במשבר? ער״ן 1201' : 'In crisis? Call/text 988';
+    btn.href = he ? 'tel:1201' : 'tel:988';
+    document.getElementById('back-top').textContent = he ? '→ חזרה לסולאס' : '← Back to Solace';
+    document.getElementById('back-bottom').textContent = he ? '→ חזרה לסולאס' : '← Back to Solace';
+    document.getElementById('lang-toggle').textContent = he ? 'English' : 'עברית';
+    document.title = he ? 'תנאי שימוש — סולאס' : 'Terms of Service — Solace';
+  }
+  document.getElementById('lang-toggle').addEventListener('click', function () {
+    var next = lang === 'he' ? 'en' : 'he';
+    try { localStorage.setItem('solace_lang', next); } catch (e) {}
+    apply(next);
+  });
+  apply(lang);
+})();
+</script>
 </body>
 </html>

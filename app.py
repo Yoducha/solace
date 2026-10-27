@@ -2785,6 +2785,14 @@ def build_system(profile, summary, has_prior=False, returning=False,
         )
     if returning:
         parts.append(RETURN_NOTE)
+    # A13.3: never mention the intake, the form, the chips, or
+    # what was or wasn't filled in — and never claim to know a
+    # worry the person did not state in the conversation itself.
+    parts.append(
+        "Never mention any intake, form, questionnaire, chips or "
+        "check-in questions, and never refer to what the person "
+        "did or did not fill in. Everything you know about them "
+        "comes from this conversation and the memory note above.")
     return "\n\n---\n\n".join(parts)
 
 
@@ -5724,13 +5732,21 @@ def _rehearsal_crisis_exit(rec, saved_user_text, hebrew):
             )
         c.commit()
         c.close()
-    if detect_overdose(saved_user_text or ""):
-        # Medical emergency first here too (Tab ruling) — 911 /
-        # מד״א 101 leads, not the suicide question.
-        base = (EMERGENCY_RESPONSE_HE if hebrew
-                else EMERGENCY_RESPONSE)
+    # The writer's stored gender steers the Hebrew strings (A5).
+    with db_lock:
+        _c = _conn()
+        _row = _c.execute(
+            "SELECT writer_gender FROM users WHERE id=?",
+            (uid,)).fetchone()
+        _c.close()
+    _gender = ((_row["writer_gender"] or "") or None) if _row else None
+    if detect_medical_emergency(saved_user_text or ""):
+        # Medical emergency first here too (A3) — 911 / מד״א 101
+        # leads, not the suicide question.
+        base = (medical_reply_he(_gender) if hebrew
+                else MEDICAL_REPLY_EN)
     else:
-        base = (FIXED_CRISIS_RESPONSE_HE if hebrew
+        base = (crisis_reply_he(_gender) if hebrew
                 else FIXED_CRISIS_RESPONSE)
     reply = base + crisis_resource_line(hebrew, base)
     _save_assistant_msg(uid, reply)

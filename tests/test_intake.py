@@ -88,8 +88,10 @@ if 'id="audience-line"' in html:
     failures.append("INTAKE audience line still present")
 
 # ---------- Hebrew intake -------------------------------------------------
-for marker in ("UI_HE", "BTXT", "applyIntakeHe".replace("applyIntakeHe", "UI_HE"),
-               "להתחיל התבוננות", "מה הכי מכביד עליך?",
+# FINAL order A16: the old UI_HE block is superseded by the ONE
+# UI_STRINGS table — the markers name the new machinery.
+for marker in ("UI_STRINGS", "BTXT", "applyUIStrings",
+               "להתחיל התבוננות", "מה הכי מכביד עכשיו?",
                "לא בטוח מאיפה להתחיל?", "id=\"tagline\"",
                "id=\"mood-label\"",
                "id=\"concern-label\"", "id=\"tiny-line\""):
