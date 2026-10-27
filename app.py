@@ -3050,6 +3050,8 @@ def _prepare_turn(uid, msg):
                 RETRACTION_CHECKIN_RESPONSE_HE if safety_hebrew
                 else RETRACTION_CHECKIN_RESPONSE
             )
+            if ctx["need_professional"]:
+                reply = _ensure_referral(reply, safety_hebrew)
             reply += crisis_resource_line(safety_hebrew, reply)
             _save_assistant_msg(uid, reply)
             return ctx, ("final", {"reply": reply, "crisis": True,
@@ -3185,6 +3187,13 @@ def _finish_model_turn(ctx, mode, reply, background):
             body = (GRIEF_FALLBACK_HE if ctx.get("grief_hebrew")
                     else GRIEF_FALLBACK)
         reply = opening + ("\n\n" + body if body else "")
+        if ctx.get("need_professional"):
+            # The referral guarantee covers EVERY finish path
+            # (Tab round 5): the grief branch used to return
+            # before _ensure_referral ever ran, so a bereaved
+            # person who also asked "do I need a professional?"
+            # lost the line.
+            reply = _ensure_referral(reply, hebrew)
         _save_assistant_msg(uid, reply)
         if ctx["user_count"] == 3 or ctx["user_count"] % 5 == 0:
             background.add_task(update_summary, uid)
@@ -3196,6 +3205,11 @@ def _finish_model_turn(ctx, mode, reply, background):
             reply = reply[len("[CRISIS]"):].strip()
         reply = scrub_reply(
             reply, ctx.get("writer_gender"), user_text)
+        if ctx.get("need_professional"):
+            # Same round-5 gap as the grief branch: latched
+            # crisis-mode replies never passed an ensure step,
+            # so the referral line depended on the model.
+            reply = _ensure_referral(reply, safety_hebrew)
         reply += crisis_resource_line(safety_hebrew, reply)
         _save_assistant_msg(uid, reply)
         return {"reply": reply, "crisis": True,
@@ -3264,7 +3278,16 @@ def _chat_payload(uid, msg, background):
         reply = call_anthropic(CHAT_MODEL, system, ctx["messages"])
     except Exception:
         if mode == "normal":
-            return {"reply": "I'm having trouble connecting right now. Please try again in a moment — I'm still here.", "crisis": False, "hotline": ctx["hotline"], "banner": ctx["banner"], "banner_lang": ctx["banner_lang"]}
+            canned = ("I'm having trouble connecting right now. "
+                      "Please try again in a moment — I'm still "
+                      "here.")
+            if ctx.get("need_professional"):
+                # Even the connection-failure reply honors the
+                # referral guarantee (Tab round 5).
+                canned = _ensure_referral(
+                    canned, ctx.get("safety_hebrew",
+                                     ctx["hebrew"]))
+            return {"reply": canned, "crisis": False, "hotline": ctx["hotline"], "banner": ctx["banner"], "banner_lang": ctx["banner_lang"]}
         reply = ctx["fallback_text"]
     return _finish_model_turn(ctx, mode, reply, background)
 
