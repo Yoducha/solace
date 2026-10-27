@@ -563,6 +563,22 @@ _VOICE_Q_RES = [
     re.compile(r"\bcan\s+i\s+talk\s+to\s+you\s+out\s+loud\b",
                re.I),
     re.compile(r"\bcan\s+you\s+hear\s+me\b", re.I),
+    # The capability family (Tab round 6): round 5 only knew
+    # "voice mode" / "talk with my voice" — "Can you hear
+    # voice messages?", "Can you hear my voice recordings?"
+    # still got "I can only read text" (10/10). Hearing /
+    # listening / understanding + a voice/audio object is
+    # the same question and gets the same answer.
+    re.compile(
+        r"\bcan\s+you\s+(?:hear|listen\s+to|understand|play|"
+        r"receive|get)\b[^.!?\n]{0,30}?\b(?:voice|audio|"
+        r"recording)", re.I),
+    re.compile(
+        r"\bdo\s+you\s+(?:understand|accept|support|get)\s+"
+        r"(?:voice|audio)\b", re.I),
+    re.compile(
+        r"\bvoice\s+(?:messages?|notes?|recordings?|memos?)\b"
+        r"[^.!?\n]{0,25}\?", re.I),
     re.compile(r"\bspeak\s+instead\s+of\s+typ", re.I),
     re.compile(
         r"\bvoice\s+mode\b[^.!?\n]{0,20}\?", re.I),
@@ -570,8 +586,25 @@ _VOICE_Q_RES = [
     re.compile(r"לדבר\s+(?:איתך|אתך)\s+בקול"),
     re.compile(r"יש\s+(?:לך\s+)?מצב\s+קול"),
     re.compile(r"(?:אתה|את)\s+יכול(?:ה)?\s+לשמוע\s+אותי"),
+    # Hebrew capability family (Tab round 6): "אתה יכול
+    # לשמוע הודעות קוליות?" — לשמוע + a voice object, with
+    # יכול/אפשר/מסוגל in front, in either order.
+    re.compile(
+        r"(?:יכול(?:ה)?|אפשר|מסוגל(?:ת)?)[^.!?\n]{0,15}?"
+        r"לשמוע[^.!?\n]{0,20}?"
+        r"(?:הודעות|הקלטות|קול|אודיו|הודעה)"),
+    re.compile(
+        r"לשמוע\s+(?:את\s+)?"
+        r"(?:ההודעות|הקלטות|הודעות)\s+הקוליות"),
     re.compile(r"אפשר\s+לדבר\s+בקול"),
 ]
+
+# A bare mention of voice messages / recordings counts as
+# the voice question only in a question-shaped message, so
+# "I left you a voice message" stays an ordinary message.
+_VOICE_MENTION_RE = re.compile(
+    r"(?:הודעות|הקלטות)\s+קוליות|"
+    r"\bvoice\s+(?:messages?|recordings?|notes?)\b", re.I)
 
 VOICE_ANSWER = (
     "Yes — Solace has Voice Mode: tap the 🎤 and you can talk "
@@ -590,7 +623,13 @@ def detect_voice_question(text):
     with Solace (Voice Mode exists — the deterministic answer
     says so; the model must never claim text-only)."""
     t = text or ""
-    return any(rx.search(t) for rx in _VOICE_Q_RES)
+    if any(rx.search(t) for rx in _VOICE_Q_RES):
+        return True
+    if _VOICE_MENTION_RE.search(t):
+        return "?" in t or bool(
+            re.match(r"\s*(?:can|do|does|is|are|האם|אפשר|אתה|את)\b",
+                     t, re.I))
+    return False
 
 
 # Need-a-professional questions (Tab round 3): "אני צריך
@@ -1765,14 +1804,31 @@ _VOICE_DENIAL_RES = [
         r"\bi\s+(?:can\s+only|only)\s+"
         r"(?:communicate|chat|talk|respond)\s+"
         r"(?:in|via|through|by)\s+text\b", re.I),
+    # "I can only read text" (Tab round 6): the read/see
+    # shapes of the same false claim — the app transcribes
+    # voice to text and answers aloud in Voice Mode.
+    re.compile(
+        r"\bi\s+(?:can\s+only|only)\s+"
+        r"(?:read|see|receive|process|understand)\s+"
+        r"(?:text|messages|typed\s+messages)\b", re.I),
     re.compile(
         r"\bi\s+(?:can't|cannot|can\s+not)\s+"
         r"(?:receive|hear|process|accept)\s+audio\b", re.I),
     re.compile(
+        r"\bi\s+(?:can't|cannot|can\s+not)\s+"
+        r"(?:hear|listen\s+to)\s+(?:voice|audio|your\s+voice|"
+        r"recordings?)\b", re.I),
+    re.compile(
         r"\bno\s+audio\s+(?:input|support|option)\b", re.I),
     re.compile(r"אין\s+לי\s+אפשרות\s+לשמוע"),
     re.compile(r"אני\s+לא\s+יכול(?:ה)?\s+לשמוע\s+אותך"),
+    re.compile(
+        r"אני\s+לא\s+יכול(?:ה)?\s+לשמוע\s+"
+        r"(?:הודעות|הקלטות|אודיו|קול)"),
+    re.compile(
+        r"אני\s+יכול(?:ה)?\s+רק\s+לקרוא\s+(?:טקסט|הודעות)"),
     re.compile(r"רק\s+בטקסט"),
+    re.compile(r"רק\s+טקסט"),
     re.compile(r"תקשורת\s+טקסטואלית\s+בלבד"),
 ]
 
