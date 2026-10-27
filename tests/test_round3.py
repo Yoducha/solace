@@ -97,7 +97,7 @@ if "audio never" in src or "never leaves the device" in src:
 if ("Solace never receives or stores your audio — only the text of "
         "what you say.") not in html:
     failures.append("VOICE exact English privacy line missing")
-if "Solace אף פעם לא מקבלת או שומרת את האודיו שלך" not in html:
+if "Solace אף פעם לא מקבל או שומר את האודיו שלך" not in html:
     failures.append("VOICE Hebrew privacy line missing")
 voice_line = next((l for l in html.splitlines() if "voicePrivacy:" in l
                    and "never receives" in l), "")
