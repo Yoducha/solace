@@ -1892,6 +1892,49 @@ def _is_opener_sentence(seg):
     return False
 
 
+# Companionship lines (Tab round 5): round 4 stripped opener-
+# shaped sentences only among the continuation's FIRST three
+# sentences, but the model's "my heart / my thoughts / we're
+# with you" lines kept shipping — 9 of 13 runs, every female-
+# writer run — sometimes mid-body. The FIXED opening already
+# carries the companionship ("אני כאן איתך"), so a sentence of
+# this family ANYWHERE in the grief body is a second opening
+# and goes. The deceased's forms (עליו / עליה) never match
+# these patterns and stay untouched.
+_COMPANIONSHIP_RES = [
+    re.compile(r"לבי\s+אית[ךכ]"),          # לבי איתך / איתכם
+    re.compile(r"ליבי\s+אית[ךכ]"),         # ליבי איתך
+    re.compile(r"הלב\s+שלי\s+אית[ךכ]"),    # הלב שלי איתך
+    re.compile(r"ליבנו\s+(?:אליך|אלייך|אית[ךכ])"),
+    re.compile(r"לבנו\s+(?:אליך|אלייך|אית[ךכ])"),
+    re.compile(r"(?:ה)?מחשבות\s+(?:שלי|שלנו|שליי)\s+אית[ךכ]"),
+    re.compile(r"מחשבותיי\s+אית[ךכ]"),
+    re.compile(r"(?:ה)?מחשבות\s+(?:שלי|שלנו)\s+(?:הולכות\s+)?אליך"),
+    re.compile(
+        r"(?:אנחנו|אנו)\s+(?:כאן\s+)?"
+        r"(?:אית[ךכ]|לציד[ךכ]|בשביל[ךכ])"),
+    re.compile(r"(?:אנחנו|אנו)\s+כאן\s+אית[ךכ]"),
+    re.compile(r"\bmy\s+heart\s+is\s+with\s+you\b", re.I),
+    re.compile(r"\bmy\s+thoughts\s+are\s+with\s+you\b", re.I),
+    re.compile(r"\bwe(?:'re|\s+are)\s+(?:all\s+)?here\s+"
+               r"(?:with|for)\s+you\b", re.I),
+]
+
+
+def _strip_companionship_lines(body):
+    """Remove every 'my heart / my thoughts / we're with you'
+    sentence from a grief continuation, wherever it appears —
+    not just at the start (Tab round 5)."""
+    if not body:
+        return body
+    segs = _sentence_segments(body)
+    kept = [(s, sep) for s, sep in segs
+            if not any(rx.search(s) for rx in _COMPANIONSHIP_RES)]
+    if len(kept) == len(segs):
+        return body
+    return "".join(s + sep for s, sep in kept).strip()
+
+
 def _strip_continuation_openers(body):
     """Drop opener-shaped sentences (condolence / presence /
     greeting) among the continuation's first three sentences."""
@@ -2010,6 +2053,7 @@ def _grief_clean_body(body, opening, writer_gender=None):
     body = _strip_opening_echo(body, opening)
     body = _strip_dup_condolence(body)
     body = _strip_continuation_openers(body)
+    body = _strip_companionship_lines(body)
     body = _cut_second_reply_block(body, opening)
     if opening and has_hebrew(opening):
         body = _he_gender_consistency(
