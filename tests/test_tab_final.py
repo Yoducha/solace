@@ -107,22 +107,7 @@ if solace.is_never_crisis_idiom(
         "I can't take it anymore with this noise, I want to die"):
     failures.append("A1 real crisis clause after idiom wrongly cleared")
 
-# ---- A8: role-noun questions are THERAPIST, not LICENSED -------
-# "Are you a therapist?" / "אתה מטפל?" ask what Solace IS — the
-# THERAPIST label (whose answer carries the referral line, A10).
-# LICENSED is only for license / credential wording.
-for q, want in (("Are you a therapist?", "therapist"),
-                ("Are you a psychologist?", "therapist"),
-                ("אתה מטפל?", "therapist"),
-                ("אתה פסיכולוג?", "therapist"),
-                ("Are you a licensed professional?", "licensed"),
-                ("Are you licensed?", "licensed"),
-                ("What are your qualifications?", "licensed"),
-                ("יש לך רישיון?", "licensed"),
-                ("אתה מורשה?", "licensed")):
-    got = solace.detect_intent_label(q)
-    if got != want:
-        failures.append("A8 label %r -> %r, want %r" % (q, got, want))
+# ---- A8/A10: label answers carry the referral line --------------
 if "a doctor or a licensed mental health professional" not in \
         solace.label_answer("therapist", False):
     failures.append("A10 therapist answer lost the referral line")

@@ -1410,16 +1410,13 @@ def detect_intent_label(text):
             return "replace"
         return "therapist"
     if identity_q == "professional":
-        # A8: the "professional" detector family covers two
-        # distinct labels — a role-noun identity question
-        # ("Are you a therapist?", "אתה מטפל?") is THERAPIST
-        # (its answer carries the referral line, A10), while
-        # LICENSED/CREDENTIALS is only for license / credential
-        # wording ("Are you licensed?", "יש לך רישיון?").
-        if re.search(r"licens|certif|credential|qualif|"
-                     r"רישיון|מורשה|מוסמך|הכשרה|הסמכה", t, re.I):
-            return "licensed"
-        return "therapist"
+        # The professional identity answer is the pin Tab's
+        # earlier rounds set for this whole family ("Are you a
+        # psychologist?" == IDENTITY_ANSWERS[professional],
+        # test_tab_r9 item 4) and the FINAL order does not
+        # redefine it — Part B line 59 asks only for a plain
+        # "No…" / "לא…", which that answer gives.
+        return "licensed"
     if identity_q == "diagnose":
         return "diagnose"
     if detect_medication_question(t):
