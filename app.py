@@ -405,12 +405,12 @@ _AVAILABILITY_Q_RES = [
     re.compile(
         r"\bare\s+you\s+always\s+(?:available|there|around)\b", re.I),
     re.compile(
-        r"\bcan\s+i\s+(?:talk|message|text|write|reach)(?:\s+to\s+you)?"
+        r"\bcan\s+i\s+(?:talk|message|text|write|reach)(?:\s+(?:to\s+)?you)?"
         r"\s+(?:any\s?time|whenever|at\s+any\s+time)\b", re.I),
-    re.compile(r"(?:אתה|את)\s+זמינ\w*\s*(?:תמיד|בכל\s+שעה|24\s*/\s*7)"),
-    re.compile(r"זמינ\w*\s+(?:24\s*/\s*7|מסביב\s+לשעון)"),
+    re.compile(r"(?:אתה|את)\s+זמי\w*\s*(?:תמיד|בכל\s+שעה|24\s*/\s*7)"),
+    re.compile(r"זמי\w*\s+(?:24\s*/\s*7|מסביב\s+לשעון)"),
     re.compile(r"אפשר\s+לדבר\s+איתך\s+בכל\s+שעה"),
-    re.compile(r"^\s*(?:האם\s+)?(?:אתה|את)\s+זמינ\w*\s*\?\s*$"),
+    re.compile(r"^\s*(?:האם\s+)?(?:אתה|את)\s+זמי\w*\s*\?\s*$"),
 ]
 
 AVAILABILITY_ANSWER = (
@@ -1376,8 +1376,8 @@ _AVAILABILITY_CLAIM_RES = [
     re.compile(r"\bi'?m here (?:for you )?(?:day or night|"
                r"any ?time|whenever you)", re.I),
     re.compile(r"מסביב לשעון"),
-    re.compile(r"זמינ\w+\s+תמיד"),
-    re.compile(r"תמיד\s+זמינ\w+"),
+    re.compile(r"זמי\w+\s+תמיד"),
+    re.compile(r"תמיד\s+זמי\w+"),
     re.compile(r"אני כאן (?:בשבילך\s+)?(?:יום ולילה|בכל שעה)"),
 ]
 _RESOURCE_CONTEXT_RE = re.compile(
