@@ -3638,6 +3638,22 @@ _HE_SELF_FEM_RE = re.compile(
     r"(אני)\s+((?:(?:ממש|לא|גם|רק|כבר|תמיד|כאן|פה|עכשיו|"
     r"איתך|איתכם|איתכן)[,\s]+){0,3})("
     + "|".join(_HE_SELF_FEM_MASC) + r")(?![\u0590-\u05FF])")
+# Tab r14 item 4: coordinated self-participles — in a sentence
+# anchored by אני + an already-masculine self participle, a
+# ו-glued feminine participle ("ומבינה") is the same speaker.
+_HE_SELF_CHAIN_FEMS = (
+    "מקשיבה", "מבינה", "שואלת", "מרגישה", "ממליצה", "מכירה",
+    "עוזרת", "סקרנית", "קשובה", "נלהבת", "מתרגשת", "דואגת",
+    "נהנית", "מתכוונת", "חוששת", "נרגשת", "מצטערת", "יכולה",
+    "מאבחנת", "שמחה", "זמינה",
+)
+_HE_SELF_CHAIN_RE = re.compile(
+    r"(?<![\u0590-\u05FF])ו(" + "|".join(_HE_SELF_CHAIN_FEMS)
+    + r")(?![\u0590-\u05FF])")
+_HE_SELF_MASC_TOKEN_RE = re.compile(
+    r"(?<![\u0590-\u05FF])(?:מקשיב|מבין|שואל|מרגיש|שמח|מצטער|"
+    r"ממליץ|מכיר|עוזר|סקרן|קשוב|יכול|נרגש|נלהב)"
+    r"(?![\u0590-\u05FF])")
 
 # Self-reference WITHOUT an explicit אני (Tab round 5):
 # "שמחה שפנית" ("(I'm) glad you reached out"), "עוזרת AI"
@@ -3825,7 +3841,23 @@ def _he_self_gender(text, writer_gender=None):
         out = rx.sub(rep, out)
     out = _HE_SELF_START_RE.sub(_self_start_sub, out)
     out = _HE_GLAD_THAT_RE.sub(_glad_that_sub, out)
-    return _HE_SELF_FEM_RE.sub(_self_fem_sub, out)
+    out = _HE_SELF_FEM_RE.sub(_self_fem_sub, out)
+    # Tab r14 item 4: a participle COORDINATED onto a fixed
+    # self-form — "אני מקשיב לך ומבינה אותך" — is still
+    # Solace speaking about itself; the ו-form takes the
+    # masculine too. Sentence-scoped: the sentence must carry
+    # אני plus an already-masculine self participle, and the
+    # ו must be glued to the feminine form itself, so
+    # user-addressed forms ("ואת יכולה", "היא מבינה") are
+    # never touched.
+    parts = []
+    for seg, sep in _sentence_segments(out):
+        if "אני" in seg and _HE_SELF_MASC_TOKEN_RE.search(seg):
+            seg = _HE_SELF_CHAIN_RE.sub(
+                lambda m: "ו" + _HE_SELF_FEM_MASC[m.group(1)],
+                seg)
+        parts.append(seg + sep)
+    return "".join(parts)
 
 
 def _drop_wrong_script_sentences(out, user_text):
