@@ -460,6 +460,8 @@ _MEDICAL_RES = [
     # לא מפסיק form for the bleeding noun itself.
     re.compile(r"\bbleeding\s+(?:won'?t|will\s+not|doesn'?t|"
                r"isn'?t|is\s+not)\s+stop\b|"
+               r"\bbleeding\b[^.!?\n]{0,30}?\b(?:won'?t|will\s+not|"
+               r"doesn'?t|isn'?t)\s+stop\b|"
                r"\bcan'?t\s+stop\s+the\s+bleeding\b|"
                r"\bcannot\s+stop\s+the\s+bleeding\b|"
                r"\bkeeps\s+bleeding\b"),
@@ -1999,7 +2001,32 @@ def _he_rewrite_gender_sentence(seg, target):
 
     out = _HE_ADDR_M_RE.sub(_neut, seg)
     out = _HE_ADDR_F_RE.sub(_neut, out)
+    # Tab r14 item 4: כש + pronoun + PARTICIPLE ("כשאתה מוכן")
+    # is not a paradigm frame — the verb maps above can't
+    # pluralize it, so the sentence used to survive unfixable
+    # (and a fully-dropped reply resurrected it whole). The
+    # participle pluralizes directly: כשאתם מוכנים.
+    out = _HE_KSHE_PART_RE.sub(
+        lambda m: "כשאתם " + _HE_KSHE_PART_PLURALS[m.group(1)],
+        out)
     return out
+
+
+# כש + gendered pronoun + present participle -> plural
+# participle, the neutral frame (r14 item 4).
+_HE_KSHE_PART_PLURALS = {
+    "מוכן": "מוכנים", "מוכנה": "מוכנים",
+    "יכול": "יכולים", "יכולה": "יכולים",
+    "צריך": "צריכים", "צריכה": "צריכים",
+    "חייב": "חייבים", "חייבת": "חייבים",
+    "אמור": "אמורים", "אמורה": "אמורים",
+    "פנוי": "פנויים", "פנויה": "פנויים",
+    "רגוע": "רגועים", "רגועה": "רגועים",
+    "עייף": "עייפים", "עייפה": "עייפים",
+}
+_HE_KSHE_PART_RE = re.compile(
+    r"כש(?:אתה|את)\s+(" + "|".join(_HE_KSHE_PART_PLURALS)
+    + r")(?![\u0590-\u05FF])")
 
 
 def he_gender_repair(text, gender):
@@ -2028,7 +2055,8 @@ def he_gender_repair(text, gender):
              "תהיי": ("תהיה", "תהיי", "תהיו")}
     _ki = {"m": 0, "f": 1, "n": 2}[target]
     text = re.sub(
-        r"כש(תרצה|תרצי|תרגיש|תרגישי|תוכל|תוכלי|תהיה|תהיי)"
+        r"כש(?:אתה\s+|את\s+)?"
+        r"(תרצה|תרצי|תרגיש|תרגישי|תוכל|תוכלי|תהיה|תהיי)"
         r"(?![\u0590-\u05FF])",
         lambda mm: "כש" + _kshe[mm.group(1)][_ki], text)
     if target == "n":
@@ -2067,7 +2095,14 @@ def he_gender_repair(text, gender):
     if not changed:
         return text
     out = "".join(s + sep for s, sep in out_segs).strip()
-    return out or text
+    if out:
+        return out
+    # Every sentence dropped. For a GENDERED writer the
+    # original is the lesser evil (callers pin that); for an
+    # UNKNOWN writer Tab r14 item 4 is absolute — כשאתה must
+    # not be resurrected, so the empty result stands and the
+    # caller's fallback answers instead.
+    return text if target != "n" else ""
 
 
 # A15: no "/" between Hebrew letters ever ships. Any slash pair
@@ -4183,6 +4218,8 @@ def _strip_sympathy_sentences(body):
 # keeps "קחי את הזמן שאת צריכה" in a first-turn cleanup).
 _GRIEF_REPEAT_PHRASE_RES = [
     re.compile(r"no\s+right\s+way", re.I),
+    re.compile(r"take\s+(?:all\s+)?(?:the\s+|your\s+)?time", re.I),
+    re.compile(r"אין\s+(?:שום\s+)?דרך\s+נכונה"),
     re.compile(r"קח(?:י)?\s+את\s+(?:כל\s+)?הזמן"),
 ]
 
@@ -5040,6 +5077,25 @@ def _prepare_turn(uid, msg):
     retracted = detect_retraction(msg) and not risk
     messages = [{"role": r["role"], "content": r["content"]} for r in reversed(hist)]
 
+    # Tab r13 item 6 + r14 item 5: has this conversation already
+    # produced a fixed grief opening? Computed ONCE, for every
+    # mode: the grief branch uses it to suppress a repeated
+    # opening, and the finish layer uses it to strip the
+    # opening's signature phrases ("no right way" / "קח את
+    # הזמן") from ANY follow-up reply — including follow-ups
+    # whose own wording carries no loss language for the grief
+    # detector to catch.
+    _prev_opened = False
+    for _m in reversed(messages):
+        if _m["role"] == "assistant":
+            _prev_opened = any(
+                _m["content"].startswith(_o) for _o in (
+                    GRIEF_OPENING, GRIEF_OPENING_HE,
+                    GRIEF_OPENING_HE_F, GRIEF_OPENING_HE_N,
+                    GRIEF_OPENING_HE_N_F, GRIEF_OPENING_HE_WF,
+                    GRIEF_OPENING_HE_WF_F))
+            break
+
     # A new visit after a real break (previous message hours old) gets
     # an explicit welcome-back instruction in the normal flow.
     returning = False
@@ -5078,6 +5134,9 @@ def _prepare_turn(uid, msg):
         # normal turn after a true crisis (set in the latch
         # block below); prepended by code in _finish_model_turn.
         "checkin_line": None,
+        # r13 item 6 / r14 item 5: this conversation already
+        # grieved (a fixed opening shipped in an earlier reply).
+        "grief_repeat": _prev_opened,
     }
 
     # Tab FINAL order A3: MEDICAL EMERGENCY — checked BEFORE the
@@ -5298,22 +5357,11 @@ def _prepare_turn(uid, msg):
         ctx["grief_opening"] = grief_opening_for(
             hebrew, msg, writer_gender)
         # Tab r13 item 6: a grief FOLLOW-UP never repeats the
-        # opening. If the previous assistant reply already
-        # opened with a fixed grief opening (this chat has
-        # grieved before), this turn carries NO opening — the
-        # model continues the conversation — and the finish
-        # layers must not resurrect one either.
-        _prev_opened = False
-        for _m in reversed(messages):
-            if _m["role"] == "assistant":
-                _prev_opened = any(
-                    _m["content"].startswith(_o) for _o in (
-                        GRIEF_OPENING, GRIEF_OPENING_HE,
-                        GRIEF_OPENING_HE_F, GRIEF_OPENING_HE_N,
-                        GRIEF_OPENING_HE_N_F, GRIEF_OPENING_HE_WF,
-                        GRIEF_OPENING_HE_WF_F))
-                break
-        ctx["grief_repeat"] = _prev_opened
+        # opening. `_prev_opened` (computed once, above, for
+        # every mode) says this chat has grieved before: this
+        # turn carries NO opening — the model continues the
+        # conversation — and the finish layers must not
+        # resurrect one either.
         if _prev_opened:
             ctx["grief_opening"] = ""
             gsys += (
@@ -5504,6 +5552,12 @@ def _finish_model_turn(ctx, mode, reply, background):
             _set_user_state(uid, crisis_mode=True, stepdown_v=False,
                             banner_v=True, lang_v=banner_lang)
     reply = scrub_reply(reply, ctx.get("eff_gender"), user_text)
+    if ctx.get("grief_repeat"):
+        # Tab r14 item 5: in a conversation that already
+        # grieved, ANY follow-up reply — even one whose turn
+        # never entered grief mode — loses sentences repeating
+        # the opening's signature phrases.
+        reply = _strip_grief_repeat_phrases(reply)
     # Tab FINAL order A9 output guard: dosing content (a number
     # + unit about a substance) replaces the whole reply with
     # the deterministic medication answer.
